@@ -40,6 +40,8 @@ __all__ = ("DVRCaseModel",
            "DVRActivityFundingModel",
            "DVRNeedsModel",
            "DVRNotesModel",
+           "DVRReferralModel",
+           "DVRResponseModel",
            "DVRSiteActivityModel",
            "DVRVulnerabilityModel",
            "dvr_ActivityRepresent",
@@ -609,6 +611,7 @@ class DVRCaseModel(S3Model):
                      s3_date("arrival_date",
                              label = T("Arrival Date"),
                              ),
+                     self.dvr_referral_type_id(),
                      *s3_meta_fields())
 
         # ---------------------------------------------------------------------
@@ -1274,14 +1277,219 @@ class DVRNotesModel(S3Model):
         return {}
 
 # =============================================================================
+class DVRReferralModel(S3Model):
+    """
+        Data model for case referrals (both incoming and outgoing)
+    """
+
+    names = ("dvr_referral_type",
+             "dvr_referral_type_id",
+             )
+
+    def model(self):
+
+        T = current.T
+        db = current.db
+
+        crud_strings = current.response.s3.crud_strings
+
+        # ---------------------------------------------------------------------
+        # Referral Types (how cases are admitted)
+        #
+        tablename = "dvr_referral_type"
+        self.define_table(tablename,
+                          Field("name",
+                                label = T("Name"),
+                                requires = IS_NOT_EMPTY(),
+                                ),
+                          s3_comments(),
+                          *s3_meta_fields())
+
+        # Table configuration
+        self.configure(tablename,
+                       deduplicate = S3Duplicate(),
+                       )
+
+        # CRUD Strings
+        crud_strings[tablename] = Storage(
+            label_create = T("Create Referral Type"),
+            title_display = T("Referral Type Details"),
+            title_list = T("Referral Types"),
+            title_update = T("Edit Referral Type"),
+            label_list_button = T("List Referral Types"),
+            label_delete_button = T("Delete Referral Type"),
+            msg_record_created = T("Referral Type added"),
+            msg_record_modified = T("Referral Type updated"),
+            msg_record_deleted = T("Referral Type deleted"),
+            msg_list_empty = T("No Referral Types found"),
+            )
+
+        # Reusable field
+        represent = S3Represent(lookup=tablename, translate=True)
+        referral_type_id = S3ReusableField("referral_type_id",
+                                           "reference %s" % tablename,
+                                           label = T("Type of Referral"),
+                                           ondelete = "RESTRICT",
+                                           represent = represent,
+                                           requires = IS_EMPTY_OR(
+                                                        IS_ONE_OF(db,
+                                                                  "%s.id" % tablename,
+                                                                  represent,
+                                                                  )),
+                                           )
+
+        # ---------------------------------------------------------------------
+        # Pass names back to global scope (s3.*)
+        #
+        return {"dvr_referral_type_id": referral_type_id,
+                }
+
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def defaults():
+        """ Safe defaults for names in case the module is disabled """
+
+        dummy = S3ReusableField("dummy_id", "integer",
+                                readable = False,
+                                writable = False,
+                                )
+
+        return {"dvr_referral_type_id": lambda name="referral_type_id", **attr: \
+                                               dummy(name, **attr),
+                }
+
+# =============================================================================
+class DVRResponseModel(S3Model):
+    """ Model representing responses to case needs """
+
+    names = ("dvr_response_type",
+             "dvr_response_type_case_activity",
+             )
+
+    def model(self):
+
+        T = current.T
+
+        db = current.db
+        s3 = current.response.s3
+        settings = current.deployment_settings
+
+        define_table = self.define_table
+        crud_strings = s3.crud_strings
+
+        hierarchical_response_types = settings.get_dvr_response_types_hierarchical()
+
+        # ---------------------------------------------------------------------
+        # Response Types
+        #
+        tablename = "dvr_response_type"
+        define_table(tablename,
+                     Field("name",
+                           requires = IS_NOT_EMPTY(),
+                           ),
+                     # This form of hierarchy may not work on all databases:
+                     Field("parent", "reference dvr_response_type",
+                           label = T("Subtype of"),
+                           ondelete = "RESTRICT",
+                           readable = hierarchical_response_types,
+                           writable = hierarchical_response_types,
+                           ),
+                     s3_comments(),
+                     *s3_meta_fields())
+
+        # Hierarchy
+        if hierarchical_response_types:
+            hierarchy = "parent"
+            widget = S3HierarchyWidget(multiple = False,
+                                       leafonly = True,
+                                       )
+        else:
+            hierarchy = None
+            widget = None
+
+        # Table configuration
+        self.configure(tablename,
+                       deduplicate = S3Duplicate(primary = ("name",),
+                                                 secondary = ("parent",),
+                                                 ),
+                       hierarchy = hierarchy,
+                       )
+
+        # CRUD Strings
+        crud_strings[tablename] = Storage(
+            label_create = T("Create Response Type"),
+            title_display = T("Response Type Details"),
+            title_list = T("Response Types"),
+            title_update = T("Edit Response Type"),
+            label_list_button = T("List Response Types"),
+            label_delete_button = T("Delete Response Type"),
+            msg_record_created = T("Response Type created"),
+            msg_record_modified = T("Response Type updated"),
+            msg_record_deleted = T("Response Type deleted"),
+            msg_list_empty = T("No Response Types currently registered"),
+        )
+
+        # Reusable field
+        represent = S3Represent(lookup=tablename, translate=True)
+        response_type_id = S3ReusableField("response_type_id",
+                                           "reference %s" % tablename,
+                                           label = T("Response Type"),
+                                           represent = represent,
+                                           requires = IS_EMPTY_OR(
+                                                        IS_ONE_OF(db, "%s.id" % tablename,
+                                                                  represent,
+                                                                  )),
+                                           sortby = "name",
+                                           widget = widget,
+                                           )
+
+        # ---------------------------------------------------------------------
+        # Response Types <=> Case Activities link table
+        #
+        tablename = "dvr_response_type_case_activity"
+        define_table(tablename,
+                     self.dvr_case_activity_id(
+                         empty = False,
+                         ondelete = "CASCADE",
+                         ),
+                     response_type_id(
+                         empty = False,
+                         ondelete = "RESTRICT",
+                         ),
+                     *s3_meta_fields())
+
+        # ---------------------------------------------------------------------
+        # Pass names back to global scope (s3.*)
+        #
+        return {}
+
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def defaults():
+        """ Safe defaults for names in case the module is disabled """
+
+        #dummy = S3ReusableField("dummy_id", "integer",
+                                #readable = False,
+                                #writable = False,
+                                #)
+
+        return {}
+
+# =============================================================================
 class DVRCaseActivityModel(S3Model):
     """ Model for Case Activities """
 
     names = ("dvr_activity",
+             "dvr_activity_id",
+             "dvr_activity_age_group",
+             "dvr_activity_focus",
+             "dvr_activity_group_type",
              "dvr_case_activity",
              "dvr_case_activity_id",
              "dvr_case_activity_need",
              "dvr_case_service_contact",
+             "dvr_provider_type",
+             "dvr_termination_type",
              )
 
     def model(self):
@@ -1297,6 +1505,51 @@ class DVRCaseActivityModel(S3Model):
 
         service_type = settings.get_dvr_activity_use_service_type()
         service_id = self.org_service_id
+
+        # ---------------------------------------------------------------------
+        # Provider Type
+        #
+        tablename = "dvr_provider_type"
+        define_table(tablename,
+                     Field("name", notnull=True,
+                           label = T("Type"),
+                           requires = IS_NOT_EMPTY(),
+                           ),
+                     s3_comments(),
+                     *s3_meta_fields())
+
+        # Table configuration
+        configure(tablename,
+                  deduplicate = S3Duplicate(),
+                  )
+
+        # CRUD Strings
+        crud_strings[tablename] = Storage(
+            label_create = T("Create Provider Type"),
+            title_display = T("Provider Type Details"),
+            title_list = T("Provider Types"),
+            title_update = T("Edit Provider Type"),
+            label_list_button = T("List Provider Types"),
+            label_delete_button = T("Delete Provider Type"),
+            msg_record_created = T("Provider Type added"),
+            msg_record_modified = T("Provider Type updated"),
+            msg_record_deleted = T("Provider Type deleted"),
+            msg_list_empty = T("No Provider Types currently defined"),
+            )
+
+        # Reusable Field
+        represent = S3Represent(lookup=tablename)
+        provider_type_id = S3ReusableField("provider_type_id", "reference %s" % tablename,
+                                           label = T("Provider Type"),
+                                           ondelete = "CASCADE",
+                                           represent = represent,
+                                           requires = IS_EMPTY_OR(
+                                                        IS_ONE_OF(db, "%s.id" % tablename,
+                                                                  represent,
+                                                                  sort = True,
+                                                                  )),
+                                           sortby = "name",
+                                           )
 
         # ---------------------------------------------------------------------
         # Activity Group Type
@@ -1399,6 +1652,51 @@ class DVRCaseActivityModel(S3Model):
                                        )
 
         # ---------------------------------------------------------------------
+        # Activity Focus
+        #
+        tablename = "dvr_activity_focus"
+        define_table(tablename,
+                     Field("name", notnull=True,
+                           label = T("Name"),
+                           requires = IS_NOT_EMPTY(),
+                           ),
+                     s3_comments(),
+                     *s3_meta_fields())
+
+        # Table configuration
+        configure(tablename,
+                  deduplicate = S3Duplicate(),
+                  )
+
+        # CRUD Strings
+        crud_strings[tablename] = Storage(
+            label_create = T("Create Activity Focus"),
+            title_display = T("Activity Focus Details"),
+            title_list = T("Activity Focuses"),
+            title_update = T("Edit Activity Focus"),
+            label_list_button = T("List Activity Focuses"),
+            label_delete_button = T("Delete Activity Focus"),
+            msg_record_created = T("Activity Focus added"),
+            msg_record_modified = T("Activity Focus updated"),
+            msg_record_deleted = T("Activity Focus deleted"),
+            msg_list_empty = T("No Activity Focuses currently defined"),
+            )
+
+        # Reusable Field
+        represent = S3Represent(lookup=tablename)
+        focus_id = S3ReusableField("focus_id", "reference %s" % tablename,
+                                   label = T("Activity Focus"),
+                                   ondelete = "CASCADE",
+                                   represent = represent,
+                                   requires = IS_EMPTY_OR(
+                                                IS_ONE_OF(db, "%s.id" % tablename,
+                                                          represent,
+                                                          sort = True,
+                                                          )),
+                                   sortby = "name",
+                                   )
+
+        # ---------------------------------------------------------------------
         # Activity (not case-specific)
         #
         site_represent = self.org_SiteRepresent(show_link=False)
@@ -1409,6 +1707,11 @@ class DVRCaseActivityModel(S3Model):
         period_opts = {"R": T("regular"),
                        "O": T("occasional"),
                        }
+
+        # Modality options
+        modality_opts = {"E": T("Event"),
+                         "O": T("Outreach"),
+                         }
 
         # Target gender type options
         # (Tuple list to enforce this order in drop-down)
@@ -1421,6 +1724,7 @@ class DVRCaseActivityModel(S3Model):
 
         tablename = "dvr_activity"
         define_table(tablename,
+                     self.super_link("doc_id", "doc_entity"),
                      service_id(label = T("Service Type"),
                                 ondelete = "SET NULL",
                                 readable = service_type,
@@ -1439,6 +1743,14 @@ class DVRCaseActivityModel(S3Model):
                            represent = S3Represent(options=period_opts),
                            requires = IS_EMPTY_OR(IS_IN_SET(period_opts)),
                            ),
+                     Field("modality", length=4,
+                           label = T("Modality"),
+                           default = "E",
+                           represent = S3Represent(options=dict(modality_opts)),
+                           requires = IS_IN_SET(modality_opts, zero=None),
+                           readable = False,
+                           writable = False,
+                           ),
                      self.super_link("site_id", "org_site",
                             filterby = "site_id",
                             filter_opts = permitted_facilities,
@@ -1449,12 +1761,19 @@ class DVRCaseActivityModel(S3Model):
                             updateable = True,
                             ),
                      self.org_room_id(),
+                     self.gis_location_id(
+                            label = T("Target Area"),
+                            widget = S3LocationSelector(points = False,
+                                                        polygons = True,
+                                                        #show_address = False,
+                                                        ),
+                            readable = False,
+                            writable = False,
+                            ),
                      # @todo: have alternative lookup field (hrm)
                      Field("facilitator",
                            label = T("Facilitator"),
                            ),
-                     #Field("modality"), @todo: event or outreach?
-                     #self.gis_location_id(), @todo: outreach area (if outreach)
                      Field("gender", length=4,
                            label = T("Gender"),
                            represent = S3Represent(options=dict(gender_opts)),
@@ -1466,12 +1785,25 @@ class DVRCaseActivityModel(S3Model):
                            ),
                      age_group_id(ondelete="SET NULL"),
                      group_type_id(ondelete="SET NULL"),
+                     focus_id(ondelete = "SET NULL",
+                              readable = False,
+                              writable = False,
+                              ),
                      s3_comments(),
                      *s3_meta_fields())
+
+        # Table Options
+        configure(tablename,
+                  super_entity = "doc_entity",
+                  )
 
         # Components
         self.add_components(tablename,
                             dvr_case_activity = "activity_id",
+                            supply_distribution = {"link": "supply_distribution_case_activity",
+                                                   "joinby": "activity_id",
+                                                   "key": "distribution_id",
+                                                   },
                             )
 
         # CRUD Strings
@@ -1501,6 +1833,51 @@ class DVRCaseActivityModel(S3Model):
                                                               )),
                                       sortby = "service_id",
                                       )
+
+        # ---------------------------------------------------------------------
+        # Termination Types (=how a case activity ended)
+        #
+        tablename = "dvr_termination_type"
+        define_table(tablename,
+                     Field("name", notnull=True,
+                           label = T("Name"),
+                           requires = IS_NOT_EMPTY(),
+                           ),
+                     s3_comments(),
+                     *s3_meta_fields())
+
+        # Table configuration
+        configure(tablename,
+                  deduplicate = S3Duplicate(),
+                  )
+
+        # CRUD Strings
+        crud_strings[tablename] = Storage(
+            label_create = T("Create Termination Type"),
+            title_display = T("Termination Type Details"),
+            title_list = T("Termination Types"),
+            title_update = T("Edit Termination Type"),
+            label_list_button = T("List Termination Types"),
+            label_delete_button = T("Delete Termination Type"),
+            msg_record_created = T("Termination Type added"),
+            msg_record_modified = T("Termination Type updated"),
+            msg_record_deleted = T("Termination Type deleted"),
+            msg_list_empty = T("No Termination Types currently defined"),
+            )
+
+        # Reusable Field
+        represent = S3Represent(lookup=tablename)
+        termination_type_id = S3ReusableField("termination_type_id", "reference %s" % tablename,
+                                              label = T("Termination Type"),
+                                              ondelete = "CASCADE",
+                                              represent = represent,
+                                              requires = IS_EMPTY_OR(
+                                                            IS_ONE_OF(db, "%s.id" % tablename,
+                                                                      represent,
+                                                                      sort = True,
+                                                                      )),
+                                              sortby = "name",
+                                              )
 
         # ---------------------------------------------------------------------
         # Case Activity (case-specific)
@@ -1603,12 +1980,38 @@ class DVRCaseActivityModel(S3Model):
                                 readable = service_type,
                                 writable = service_type,
                                 ),
+                     # Alternatives to document the actions performed
+                     # under this activity:
                      activity_id(readable=False,
                                  writable=False,
                                  ),
+                     provider_type_id(label = T("Referred to"),
+                                      ondelete = "RESTRICT",
+                                      readable = False,
+                                      writable = False,
+                                      ),
+                     Field("activity_details", "text",
+                           label = T("Support provided"),
+                           represent = s3_text_represent,
+                           widget = s3_comments_widget,
+                           ),
+                     # Support received by the beneficiary independently
+                     # of the managed activity:
+                     Field("outside_support", "text",
+                           label = T("Outside Support"),
+                           represent = s3_text_represent,
+                           widget = s3_comments_widget,
+                           readable = False,
+                           writable = False,
+                           ),
+                     # Details about referrals made under this activity
+                     # @deprecate: should use activity_details instead
+                     # @todo: remove once templates have been migrated?
                      Field("referral_details", "text",
                            label = T("Support provided"),
                            represent = s3_text_represent,
+                           readable = False,
+                           writable = False,
                            ),
                      Field("followup", "boolean",
                            default = True,
@@ -1620,7 +2023,6 @@ class DVRCaseActivityModel(S3Model):
                              label = T("Date for Follow-up"),
                              past = 0,
                              ),
-                     # @todo: provide options lookup?
                      Field("outcome", "text",
                            label = T("Outcome"),
                            represent = s3_text_represent,
@@ -1631,22 +2033,38 @@ class DVRCaseActivityModel(S3Model):
                            label = T("Completed"),
                            represent = s3_yes_no_represent,
                            ),
+                     termination_type_id(ondelete = "RESTRICT",
+                                         readable = False,
+                                         writable = False,
+                                         ),
                      s3_comments(),
                      *s3_meta_fields())
 
         # Components
         self.add_components(tablename,
-                            dvr_activity_funding = {"joinby": "case_activity_id",
-                                                    "multiple": False,
-                                                    },
-                            dvr_need = {"link": "dvr_case_activity_need",
-                                        "joinby": "case_activity_id",
-                                        "key": "need_id",
-                                        },
+                            dvr_activity_funding = {
+                                "joinby": "case_activity_id",
+                                "multiple": False,
+                                },
+                            dvr_need = {
+                                "link": "dvr_case_activity_need",
+                                "joinby": "case_activity_id",
+                                "key": "need_id",
+                                },
+                            dvr_response_type = {
+                                "link": "dvr_response_type_case_activity",
+                                "joinby": "case_activity_id",
+                                "key": "response_type_id",
+                                },
                             dvr_vulnerability_type = {
                                 "link": "dvr_vulnerability_type_case_activity",
                                 "joinby": "case_activity_id",
                                 "key": "vulnerability_type_id",
+                                },
+                            supply_distribution = {
+                                "link": "supply_distribution_case_activity",
+                                "joinby": "case_activity_id",
+                                "key": "distribution_id",
                                 },
                             )
 
@@ -1660,7 +2078,7 @@ class DVRCaseActivityModel(S3Model):
                        need_field,
                        "need_details",
                        "emergency",
-                       "referral_details",
+                       "activity_details",
                        "followup",
                        "followup_date",
                        "completed",
@@ -1672,7 +2090,7 @@ class DVRCaseActivityModel(S3Model):
                                         "person_id$last_name",
                                         "case_id$reference",
                                         "need_details",
-                                        "referral_details",
+                                        "activity_details",
                                         ],
                                         label = T("Search"),
                                         ),
@@ -1824,7 +2242,8 @@ class DVRCaseActivityModel(S3Model):
         # ---------------------------------------------------------------------
         # Pass names back to global scope (s3.*)
         #
-        return {"dvr_case_activity_id": case_activity_id,
+        return {"dvr_activity_id": activity_id,
+                "dvr_case_activity_id": case_activity_id,
                 }
 
     # -------------------------------------------------------------------------
@@ -1837,7 +2256,9 @@ class DVRCaseActivityModel(S3Model):
                                 writable = False,
                                 )
 
-        return {"dvr_case_activity_id": lambda name="activity_id", **attr: \
+        return {"dvr_activity_id": lambda name="activity_id", **attr: \
+                                          dummy(name, **attr),
+                "dvr_case_activity_id": lambda name="case_activity_id", **attr: \
                                                dummy(name, **attr),
                 }
 
@@ -3581,9 +4002,12 @@ class DVRVulnerabilityModel(S3Model):
 
         db = current.db
         s3 = current.response.s3
+        settings = current.deployment_settings
 
         define_table = self.define_table
         crud_strings = s3.crud_strings
+
+        hierarchical_vulnerability_types = settings.get_dvr_vulnerability_types_hierarchical()
 
         # ---------------------------------------------------------------------
         # Types of vulnerability
@@ -3594,11 +4018,32 @@ class DVRVulnerabilityModel(S3Model):
                            label = T("Type of Vulnerability"),
                            requires = IS_NOT_EMPTY(),
                            ),
+                     # This form of hierarchy may not work on all Databases:
+                     Field("parent", "reference dvr_vulnerability_type",
+                           label = T("Subtype of"),
+                           ondelete = "RESTRICT",
+                           readable = hierarchical_vulnerability_types,
+                           writable = hierarchical_vulnerability_types,
+                           ),
                      s3_comments(),
                      *s3_meta_fields())
 
+        # Hierarchy
+        if hierarchical_vulnerability_types:
+            hierarchy = "parent"
+            widget = S3HierarchyWidget(multiple = False,
+                                       leafonly = True,
+                                       )
+        else:
+            hierarchy = None
+            widget = None
+
+        # Table configuration
         self.configure(tablename,
-                       deduplicate = S3Duplicate(),
+                       deduplicate = S3Duplicate(primary = ("name",),
+                                                 secondary = ("parent",),
+                                                 ),
+                       hierarchy = hierarchy,
                        )
 
         # CRUD Strings
@@ -3616,7 +4061,7 @@ class DVRVulnerabilityModel(S3Model):
         )
 
         # Reusable field
-        represent = S3Represent(lookup=tablename)
+        represent = S3Represent(lookup=tablename, translate=True)
         vulnerability_type_id = S3ReusableField("vulnerability_type_id",
                                                 "reference %s" % tablename,
                                                 label = T("Type of Vulnerability"),
@@ -3631,6 +4076,7 @@ class DVRVulnerabilityModel(S3Model):
                                                                       f="vulnerability_type",
                                                                       tooltip=T("Create a new vulnerability type"),
                                                                       ),
+                                                widget = widget,
                                                 )
 
         # ---------------------------------------------------------------------
@@ -3638,8 +4084,14 @@ class DVRVulnerabilityModel(S3Model):
         #
         tablename = "dvr_vulnerability_type_case_activity"
         define_table(tablename,
-                     vulnerability_type_id(),
-                     self.dvr_case_activity_id(),
+                     self.dvr_case_activity_id(
+                         empty = False,
+                         ondelete = "CASCADE",
+                         ),
+                     vulnerability_type_id(
+                         empty = False,
+                         ondelete = "RESTRICT",
+                         ),
                      *s3_meta_fields())
 
         # ---------------------------------------------------------------------
@@ -3682,6 +4134,10 @@ class DVRActivityFundingModel(S3Model):
                            ),
                      Field("proposal", "text",
                            label = T("Proposed Assistance"),
+                           ),
+                     Field("approved", "boolean",
+                           label = T("Approved"),
+                           represent = s3_yes_no_represent,
                            ),
                      s3_comments(),
                      *s3_meta_fields())
@@ -4895,7 +5351,7 @@ class DVRRegisterCaseEvent(S3Method):
         formvars.type_id = type_id
 
         # Check whether event type is blocked for this person
-        if type_id:
+        if person and type_id:
             blocked = self.get_blocked_events(person.id,
                                               type_id = type_id,
                                               )

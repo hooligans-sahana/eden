@@ -56,15 +56,7 @@ from s3error import S3PermissionError
 from s3fields import S3Represent, s3_uid, s3_timestamp, s3_deletion_status, s3_comments
 from s3rest import S3Method, S3Request
 from s3track import S3Tracker
-from s3utils import s3_addrow, s3_get_extension, s3_mark_required #, S3ModuleDebug
-
-#DEBUG = False
-#if DEBUG:
-#   import sys
-#   print >> sys.stderr, "S3AAA: DEBUG MODE"
-#   _debug = S3ModuleDebug.on
-#else:
-#   _debug = S3ModuleDebug.off
+from s3utils import s3_addrow, s3_get_extension, s3_mark_required, s3_str
 
 # =============================================================================
 class AuthS3(Auth):
@@ -605,8 +597,8 @@ Thank you"""
                 # Add a new input checkbox "remember me for longer"
                 s3_addrow(form,
                           "",
-                          DIV(INPUT(_type='checkbox',
-                                    _class='checkbox',
+                          DIV(INPUT(_type="checkbox",
+                                    _class="checkbox",
                                     _id="auth_user_remember",
                                     _name="remember",
                                     ),
@@ -651,18 +643,15 @@ Thank you"""
                 if userfield == "email":
                     # Check for Domains which can use Google's SMTP server for passwords
                     # @ToDo: an equivalent email_domains for other email providers
-                    gmail_domains = current.deployment_settings.get_auth_gmail_domains()
-                    if gmail_domains:
+                    gmail_domains = deployment_settings.get_auth_gmail_domains()
+                    office365_domains = deployment_settings.get_auth_office365_domains()
+                    if gmail_domains or office365_domains:
                         from gluon.contrib.login_methods.email_auth import email_auth
                         domain = form.vars[userfield].split("@")[1]
                         if domain in gmail_domains:
                             settings.login_methods.append(
                                 email_auth("smtp.gmail.com:587", "@%s" % domain))
-                    office365_domains = current.deployment_settings.get_auth_office365_domains()
-                    if office365_domains:
-                        from gluon.contrib.login_methods.email_auth import email_auth
-                        domain = form.vars[userfield].split("@")[1]
-                        if domain in office365_domains:
+                        elif domain in office365_domains:
                             settings.login_methods.append(
                                 email_auth("smtp.office365.com:587", "@%s" % domain))
 
@@ -852,6 +841,7 @@ Thank you"""
                 else:
                     next = replace_id(next, form)
                 redirect(next, client_side=settings.client_side)
+
         return form
 
     # -------------------------------------------------------------------------
@@ -912,8 +902,8 @@ Thank you"""
                        )
         form.add_class("auth_reset_password")
         if captcha:
-            addrow(form, captcha.label, captcha,
-                   captcha.comment, settings.formstyle, "captcha__row")
+            s3_addrow(form, captcha.label, captcha,
+                      captcha.comment, settings.formstyle, "captcha__row")
         if form.accepts(request, session if self.csrf_prevention else None,
                         formname="reset_password", dbio=False,
                         onvalidation=onvalidation,
@@ -953,7 +943,7 @@ Thank you"""
         request = current.request
         session = current.session
         settings = self.settings
-        vars = request.vars
+        req_vars = request.vars
 
         # If the user hasn't set a personal UTC offset,
         # then read the UTC offset from the form:
@@ -963,9 +953,9 @@ Thank you"""
         session.auth = Storage(
             user=user,
             last_visit=request.now,
-            expiration = vars.get("remember", False) and \
+            expiration = req_vars.get("remember", False) and \
                 settings.long_expiration or settings.expiration,
-            remember = vars.has_key("remember"),
+            remember = req_vars.has_key("remember"),
             hmac_key = web2py_uuid()
             )
         self.user = user
@@ -988,9 +978,9 @@ Thank you"""
         # Set user's position
         # @ToDo: Per-User settings
         if deployment_settings.get_auth_set_presence_on_login() and \
-           vars.has_key("auth_user_clientlocation") and \
-           vars.get("auth_user_clientlocation"):
-            position = vars.get("auth_user_clientlocation").split("|", 3)
+           req_vars.has_key("auth_user_clientlocation") and \
+           req_vars.get("auth_user_clientlocation"):
+            position = req_vars.get("auth_user_clientlocation").split("|", 3)
             userlat = float(position[0])
             userlon = float(position[1])
             accuracy = float(position[2]) / 1000 # Ensures accuracy is in km
@@ -1377,11 +1367,13 @@ Thank you"""
         if record:
             return record.id
         else:
-            id = membership.insert(group_id=group_id, user_id=user_id, pe_id=entity)
+            membership_id = membership.insert(group_id=group_id,
+                                              user_id=user_id,
+                                              pe_id=entity)
         self.update_groups()
         self.log_event(self.messages.add_membership_log,
                        dict(user_id=user_id, group_id=group_id))
-        return id
+        return membership_id
 
     # -------------------------------------------------------------------------
     def verify_email(self,
@@ -1838,17 +1830,14 @@ $.filterOptionsS3({
             Lookups Pseudo-reference Integer fields from Names
             e.g.:
             auth_membership.pe_id from organisation.name=<Org Name>
-
-            @ToDo: Add support for Sites
         """
-
-        from s3utils import s3_debug
 
         db = current.db
         s3db = current.s3db
         set_record_owner = self.s3_set_record_owner
         update_super = s3db.update_super
         otable = s3db.org_organisation
+        btable = s3db.org_organisation_branch
 
         resource, tree = data
 
@@ -1858,34 +1847,34 @@ $.filterOptionsS3({
             ltable = s3db.org_organisation_name
         def add_org(name, parent=None):
             """ Helper to add a New Organisation """
-            id = otable.insert(name=name)
-            record = Storage(id=id)
+            organisation_id = otable.insert(name=name)
+            record = Storage(id=organisation_id)
             update_super(otable, record)
-            set_record_owner(otable, id)
+            set_record_owner(otable, organisation_id)
             # @ToDo: Call onaccept?
             if parent:
                 records = db(otable.name == parent).select(otable.id)
                 if len(records) == 1:
                     # Add branch link
                     link_id = btable.insert(organisation_id = records.first().id,
-                                            branch_id = id)
+                                            branch_id = organisation_id)
                     onaccept = s3db.get_config("org_organisation_branch", "onaccept")
                     callback(onaccept, Storage(vars=Storage(id=link_id)))
                 elif len(records) > 1:
                     # Ambiguous
-                    s3_debug("Cannot set branch link for new Organisation %s as there are multiple matches for parent %s" % (org, parent))
+                    current.log.debug("Cannot set branch link for new Organisation %s as there are multiple matches for parent %s" % (name, parent))
                 else:
                     # Create Parent
                     parent_id = otable.insert(name=parent)
                     update_super(otable, Storage(id=parent_id))
-                    set_record_owner(otable, id)
+                    set_record_owner(otable, parent_id)
                     # @ToDo: Call onaccept?
                     # Create link
-                    link_id = btable.insert(organisation_id == parent_id,
-                                            branch_id == id)
+                    link_id = btable.insert(organisation_id = parent_id,
+                                            branch_id = organisation_id)
                     onaccept = s3db.get_config("org_organisation_branch", "onaccept")
                     callback(onaccept, Storage(vars=Storage(id=link_id)))
-            return (id, record.pe_id)
+            return (organisation_id, record.pe_id)
 
         def org_lookup(org_full):
             """ Helper to lookup an Organisation """
@@ -1909,12 +1898,12 @@ $.filterOptionsS3({
                                        limitby = (0, 2))
             if len(records) == 1:
                 record = records.first()
-                id = record.id
+                organisation_id = record.id
                 pe_id = record.pe_id
             elif len(records) > 1:
                 # Ambiguous
-                s3_debug("Cannot set Organisation %s for user as there are multiple matches" % org)
-                id = ""
+                current.log.debug("Cannot set Organisation %s for user as there are multiple matches" % org)
+                organisation_id = ""
                 pe_id = ""
             elif TRANSLATE:
                 # Search by local name
@@ -1926,32 +1915,32 @@ $.filterOptionsS3({
                                            limitby = (0, 2))
                 if len(records) == 1:
                     record = records.first()
-                    id = record.id
+                    organisation_id = record.id
                     pe_id = record.pe_id
                 elif len(records) > 1:
                     # Ambiguous
-                    s3_debug("Cannot set Organisation %s for user as there are multiple matches" % org)
-                    id = ""
+                    current.log.debug("Cannot set Organisation %s for user as there are multiple matches" % org)
+                    organisation_id = ""
                     pe_id = ""
                 elif ORG_ADMIN:
                     # NB ORG_ADMIN has the list of permitted pe_ids already in filter_opts
-                    s3_debug("Cannot create new Organisation %s as ORG_ADMIN cannot create new Orgs during User Imports" % org)
-                    id = ""
+                    current.log.debug("Cannot create new Organisation %s as ORG_ADMIN cannot create new Orgs during User Imports" % org)
+                    organisation_id = ""
                     pe_id = ""
                 else:
                     # Add a new record
-                    (id, pe_id) = add_org(org, parent)
+                    (organisation_id, pe_id) = add_org(org, parent)
 
             elif ORG_ADMIN:
                 # NB ORG_ADMIN has the list of permitted pe_ids already in filter_opts
-                s3_debug("Cannot create new Organisation %s as ORG_ADMIN cannot create new Orgs during User Imports" % org)
-                id = ""
+                current.log.debug("Cannot create new Organisation %s as ORG_ADMIN cannot create new Orgs during User Imports" % org)
+                organisation_id = ""
                 pe_id = ""
             else:
                 # Add a new record
-                (id, pe_id) = add_org(org, parent)
+                (organisation_id, pe_id) = add_org(org, parent)
 
-            return (id, pe_id)
+            return (organisation_id, pe_id)
 
         # Memberships
         elements = tree.getroot().xpath("/s3xml//resource[@name='auth_membership']/data[@field='pe_id']")
@@ -1971,7 +1960,7 @@ $.filterOptionsS3({
 
                 if pe_tablename == "org_organisation":
                     # This is a non-integer, so must be 1st or only phase
-                    (id, pe_id) = org_lookup(pe_value)
+                    (record_id, pe_id) = org_lookup(pe_value)
                 else:
                     table = s3db[pe_tablename]
                     if pe_tablename not in looked_up:
@@ -1980,15 +1969,14 @@ $.filterOptionsS3({
                                                                     table.pe_id,
                                                                     limitby=(0, 1)
                                                                     ).first()
-                    if not record:
+                    if record:
+                        record_id = record.id
+                    else:
                         # Add a new record
-                        id = table.insert(**{pe_field: pe_value})
-                        update_super(table, Storage(id=id))
-                        set_record_owner(table, id)
-                        record = db(table.id == id).select(table.id,
-                                                           table.pe_id,
-                                                           limitby=(0, 1)).first()
-                    id = record.id
+                        record_id = table.insert(**{pe_field: pe_value})
+                        record = Storage(id=record_id)
+                        update_super(table, record)
+                        set_record_owner(table, record_id)
                     pe_id = record.pe_id
 
                 new_value = str(pe_id)
@@ -1996,71 +1984,72 @@ $.filterOptionsS3({
                 element.text = new_value
                 # Store in case we get called again with same value
                 looked_up[pe_tablename][pe_value] = dict(pe_id=new_value,
-                                                         id=str(id),
+                                                         id=str(record_id),
                                                          )
 
+        # No longer required since we can use references in the import CSV
         # Organisations
-        elements = tree.getroot().xpath("/s3xml//resource[@name='auth_user']/data[@field='organisation_id']")
-        if elements:
-            orgs = looked_up["org_organisation"]
-            for element in elements:
-                org_full = element.text
-                if org_full in orgs:
-                    # Replace string with id
-                    element.text = orgs[org_full]["id"]
-                    # Don't check again
-                    continue
-                try:
-                    # Is this the 2nd phase of a 2-phase import & hence values have already been replaced?
-                    int(org_full)
-                except ValueError:
-                    # This is a non-integer, so must be 1st or only phase
-                    (id, pe_id) = org_lookup(org_full)
+        #elements = tree.getroot().xpath("/s3xml//resource[@name='auth_user']/data[@field='organisation_id']")
+        #if elements:
+        #    orgs = looked_up["org_organisation"]
+        #    for element in elements:
+        #        org_full = element.text
+        #        if org_full in orgs:
+        #            # Replace string with id
+        #            element.text = orgs[org_full]["id"]
+        #            # Don't check again
+        #            continue
+        #        try:
+        #            # Is this the 2nd phase of a 2-phase import & hence values have already been replaced?
+        #            int(org_full)
+        #        except ValueError:
+        #            # This is a non-integer, so must be 1st or only phase
+        #            (organisation_id, pe_id) = org_lookup(org_full)
 
-                    # Replace string with id
-                    id = str(id)
-                    element.text = id
-                    # Store in case we get called again with same value
-                    orgs[org_full] = dict(id=id)
-                else:
-                    # Store in case we get called again with same value
-                    orgs[org_full] = dict(id=org_full)
+        #            # Replace string with id
+        #            organisation_id = str(organisation_id)
+        #            element.text = organisation_id
+        #            # Store in case we get called again with same value
+        #            orgs[org_full] = dict(id=organisation_id)
+        #        else:
+        #            # Store in case we get called again with same value
+        #            orgs[org_full] = dict(id=org_full)
 
         # Organisation Groups
-        elements = tree.getroot().xpath("/s3xml//resource[@name='auth_user']/data[@field='org_group_id']")
-        if elements:
-            gtable = s3db.org_group
-            org_groups = looked_up.get("org_organisation_group", {})
-            for element in elements:
-                name = element.text
-                if name in org_groups:
-                    # Replace string with id
-                    element.text = org_groups[name]["id"]
-                    # Don't check again
-                    continue
+        #elements = tree.getroot().xpath("/s3xml//resource[@name='auth_user']/data[@field='org_group_id']")
+        #if elements:
+        #    gtable = s3db.org_group
+        #    org_groups = looked_up.get("org_organisation_group", {})
+        #    for element in elements:
+        #        name = element.text
+        #        if name in org_groups:
+        #            # Replace string with id
+        #            element.text = org_groups[name]["id"]
+        #            # Don't check again
+        #            continue
 
-                try:
-                    # Is this the 2nd phase of a 2-phase import & hence values have already been replaced?
-                    int(org_full)
-                except ValueError:
-                    # This is a non-integer, so must be 1st or only phase
-                    record = db(gtable.name == name).select(gtable.id,
-                                                            limitby=(0, 1)
-                                                            ).first()
-                    if record:
-                        id = record.id
-                    else:
-                        # Add a new record
-                        id = gtable.insert(name=name)
-                        update_super(gtable, Storage(id=id))
-                    # Replace string with id
-                    id = str(id)
-                    element.text = id
-                    # Store in case we get called again with same value
-                    org_groups[name] = dict(id=id)
-                else:
-                    # Store in case we get called again with same value
-                    org_groups[name] = dict(id=name)
+        #        try:
+        #            # Is this the 2nd phase of a 2-phase import & hence values have already been replaced?
+        #            int(name)
+        #        except ValueError:
+        #            # This is a non-integer, so must be 1st or only phase
+        #            record = db(gtable.name == name).select(gtable.id,
+        #                                                    limitby=(0, 1)
+        #                                                    ).first()
+        #            if record:
+        #                org_group_id = record.id
+        #            else:
+        #                # Add a new record
+        #                org_group_id = gtable.insert(name=name)
+        #                update_super(gtable, Storage(id=org_group_id))
+        #            # Replace string with id
+        #            org_group_id = str(org_group_id)
+        #            element.text = org_group_id
+        #            # Store in case we get called again with same value
+        #            org_groups[name] = dict(id=org_group_id)
+        #        else:
+        #            # Store in case we get called again with same value
+        #            org_groups[name] = dict(id=name)
 
     # -------------------------------------------------------------------------
     @staticmethod
@@ -2371,7 +2360,7 @@ $.filterOptionsS3({
         return approved
 
     # -------------------------------------------------------------------------
-    def s3_approve_user(self, user):
+    def s3_approve_user(self, user, password=None):
         """
             S3 framework function
 
@@ -2386,6 +2375,9 @@ $.filterOptionsS3({
                 - Adds user to the 'Authenticated' role
                 - Adds any default roles for the user
                 - @ToDo: adds them to the Org_x Access role
+
+            @param user: the user Storage() or Row
+            @param password: optional password to include in a custom welcome_email
         """
 
         user_id = user.id
@@ -2486,7 +2478,7 @@ $.filterOptionsS3({
                                                      ).first().email
         self.auth_user_onaccept(user_email, user_id)
         # Send Welcome mail
-        self.s3_send_welcome_email(user)
+        self.s3_send_welcome_email(user, password)
 
     # -------------------------------------------------------------------------
     def s3_link_user(self, user):
@@ -2527,11 +2519,11 @@ $.filterOptionsS3({
             if "staff" in link_user_to:
                 # Add Staff Record
                 human_resource_id = self.s3_link_to_human_resource(user, person_id,
-                                                                   type=1)
+                                                                   hr_type=1)
             if "volunteer" in link_user_to:
                 # Add Volunteer Record
                 human_resource_id = self.s3_link_to_human_resource(user, person_id,
-                                                                   type=2)
+                                                                   hr_type=2)
             if "member" in link_user_to:
                 # Add Member Record
                 member_id = self.s3_link_to_member(user, person_id)
@@ -2658,11 +2650,11 @@ $.filterOptionsS3({
                     query = (ptable.pe_id == pe_id)
                     if middle_name:
                         db(query).update(first_name = user.first_name,
-                                         last_name = user.last_name,
+                                         middle_name = user.last_name,
                                          )
                     else:
                         db(query).update(first_name = user.first_name,
-                                         middle_name = user.last_name,
+                                         last_name = user.last_name,
                                          )
 
                 # Add the user's email address to the person record if missing
@@ -2697,7 +2689,7 @@ $.filterOptionsS3({
             else:
                 # This user account isn't yet linked to a person record
                 # => try to find a person record with same first name,
-                # last name and email address
+                # other name and email address
 
                 first_name = user.first_name
                 last_name = user.last_name
@@ -2898,9 +2890,9 @@ $.filterOptionsS3({
         if not organisation_id:
             # Create a new Organisation
             name = user.get("organisation_name", None)
-            acronym = user.get("organisation_acronym", None)
             if name:
                 # Create new organisation
+                acronym = user.get("organisation_acronym", None)
                 otable = s3db.org_organisation
                 record = Storage(name=name,
                                  acronym=acronym)
@@ -2992,7 +2984,7 @@ $.filterOptionsS3({
     def s3_link_to_human_resource(self,
                                   user,
                                   person_id,
-                                  type,
+                                  hr_type,
                                   ):
         """
             Take ownership of the HR records of the person record
@@ -3011,79 +3003,106 @@ $.filterOptionsS3({
 
         if not htable or (not organisation_id and \
                           settings.get_hrm_org_required()):
+            # Module disabled or no user organisation set
             return None
 
-        # Update existing HR record for this user
-        if type == 1:
-            site_id = user.site_id
-        else:
-            site_id = None
+        def customise(hr_id):
+            """ Customise hrm_human_resource """
+            customise = settings.customise_resource(htablename)
+            if customise:
+                if hr_id:
+                    args = [str(hr_id)]
+                else:
+                    args = None
+                request = S3Request("hrm", "human_resource",
+                                    current.request,
+                                    args = args,
+                                    )
+                customise(request, htablename)
+
+        # Determine the site ID
+        site_id = user.site_id if hr_type == 1 else None
+
+        # Get existing active HR record for this user
         ptable = s3db.pr_person
         ltable = s3db.pr_person_user
-        query = (htable.deleted == False) & \
-                (htable.status == 1) & \
-                (htable.type == type) & \
-                (htable.person_id == ptable.id) & \
+        query = (ltable.user_id == user_id) & \
                 (ptable.pe_id == ltable.pe_id) & \
-                (ltable.user_id == user_id)
-        rows = db(query).select(htable.id,
-                                limitby=(0, 2))
-        if len(rows) == 1:
-            # Only update if there is a single HR Record
-            hr_id = rows.first().id
-            db(htable.id == hr_id).update(organisation_id = organisation_id,
-                                          site_id = site_id)
-            # Update record ownership
-            self.s3_set_record_owner(htable, hr_id, force_update=True)
+                (htable.person_id == ptable.id) & \
+                (htable.type == hr_type) & \
+                (htable.status == 1) & \
+                (htable.deleted == False)
+        rows = db(query).select(htable.id, limitby=(0, 2))
 
-            # Update Site link
+        accepted = None
+        if len(rows) == 1:
+            # Single active HR record of this type
+            # => update organisation and site
+            record = rows.first()
+            hr_id = record.id
+
+            # Update the record
+            customise(hr_id)
+            db(htable.id == hr_id).update(organisation_id = organisation_id,
+                                          site_id = site_id,
+                                          )
+            accepted = "update"
+
+            # Update or create site link
             hstable = s3db.hrm_human_resource_site
             query = (hstable.human_resource_id == hr_id)
-            row = db(query).select(hstable.id,
-                                    limitby=(0, 1)).first()
-            if row:
-                db(query).update(site_id = site_id,
-                                 human_resource_id = hr_id,
-                                 owned_by_user = user_id)
+            hstable.update_or_insert(query,
+                                     site_id = site_id,
+                                     human_resource_id = hr_id,
+                                     owned_by_user = user_id,
+                                     )
+        else:
+            # Multiple or no HR records of this type
+
+            if rows:
+                # Multiple records
+                # => check if there is one for this organisation and site
+                if type(person_id) is list:
+                    person_id = person_id[0]
+                query = (htable.person_id == person_id) & \
+                        (htable.organisation_id == organisation_id) & \
+                        (htable.type == hr_type) & \
+                        (htable.site_id == site_id) & \
+                        (htable.deleted == False)
+                row = db(query).select(htable.id, limitby=(0, 1)).first()
             else:
-                hstable.insert(site_id=site_id,
-                               human_resource_id=hr_id,
-                               owned_by_user=user_id)
+                # No HR record exists at all
+                row = None
 
-        # Create an HR record, if one doesn't already exist
-        if isinstance(person_id, list):
-            person_ids = person_id
-        else:
-            person_ids = [person_id]
-        query = (htable.person_id.belongs(person_ids)) & \
-                (htable.organisation_id == organisation_id) & \
-                (htable.type == type) & \
-                (htable.site_id == site_id)
-        row = db(query).select(htable.id, limitby=(0, 1)).first()
+            if row:
+                # At least one record for this organisation and site exists
+                # => pass
+                hr_id = row.id
 
-        if row:
-            hr_id = row.id
-        else:
-            record = Storage(person_id=person_ids[0],
-                             organisation_id=organisation_id,
-                             site_id = site_id,
-                             type=type,
-                             owned_by_user=user_id,
-                             )
-            hr_id = htable.insert(**record)
-            if hr_id:
+            else:
+                # Create new HR record
+                customise(hr_id = None)
+                record = Storage(person_id=person_id,
+                                 organisation_id=organisation_id,
+                                 site_id = site_id,
+                                 type=hr_type,
+                                 owned_by_user=user_id,
+                                 )
+                hr_id = htable.insert(**record)
                 record["id"] = hr_id
-                s3db.update_super(htable, record)
-                # Customise the resource
-                customise = settings.customise_resource(htablename)
-                if customise:
-                    request = S3Request("hrm", "human_resource",
-                                        current.request,
-                                        args=[str(hr_id)])
-                    customise(request, htablename)
+                accepted = "create"
 
-                self.s3_set_record_owner(htable, hr_id)
-                s3db.onaccept(htablename, record, method="create")
+        if hr_id and accepted:
+
+            # Update any super-records
+            s3db.update_super(htable, record)
+
+            # Set or update the record owner and realm entity
+            # (enforce update to change realm if organisation changed)
+            self.s3_set_record_owner(htable, hr_id, force_update=True)
+
+            # Run onaccept
+            s3db.onaccept(htablename, record, method=accepted)
 
         return hr_id
 
@@ -3216,7 +3235,7 @@ $.filterOptionsS3({
         return approver, organisation_id
 
     # -------------------------------------------------------------------------
-    def s3_send_welcome_email(self, user):
+    def s3_send_welcome_email(self, user, password=None):
         """
             Send a welcome mail to newly-registered users
             - especially suitable for users from Facebook/Google who don't
@@ -3224,6 +3243,7 @@ $.filterOptionsS3({
 
             @param user: the user dict, must contain "email", and can
                          contain "language" for translation of the message
+            @param password: optional password to include in a custom welcome_email
         """
 
         messages = self.messages
@@ -3235,18 +3255,20 @@ $.filterOptionsS3({
         # Ensure that we send out the mails in the language that
         # the recipient wants (if we know it)
         T = current.T
-        if "language" in user:
-            T.force(user["language"])
+        language = user.get("language")
+        if language:
+            T.force(language)
 
         # Compose the message
-        system_name = settings.get_system_name()
-        subject = messages.welcome_email_subject % \
-                        {"system_name": system_name}
-        message = messages.welcome_email % \
+        system_name = s3_str(settings.get_system_name())
+        subject = s3_str(messages.welcome_email_subject % \
+                        {"system_name": system_name})
+        message = s3_str(messages.welcome_email % \
                         {"system_name": system_name,
                          "url": settings.get_base_public_url(),
-                         "profile": URL("default", "user", args=["profile"])
-                         }
+                         "profile": URL("default", "user", args=["profile"]),
+                         "password": password,
+                         })
 
         # Restore language for UI
         T.force(current.session.s3.language)
@@ -3647,23 +3669,34 @@ $.filterOptionsS3({
         table = self.settings.table_group
 
         if isinstance(role_id, str) and not role_id.isdigit():
-            gquery = (table.uuid == role_id)
+            query = (table.uuid == role_id)
         else:
             role_id = int(role_id)
-            gquery = (table.id == role_id)
+            query = (table.id == role_id)
 
-        role = db(gquery).select(limitby=(0, 1)).first()
+        role = db(query).select(table.id,
+                                table.protected,
+                                limitby=(0, 1),
+                                ).first()
+
         if role and not role.protected:
+
+            group_id = role.id
+            data = {"deleted": True,
+                    "group_id": None,
+                    "deleted_fk": '{"group_id": %s}' % group_id,
+                    }
+
             # Remove all memberships for this role
             mtable = self.settings.table_membership
-            mquery = (mtable.group_id == role.id)
-            db(mquery).update(deleted=True)
-            # Remove all ACLs for this role
+            db(mtable.group_id == group_id).update(**data)
+
+            # Remove all permission rules for this role
             ptable = self.permission.table
-            pquery = (ptable.group_id == role.id)
-            db(pquery).update(deleted=True)
+            db(ptable.group_id == group_id).update(**data)
+
             # Remove the role
-            db(gquery).update(role=None, deleted=True)
+            role.update_record(role=None, deleted=True)
 
     # -------------------------------------------------------------------------
     def s3_assign_role(self, user_id, group_id, for_pe=None):
@@ -3732,7 +3765,8 @@ $.filterOptionsS3({
                               "group_id": group_id}
                 if for_pe is not None and str(group_id) not in unrestrictable:
                     membership["pe_id"] = for_pe
-                membership_id = mtable.insert(**membership)
+                #membership_id = mtable.insert(**membership)
+                mtable.insert(**membership)
 
         # Update roles for current user if required
         if self.user and str(user_id) == str(self.user.id):
@@ -7406,9 +7440,6 @@ class S3RoleManager(S3Method):
             for i, role in enumerate(resource):
 
                 role_id = role.id
-                role_name = role.role
-                role_desc = role.description
-
                 actions = []
 
                 # Edit button to edit permissions of the role
@@ -7422,12 +7453,13 @@ class S3RoleManager(S3Method):
                     actions.append(edit_btn)
 
                 # Users button to manage users for this role
-                users_btn = A(T("Users"),
-                              _href=URL(c="admin", f="role",
-                                        args=[role_id, "users"],
-                                        ),
-                              _class="action-btn")
-                actions.append(users_btn)
+                if role_id != sr.ANONYMOUS:
+                    users_btn = A(T("Users"),
+                                  _href=URL(c="admin", f="role",
+                                            args=[role_id, "users"],
+                                            ),
+                                  _class="action-btn")
+                    actions.append(users_btn)
 
                 # Delete button to delete this role
                 if not role.protected and role_id not in undeletable:
@@ -7438,7 +7470,7 @@ class S3RoleManager(S3Method):
                                           ),
                                 _class="delete-btn")
                     actions.append(delete_btn)
-                tdata = [TD(actions), TD(role_name)]
+                tdata = [TD(actions), TD(role.role)]
 
                 if show_matrix:
                     # Display the permission matrix
@@ -7471,7 +7503,7 @@ class S3RoleManager(S3Method):
                         tdata += [TD(values, _nowrap="nowrap")]
                 else:
                     # Display role descriptions
-                    tdata += [TD(role_desc)]
+                    tdata += [TD(T(role.description))]
 
                 _class = i % 2 and "even" or "odd"
                 trows.append(TR(tdata, _class=_class))

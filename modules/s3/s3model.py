@@ -27,21 +27,23 @@
     OTHER DEALINGS IN THE SOFTWARE.
 """
 
-__all__ = ("S3Model",)
+__all__ = ("S3Model",
+           )
 
 from gluon import *
 # Here are dependencies listed for reference:
 #from gluon import current
 #from gluon.dal import Field
-#from gluon.validators import IS_EMPTY_OR
+#from gluon.validators import IS_EMPTY_OR, IS_NOT_EMPTY
 from gluon.storage import Storage
 from gluon.tools import callback
 
-from s3dal import Table
+from s3dal import Table, Field
 from s3navigation import S3ScriptItem
 from s3resource import S3Resource
 from s3validators import IS_ONE_OF
 
+DYNAMIC_PREFIX = "s3dt"
 DEFAULT = lambda: None
 
 ogetattr = object.__getattribute__
@@ -83,7 +85,8 @@ class S3Model(object):
                             "gis",
                             "pr",
                             "sit",
-                            "org")
+                            "org",
+                            )
 
         if module is not None:
             if self.__loaded():
@@ -201,7 +204,12 @@ class S3Model(object):
             return ogetattr(db, tablename)
         else:
             prefix, name = tablename.split("_", 1)
-            if hasattr(models, prefix):
+            if prefix == DYNAMIC_PREFIX:
+                try:
+                    found = S3DynamicModel(tablename).table
+                except AttributeError:
+                    pass
+            elif hasattr(models, prefix):
                 module = models.__dict__[prefix]
                 loaded = False
                 generic = []
@@ -646,6 +654,86 @@ class S3Model(object):
 
     # -------------------------------------------------------------------------
     @classmethod
+    def add_dynamic_components(cls, tablename, exclude=None):
+        """
+            Helper function to look up and declare dynamic components
+            for a table; called by get_components if dynamic_components
+            is configured for the table
+
+            @param tablename: the table name
+            @param exclude: names to exclude (static components)
+        """
+
+        mtable = cls.table(tablename)
+        if mtable is None:
+            return
+
+        if cls.get_config(tablename, "dynamic_components_loaded"):
+            # Already loaded
+            return
+
+        ttable = cls.table("s3_table")
+        ftable = cls.table("s3_field")
+
+        join = ttable.on(ttable.id == ftable.table_id)
+        query = (ftable.master == tablename) & \
+                (ftable.component_key == True) & \
+                (ftable.deleted != True)
+        rows = current.db(query).select(ftable.name,
+                                        ftable.field_type,
+                                        ftable.component_alias,
+                                        ftable.settings,
+                                        ttable.name,
+                                        join = join,
+                                        )
+
+        # Don't do this again during the same request cycle
+        cls.configure(tablename, dynamic_components_loaded=True)
+
+        components = {}
+        for row in rows:
+
+            hook = {}
+
+            ctable = row["s3_table"]
+            ctablename = ctable.name
+            default_alias = ctablename.split("_", 1)[-1]
+
+            field = row["s3_field"]
+            alias = field.component_alias
+
+            if not alias:
+                alias = default_alias
+            if exclude and alias in exclude:
+                continue
+
+            if alias != default_alias:
+                hook["name"] = alias
+
+            hook["joinby"] = field.name
+
+            settings = field.settings
+            if settings:
+                multiple = settings.get("component_multiple", DEFAULT)
+                if multiple is not DEFAULT:
+                    hook["multiple"] = multiple
+
+            # Get the primary key
+            field_type = field.field_type
+            if field_type[:10] == "reference ":
+                ktablename = field_type.split(" ", 1)[1]
+                if "." in ktablename:
+                    ktablename, pkey = ktablename.split(".", 1)[1]
+                    if pkey and pkey != mtable._id.name:
+                        hook["pkey"] = pkey
+
+            components[ctablename] = hook
+
+        if components:
+            cls.add_components(tablename, **components)
+
+    # -------------------------------------------------------------------------
+    @classmethod
     def get_component(cls, table, name):
         """
             Finds a component definition.
@@ -672,12 +760,9 @@ class S3Model(object):
         """
 
         components = current.model.components
-
         load = cls.table
-        get_hooks = cls.__get_hooks
 
-        hooks = Storage()
-        single = False
+        # Get tablename and table
         if type(table) is Table:
             tablename = table._tablename
         else:
@@ -686,13 +771,25 @@ class S3Model(object):
             if table is None:
                 # Primary table not defined
                 return None
+
+        # Single alias?
+        single = False
         if isinstance(names, str):
             single = True
-            names = [names]
-        h = components.get(tablename, None)
-        if h:
-            get_hooks(hooks, h, names=names)
-        if not single or single and not len(hooks):
+            names = set([names])
+        elif names is not None:
+            names = set(names)
+
+        # Get hooks for direct components
+        hooks = {}
+        get_hooks = cls.__get_hooks
+        direct_components = components.get(tablename)
+        if direct_components:
+            names = get_hooks(hooks, direct_components, names=names)
+
+        supertables = None
+        if names is None or names:
+            # Add hooks for super-components
             supertables = cls.get_config(tablename, "super_entity")
             if supertables:
                 if not isinstance(supertables, (list, tuple)):
@@ -702,10 +799,39 @@ class S3Model(object):
                         s = load(s)
                     if s is None:
                         continue
-                    h = components.get(s._tablename, None)
-                    if h:
-                        get_hooks(hooks, h, names=names, supertable=s)
+                    super_components = components.get(s._tablename)
+                    if super_components:
+                        names = get_hooks(hooks, super_components,
+                                          names = names,
+                                          supertable = s,
+                                          )
 
+        dynamic_components =  cls.get_config(tablename, "dynamic_components")
+        if dynamic_components:
+
+            if names is None or names:
+                # Add hooks for dynamic components
+                cls.add_dynamic_components(tablename, exclude=hooks)
+                direct_components = components.get(tablename)
+                if direct_components:
+                    names = get_hooks(hooks, direct_components, names=names)
+
+            if supertables and (names is None or names):
+                # Add hooks for dynamic super-components
+                for s in supertables:
+                    if isinstance(s, str):
+                        s = load(s)
+                    if s is None:
+                        continue
+                    cls.add_dynamic_components(s._tablename, exclude=hooks)
+                    super_components = components.get(s._tablename)
+                    if super_components:
+                        names = get_hooks(hooks, super_components,
+                                          names = names,
+                                          supertable = s,
+                                          )
+
+        # Build component-objects for each hook
         components = Storage()
         for alias in hooks:
 
@@ -731,7 +857,8 @@ class S3Model(object):
                                 table=ctable,
                                 prefix=prefix,
                                 name=name,
-                                alias=alias)
+                                alias=alias,
+                                )
 
             if hook.supertable is not None:
                 joinby = hook.supertable._id.name
@@ -776,6 +903,7 @@ class S3Model(object):
                 component.filterby = hook.filterby
 
             components[alias] = component
+
         return components
 
     # -------------------------------------------------------------------------
@@ -788,11 +916,9 @@ class S3Model(object):
         """
 
         components = current.model.components
-
         load = cls.table
-        get_hooks = cls.__get_hooks
 
-        hooks = Storage()
+        # Get tablename and table
         if type(table) is Table:
             tablename = table._tablename
         else:
@@ -800,11 +926,21 @@ class S3Model(object):
             table = load(tablename)
             if table is None:
                 return False
+
+        # Attach dynamic components
+        if cls.get_config(tablename, "dynamic_components"):
+            cls.add_dynamic_components(tablename)
+
+        # Get table hooks
+        hooks = Storage()
+        get_hooks = cls.__get_hooks
         h = components.get(tablename, None)
         if h:
             get_hooks(hooks, h)
         if len(hooks):
             return True
+
+        # Check for super-components
         supertables = cls.get_config(tablename, "super_entity")
         if supertables:
             if not isinstance(supertables, (list, tuple)):
@@ -819,6 +955,8 @@ class S3Model(object):
                     get_hooks(hooks, h, supertable=s)
             if len(hooks):
                 return True
+
+        # No components found
         return False
 
     # -------------------------------------------------------------------------
@@ -826,16 +964,25 @@ class S3Model(object):
     def __get_hooks(cls, components, hooks, names=None, supertable=None):
         """
             DRY Helper method to filter component hooks
+
+            @param components: components already found, dict {alias: component}
+            @param hooks: component hooks to filter, dict {alias: hook}
+            @param names: the names (=aliases) to include
+            @param supertable: the super-table name to set for the component
+
+            @returns: set of names that could not be found,
+                      or None if names was None
         """
 
         for alias in hooks:
-            if alias in components:
-                continue
-            if names is not None and alias not in names:
+            if alias in components or \
+               names is not None and alias not in names:
                 continue
             hook = hooks[alias]
             hook["supertable"] = supertable
             components[alias] = hook
+
+        return set(names) - set(hooks) if names is not None else None
 
     # -------------------------------------------------------------------------
     @classmethod
@@ -1347,5 +1494,463 @@ class S3Model(object):
             if record:
                 return (prefix, name, record.id)
         return (None, None, None)
+
+# =============================================================================
+class S3DynamicModel(object):
+    """
+        Class representing a dynamic table model
+    """
+
+    def __init__(self, tablename):
+        """
+            Constructor
+
+            @param tablename: the table name
+        """
+
+        self.tablename = tablename
+        table = self.define_table(tablename)
+        if table:
+            self.table = table
+        else:
+            raise AttributeError("Undefined dynamic model: %s" % tablename)
+
+    # -------------------------------------------------------------------------
+    def define_table(self, tablename):
+        """
+            Instantiate a dynamic Table
+
+            @param tablename: the table name
+
+            @return: a Table instance
+        """
+
+        # Is the table already defined?
+        db = current.db
+        redefine = tablename in db
+
+        # Load the table model
+        s3db = current.s3db
+        ttable = s3db.s3_table
+        ftable = s3db.s3_field
+        query = (ttable.name == tablename) & \
+                (ttable.deleted != True) & \
+                (ftable.table_id == ttable.id)
+        rows = db(query).select(ftable.name,
+                                ftable.field_type,
+                                ftable.label,
+                                ftable.require_unique,
+                                ftable.require_not_empty,
+                                ftable.options,
+                                ftable.default_value,
+                                ftable.settings,
+                                ftable.comments,
+                                )
+        if not rows:
+            return None
+
+        # Instantiate the fields
+        fields = []
+        for row in rows:
+            field = self._field(tablename, row)
+            if field:
+                fields.append(field)
+
+        # Automatically add standard meta-fields
+        from s3fields import s3_meta_fields
+        fields.extend(s3_meta_fields())
+
+        # Define the table
+        if fields:
+            # Enable migrate
+            # => is globally disabled when settings.base.migrate
+            #    is False, overriding the table parameter
+            migrate_enabled = db._migrate_enabled
+            db._migrate_enabled = True
+
+            # Define the table
+            db.define_table(tablename,
+                            migrate = True,
+                            redefine = redefine,
+                            *fields)
+
+            # Instantiate table
+            # => otherwise lazy_tables may prevent it
+            table = db[tablename]
+
+            # Restore global migrate_enabled
+            db._migrate_enabled = migrate_enabled
+
+            return table
+        else:
+            return None
+
+    # -------------------------------------------------------------------------
+    def _field(self, tablename, row):
+        """
+            Convert a s3_field Row into a Field instance
+
+            @param tablename: the table name
+            @param row: the s3_field Row
+
+            @return: a Field instance
+        """
+
+        field = None
+
+        if row:
+
+            # Type-specific field constructor
+            fieldtype = row.field_type
+            if row.options:
+                construct = self._options_field
+            elif fieldtype == "date":
+                construct = self._date_field
+            elif fieldtype == "datetime":
+                construct = self._datetime_field
+            elif fieldtype[:9] == "reference":
+                construct = self._reference_field
+            elif fieldtype == "boolean":
+                construct = self._boolean_field
+            elif fieldtype in ("integer", "double"):
+                construct = self._numeric_field
+            else:
+                construct = self._generic_field
+
+            field = construct(tablename, row)
+            if not field:
+                return None
+
+            requires = field.requires
+
+            # Handle require_not_empty
+            if row.require_not_empty and fieldtype != "boolean":
+                if not requires:
+                    requires = IS_NOT_EMPTY()
+            elif requires:
+                requires = IS_EMPTY_OR(requires)
+
+            field.requires = requires
+
+            # Field label and comment
+            T = current.T
+            label = row.label
+            if not label:
+                fieldname = row.name
+                label = " ".join(s.capitalize() for s in fieldname.split("_"))
+            if label:
+                field.label = T(label)
+            comments = row.comments
+            if comments:
+                field.comment = T(comments)
+
+        return field
+
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _generic_field(tablename, row):
+        """
+            Generic field constructor
+
+            @param tablename: the table name
+            @param row: the s3_field Row
+
+            @return: the Field instance
+        """
+
+        fieldname = row.name
+        fieldtype = row.field_type
+
+        if row.require_unique:
+            from s3validators import IS_NOT_ONE_OF
+            requires = IS_NOT_ONE_OF(current.db, "%s.%s" % (tablename,
+                                                            fieldname,
+                                                            ),
+                                     )
+        else:
+            requires = None
+
+        if fieldtype in ("string", "text"):
+            default = row.default_value
+        else:
+            default = None
+
+        field = Field(fieldname, fieldtype,
+                      default = default,
+                      requires = requires,
+                      )
+        return field
+
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _options_field(tablename, row):
+        """
+            Options-field constructor
+
+            @param tablename: the table name
+            @param row: the s3_field Row
+
+            @return: the Field instance
+        """
+
+        fieldname = row.name
+        fieldtype = row.field_type
+        fieldopts = row.options
+
+        settings = row.settings or {}
+
+        # Always translate options unless translate_options is False
+        translate = settings.get("translate_options", True)
+        T = current.T
+
+        from s3utils import s3_str
+
+        sort = False
+        zero = ""
+
+        if isinstance(fieldopts, dict):
+            options = fieldopts
+            if translate:
+                options = dict((k, T(v)) for k, v in options.items())
+            options_dict = options
+            # Sort options unless sort_options is False (=default True)
+            sort = settings.get("sort_options", True)
+
+        elif isinstance(fieldopts, list):
+            options = []
+            for opt in fieldopts:
+                if isinstance(opt, (tuple, list)) and len(opt) >= 2:
+                    k, v = opt[:2]
+                else:
+                    k, v = opt, s3_str(opt)
+                if translate:
+                    v = T(v)
+                options.append((k, v))
+            options_dict = dict(options)
+            # Retain list order unless sort_options is True (=default False)
+            sort = settings.get("sort_options", False)
+
+        else:
+            options_dict = options = {}
+
+        # Apply default value (if it is a valid option)
+        default = row.default_value
+        if default and s3_str(default) in (s3_str(k) for k in options_dict):
+            # No zero-option if we have a default value and
+            # the field must not be empty:
+            zero = None if row.require_not_empty else ""
+        else:
+            default = None
+
+        from s3fields import S3Represent
+        field = Field(fieldname, fieldtype,
+                      default = default,
+                      represent = S3Represent(options = options_dict,
+                                              translate = translate,
+                                              ),
+                      requires = IS_IN_SET(options,
+                                           sort = sort,
+                                           zero = zero,
+                                           )
+                      )
+        return field
+
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _date_field(tablename, row):
+        """
+            Date field constructor
+
+            @param tablename: the table name
+            @param row: the s3_field Row
+
+            @return: the Field instance
+        """
+
+        fieldname = row.name
+        settings = row.settings or {}
+
+        attr = {}
+        for keyword in ("past", "future"):
+            setting = settings.get(keyword, DEFAULT)
+            if setting is not DEFAULT:
+                attr[keyword] = setting
+        attr["empty"] = False
+
+        default = row.default_value
+        if default:
+            if default == "now":
+                attr["default"] = default
+            else:
+                from s3datetime import s3_decode_iso_datetime
+                try:
+                    dt = s3_decode_iso_datetime(default)
+                except ValueError:
+                    # Ignore
+                    pass
+                else:
+                    attr["default"] = dt.date()
+
+        from s3fields import s3_date
+        field = s3_date(fieldname, **attr)
+
+        return field
+
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _datetime_field(tablename, row):
+        """
+            DateTime field constructor
+
+            @param tablename: the table name
+            @param row: the s3_field Row
+
+            @return: the Field instance
+        """
+
+        fieldname = row.name
+        settings = row.settings or {}
+
+        attr = {}
+        for keyword in ("past", "future"):
+            setting = settings.get(keyword, DEFAULT)
+            if setting is not DEFAULT:
+                attr[keyword] = setting
+        attr["empty"] = False
+
+        default = row.default_value
+        if default:
+            if default == "now":
+                attr["default"] = default
+            else:
+                from s3datetime import s3_decode_iso_datetime
+                try:
+                    dt = s3_decode_iso_datetime(default)
+                except ValueError:
+                    # Ignore
+                    pass
+                else:
+                    attr["default"] = dt
+
+        from s3fields import s3_datetime
+        field = s3_datetime(fieldname, **attr)
+
+        return field
+
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _reference_field(tablename, row):
+        """
+            Reference field constructor
+
+            @param tablename: the table name
+            @param row: the s3_field Row
+
+            @return: the Field instance
+        """
+
+        fieldname = row.name
+        fieldtype = row.field_type
+
+        ktablename = fieldtype.split(" ", 1)[1].split(".", 1)[0]
+        ktable = current.s3db.table(ktablename)
+        if ktable:
+            from s3fields import S3Represent
+            from s3validators import IS_ONE_OF
+            if "name" in ktable.fields:
+                represent = S3Represent(lookup = ktablename,
+                                        translate = True,
+                                        )
+            else:
+                represent = None
+            requires = IS_ONE_OF(current.db, str(ktable._id),
+                                 represent,
+                                 )
+            field = Field(fieldname, fieldtype,
+                          represent = represent,
+                          requires = requires,
+                          )
+        else:
+            field = None
+
+        return field
+
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _numeric_field(tablename, row):
+        """
+            Numeric field constructor
+
+            @param tablename: the table name
+            @param row: the s3_field Row
+
+            @return: the Field instance
+        """
+
+        fieldname = row.name
+        fieldtype = row.field_type
+
+        settings = row.settings or {}
+        minimum = settings.get("min")
+        maximum = settings.get("max")
+
+        if fieldtype == "integer":
+            parse = int
+            requires = IS_INT_IN_RANGE(minimum=minimum,
+                                       maximum=maximum,
+                                       )
+        elif fieldtype == "double":
+            parse = float
+            requires = IS_FLOAT_IN_RANGE(minimum=minimum,
+                                         maximum=maximum,
+                                         )
+        else:
+            parse = None
+            requires = None
+
+        default = row.default_value
+        if default and parse is not None:
+            try:
+                default = parse(default)
+            except ValueError:
+                default = None
+        else:
+            default = None
+
+        field = Field(fieldname, fieldtype,
+                      default = default,
+                      requires = requires,
+                      )
+        return field
+
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def _boolean_field(tablename, row):
+        """
+            Boolean field constructor
+
+            @param tablename: the table name
+            @param row: the s3_field Row
+
+            @return: the Field instance
+        """
+
+        fieldname = row.name
+        fieldtype = row.field_type
+
+        default = row.default_value
+        if default and default.lower() == "true":
+            default = True
+        else:
+            default = False
+
+        from s3utils import s3_yes_no_represent
+        field = Field(fieldname, fieldtype,
+                      default = default,
+                      represent = s3_yes_no_represent,
+                      requires = None,
+                      )
+
+        return field
 
 # END =========================================================================

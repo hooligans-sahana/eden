@@ -1570,6 +1570,7 @@ class S3Config(Storage):
             e.g. Apellido Paterno in Hispanic names
 
             Setting this means that auth_user.last_name matches with pr_person.middle_name
+            e.g. RMSAmericas
         """
         return self.__lazy("L10n", "mandatory_middlename", False)
 
@@ -2721,14 +2722,14 @@ class S3Config(Storage):
     # -------------------------------------------------------------------------
     # DC: Data Collection
     #
-    def get_dc_collection_label(self):
+    def get_dc_response_label(self):
         """
-            Label for Data Collections
-            - default: 'Data Collection'
-            - 'Survey'
+            Label for Responses
             - 'Assessment;
+            - 'Response' (default if set to None)
+            - 'Survey'
         """
-        return self.dc.get("collection_label", "Assessment")
+        return self.dc.get("response_label", "Assessment")
 
     # -------------------------------------------------------------------------
     # Deployments
@@ -2929,6 +2930,18 @@ class S3Config(Storage):
         """
         return self.dvr.get("needs_hierarchical", False)
 
+    def get_dvr_vulnerability_types_hierarchical(self):
+        """
+            Vulnerability types are hierarchical
+        """
+        return self.dvr.get("vulnerability_types_hierarchical", False)
+
+    def get_dvr_response_types_hierarchical(self):
+        """
+            Response types are hierarchical
+        """
+        return self.dvr.get("response_types_hierarchical", False)
+
     # -------------------------------------------------------------------------
     # Education
     #
@@ -2978,17 +2991,17 @@ class S3Config(Storage):
         """
         return self.event.get("incident_types_hierarchical", False)
 
-    def get_event_collection_tab(self):
+    def get_event_dc_response_tab(self):
         """
-            Whether to show the DC collection tab for events
+            Whether to show the DC response tab for events
         """
-        return self.event.get("collection_tab", True)
+        return self.event.get("dc_response_tab", True)
 
-    def get_event_target_tab(self):
+    def get_event_dc_target_tab(self):
         """
             Whether to show the DC target tab for events
         """
-        return self.event.get("target_tab", True)
+        return self.event.get("dc_target_tab", True)
 
     def get_event_impact_tab(self):
         """
@@ -3322,6 +3335,7 @@ class S3Config(Storage):
     def get_hrm_record_label(self):
         """
             Label to use for the HR record tab
+            - string not LazyT
         """
         label = self.__lazy("hrm", "record_label", default=None)
         if not label:
@@ -3713,6 +3727,12 @@ class S3Config(Storage):
                 settings.mobile.forms = [("Request", "req_req")]
         """
         return self.__lazy("mobile", "forms", [])
+
+    def get_mobile_dynamic_tables(self):
+        """
+            Expose mobile forms for dynamic tables
+        """
+        return self.mobile.get("dynamic_tables", True)
 
     # -------------------------------------------------------------------------
     # Organisations

@@ -2569,7 +2569,9 @@ class S3GroupedOptionsWidget(FormWidget):
                  help_field=None,
                  none=None,
                  sort=True,
-                 orientation=None):
+                 orientation=None,
+                 table=True,
+                 ):
         """
             Constructor
 
@@ -2586,6 +2588,7 @@ class S3GroupedOptionsWidget(FormWidget):
             @param none: True to render "None" as normal option
             @param sort: sort the options (only effective if size==None)
             @param orientation: the ordering orientation, "columns"|"rows"
+            @param table: whether to render options inside a table or not
         """
 
         self.options = options
@@ -2596,6 +2599,7 @@ class S3GroupedOptionsWidget(FormWidget):
         self.none = none
         self.sort = sort
         self.orientation = orientation
+        self.table = table
 
     # -------------------------------------------------------------------------
     def __call__(self, field, value, **attributes):
@@ -2633,9 +2637,10 @@ class S3GroupedOptionsWidget(FormWidget):
 
         widget.add_class("groupedopts-widget")
         widget_opts = {"columns": self.cols,
-                       "emptyText": str(current.T("No options available")),
+                       "emptyText": s3_str(current.T("No options available")),
                        "orientation": self.orientation or "columns",
                        "sort": self.sort,
+                       "table": self.table,
                        }
         script = '''$('#%s').groupedopts(%s)''' % \
                  (_id, json.dumps(widget_opts, separators=SEPARATORS))
@@ -5112,7 +5117,7 @@ class S3LocationSelector(S3Selector):
         if show_address:
             address = values.get("address")
             if show_address is True:
-                label = T("Street Address")
+                label = gtable.addr_street.label
             else:
                 label = show_address
             components["address"] = manual_input(fieldname,
@@ -8845,6 +8850,7 @@ class ICON(I):
             "org-network": "fa-umbrella",
             "other": "fa-circle",
             "paper-clip": "fa-paperclip",
+            "pencil": "fa-pencil",
             "phone": "fa-phone",
             "plus": "fa-plus",
             "plus-sign": "fa-plus-sign",
@@ -8919,6 +8925,7 @@ class ICON(I):
             "org-network": "fi-asterisk",
             "other": "fi-asterisk",
             "paper-clip": "fi-paperclip",
+            "pencil": "fi-pencil",
             "phone": "fi-telephone",
             "plus": "fi-plus",
             "plus-sign": "fi-plus",
@@ -8991,6 +8998,7 @@ class ICON(I):
             "org-network": "icon-umbrella",
             "other": "icon-circle",
             "paper-clip": "icon-paper-clip",
+            "pencil": "icon-pencil",
             "phone": "icon-phone",
             "plus": "icon-plus",
             "plus-sign": "icon-plus-sign",

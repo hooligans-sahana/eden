@@ -519,6 +519,8 @@ def config(settings):
     #settings.dvr_needs_use_service_type = True
     # Uncomment this to use hierarchical need types
     #settings.dvr.needs_hierarchical = True
+    # Uncomment this to use hierarchical vulnerability types
+    #settings.dvr.vulnerability_types_hierarchical = True
 
     # -------------------------------------------------------------------------
     # Events
@@ -970,6 +972,8 @@ def config(settings):
     #settings.mobile.forms = [
     #    ("Beneficiaries", "pr_person", {"c": "dvr", "f": "person"}),
     #]
+    # Disable mobile forms for dynamic tables:
+    #settings.mobile.dynamic_tables = False
 
     # -----------------------------------------------------------------------------
     # XForms

@@ -266,6 +266,9 @@ class S3PersonEntity(S3Model):
                        dvi_identification = {"joinby": pe_id,
                                              "multiple": False,
                                              },
+                       # Tenures
+                       stdm_tenure_relationship = pe_id,
+
                        # Map Configs 'Saved Maps'
                        #   - Personalised configurations
                        #   - OU configurations (Organisation/Branch/Facility/Team)
@@ -924,7 +927,7 @@ class S3PersonModel(S3Model):
         # Resource configuration
         self.configure(tablename,
                        crud_form = crud_form,
-                       deduplicate = self.person_deduplicate,
+                       deduplicate = self.person_duplicate,
                        filter_widgets = filter_widgets,
                        list_fields = ["id",
                                       "first_name",
@@ -1249,19 +1252,32 @@ class S3PersonModel(S3Model):
                                 utable.last_name,
                                 limitby=(0, 1)).first()
 
-        # If there is a user and their first or last name have changed
-        if user and form_vars.first_name and \
-           (user.first_name != form_vars.first_name or \
-            user.last_name != form_vars.last_name):
-            # Update the user record
-            query = (utable.id == user.id)
-            db(query).update(first_name = form_vars.first_name,
-                             last_name = form_vars.last_name,
-                             )
+        # If there is a user and their first or other name have changed
+        if user:
+            middle_as_last = current.deployment_settings.get_L10n_mandatory_middlename()
+            if middle_as_last:
+                # RMSAmericas: Map the Person's middle_name to the User's last_name
+                if form_vars.first_name and \
+                   (user.first_name != form_vars.first_name or \
+                   user.last_name != form_vars.middle_name):
+                    # Update the user record
+                    query = (utable.id == user.id)
+                    db(query).update(first_name = form_vars.first_name,
+                                     last_name = form_vars.middle_name,
+                                     )
+            else:
+                if form_vars.first_name and \
+                   (user.first_name != form_vars.first_name or \
+                   user.last_name != form_vars.last_name):
+                    # Update the user record
+                    query = (utable.id == user.id)
+                    db(query).update(first_name = form_vars.first_name,
+                                     last_name = form_vars.last_name,
+                                     )
 
     # -------------------------------------------------------------------------
     @staticmethod
-    def person_deduplicate(item):
+    def person_duplicate(item):
         """ Import item deduplication """
 
         db = current.db
@@ -1273,13 +1289,16 @@ class S3PersonModel(S3Model):
             # Just look at this
             table = item.table
             query = (table.pe_label == pe_label)
-            duplicate = current.db(query).select(table.id,
-                                                 limitby=(0, 1)).first()
+            duplicate = db(query).select(table.id,
+                                         limitby=(0, 1)).first()
             if duplicate:
                 item.id = duplicate.id
                 item.method = item.METHOD.UPDATE
 
             return
+
+        settings = current.deployment_settings
+        middle_mandatory = settings.get_L10n_mandatory_middlename()
 
         ptable = db.pr_person
         # Mandatory data
@@ -1298,7 +1317,10 @@ class S3PersonModel(S3Model):
 
         # @ToDo: Allow each name to be split into words in a different order
         # - see pr_search_ac
-        if fname and lname:
+        if middle_mandatory and fname and mname:
+            query = (ptable.first_name.lower() == fname) & \
+                    (ptable.middle_name.lower() == mname)
+        elif fname and lname:
             query = (ptable.first_name.lower() == fname) & \
                     (ptable.last_name.lower() == lname)
         elif fname and mname:
@@ -1373,7 +1395,7 @@ class S3PersonModel(S3Model):
         def rank(a, b, match, mismatch):
             return match if a == b else mismatch
 
-        email_required = current.deployment_settings.get_pr_import_update_requires_email()
+        email_required = settings.get_pr_import_update_requires_email()
         for row in candidates:
             if fname and (lname or mname):
                 row_fname = row[ptable.first_name]
@@ -1398,12 +1420,21 @@ class S3PersonModel(S3Model):
             if mname:
                 if row_mname:
                     check += rank(mname, row_mname.lower(), +2, -2)
+                #elif middle_mandatory:
+                #    check -= 2
                 else:
                     # Don't penalise hard if the new source doesn't include the middle name
                     check -= 1
 
-            if lname and row_lname:
-                check += rank(lname, row_lname.lower(), +2, -2)
+            if lname:
+                if row_lname:
+                    check += rank(lname, row_lname.lower(), +2, -2)
+                #elif middle_mandatory:
+                #    # Don't penalise if the new source doesn't include the last name
+                #    pass
+                #else:
+                #    # Don't penalise hard if the new source doesn't include the last name
+                #    check -= 1
 
             if initials and row_initials:
                 check += rank(initials, row_initials.lower(), +4, -1)
@@ -3067,8 +3098,7 @@ class S3AddressModel(S3Model):
             msg_list_empty = T("There is no address for this person yet. Add new address.")
             )
 
-        list_fields = ["id",
-                       "type",
+        list_fields = ["type",
                        (T("Address"), "location_id$addr_street"),
                        ]
 
@@ -3421,6 +3451,7 @@ class S3PersonImageModel(S3Model):
 
         T = current.T
         db = current.db
+        request = current.request
 
         # ---------------------------------------------------------------------
         # Image
@@ -3434,59 +3465,59 @@ class S3PersonImageModel(S3Model):
             9:T("other")
         }
 
-        tablename = "pr_image"
-        self.define_table(tablename,
-                          # Component not Instance
-                          self.super_link("pe_id", "pr_pentity"),
-                          Field("profile", "boolean",
-                                default = False,
-                                label = T("Profile Picture?")
-                                ),
-                          Field("image", "upload",
-                                autodelete = True,
-                                length = current.MAX_FILENAME_LENGTH,
-                                represent = self.pr_image_represent,
-                                widget = S3ImageCropWidget((600, 600)),
-                                comment =  DIV(_class="tooltip",
-                                               _title="%s|%s" % (T("Image"),
-                                                                 T("Upload an image file here. If you don't upload an image file, then you must specify its location in the URL field.")))),
-                          Field("url",
-                                label = T("URL"),
-                                represent = pr_url_represent,
-                                comment = DIV(_class="tooltip",
-                                              _title="%s|%s" % (T("URL"),
-                                                                T("The URL of the image file. If you don't upload an image file, then you must specify its location here.")))),
-                          Field("type", "integer",
-                                default = 1,
-                                label = T("Image Type"),
-                                represent = lambda opt: \
-                                            pr_image_type_opts.get(opt,
-                                               current.messages.UNKNOWN_OPT),
-                                requires = IS_IN_SET(pr_image_type_opts,
-                                                     zero=None),
-                                ),
-                          s3_comments("description",
-                                      label=T("Description"),
-                                      comment = DIV(_class="tooltip",
-                                                    _title="%s|%s" % (T("Description"),
-                                                                      T("Give a brief description of the image, e.g. what can be seen where on the picture (optional).")))),
-                          *s3_meta_fields())
-
-        # @todo: make lazy_table
-        table = db[tablename]
-
-        def get_file():
+        def get_file(table):
             """ Callback to return the file field for our record """
-            if len(current.request.args) < 3:
+            if len(request.args) < 3:
                 return None
-            query = (table.id == current.request.args[2])
+            query = (table.id == request.args[2])
             record = db(query).select(table.image, limitby = (0, 1)).first()
             return record.image if record else None
 
-        # Can't be specified inline as needs callback to be defined, which needs table
-        table.image.requires = IS_PROCESSED_IMAGE("image", get_file,
-                                                  upload_path=os.path.join(current.request.folder,
-                                                                           "uploads"))
+        tablename = "pr_image"
+        self.define_table(tablename,
+          # Component not Instance
+          self.super_link("pe_id", "pr_pentity"),
+          Field("profile", "boolean",
+                default = False,
+                label = T("Profile Picture?"),
+                represent = s3_yes_no_represent,
+                ),
+          Field("image", "upload",
+                autodelete = True,
+                length = current.MAX_FILENAME_LENGTH,
+                represent = self.pr_image_represent,
+                widget = S3ImageCropWidget((600, 600)),
+                comment =  DIV(_class="tooltip",
+                               _title="%s|%s" % (T("Image"),
+                                                 T("Upload an image file here. If you don't upload an image file, then you must specify its location in the URL field.")))),
+          Field("url",
+                label = T("URL"),
+                represent = pr_url_represent,
+                comment = DIV(_class="tooltip",
+                              _title="%s|%s" % (T("URL"),
+                                                T("The URL of the image file. If you don't upload an image file, then you must specify its location here.")))),
+          Field("type", "integer",
+                default = 1,
+                label = T("Image Type"),
+                represent = lambda opt: \
+                            pr_image_type_opts.get(opt,
+                               current.messages.UNKNOWN_OPT),
+                requires = IS_IN_SET(pr_image_type_opts,
+                                     zero=None),
+                ),
+          s3_comments("description",
+                      label=T("Description"),
+                      comment = DIV(_class="tooltip",
+                                    _title="%s|%s" % (T("Description"),
+                                                      T("Give a brief description of the image, e.g. what can be seen where on the picture (optional).")))),
+          *s3_meta_fields(),
+          on_define = lambda table: [
+            table.image.set_attributes(requires = \
+                IS_PROCESSED_IMAGE("image", lambda table: get_file(table),
+                                    upload_path=os.path.join(request.folder,
+                                                             "uploads"))),
+            ]
+          )
 
         # CRUD Strings
         current.response.s3.crud_strings[tablename] = Storage(
@@ -3718,7 +3749,6 @@ class S3PersonIdentityModel(S3Model):
     def model(self):
 
         T = current.T
-        messages = current.messages
 
         # ---------------------------------------------------------------------
         # Identity
@@ -3788,6 +3818,14 @@ class S3PersonIdentityModel(S3Model):
                                 ),
                           #Field("ia_subdivision"), # Name of issuing authority subdivision
                           #Field("ia_code"), # Code of issuing authority (if any)
+                          Field("image", "upload",
+                                autodelete = True,
+                                label = T("Scanned Copy"),
+                                length = current.MAX_FILENAME_LENGTH,
+                                # upload folder needs to be visible to the download() function as well as the upload
+                                uploadfolder = os.path.join(current.request.folder,
+                                                            "uploads"),
+                               ),
                           s3_comments(),
                           *s3_meta_fields())
 
@@ -3996,8 +4034,7 @@ class S3PersonEducationModel(S3Model):
                                                        ),
                                             ignore_deleted = True,
                                             ),
-                  list_fields = ["id",
-                                 # Normally accessed via component
+                  list_fields = [# Normally accessed via component
                                  #"person_id",
                                  "year",
                                  "level_id",
@@ -4027,6 +4064,7 @@ class S3PersonDetailsModel(S3Model):
 
         T = current.T
         gis = current.gis
+        settings = current.deployment_settings
         messages = current.messages
         NONE = messages["NONE"]
         UNKNOWN_OPT = messages.UNKNOWN_OPT
@@ -4053,8 +4091,8 @@ class S3PersonDetailsModel(S3Model):
             3: T("literate"),
         }
 
-        # Religion Options
-        religion_opts = current.deployment_settings.get_L10n_religions()
+        # Language Options
+        languages = settings.get_L10n_languages()
 
         # Nationality Options
         STATELESS = T("Stateless")
@@ -4066,11 +4104,19 @@ class S3PersonDetailsModel(S3Model):
                                         gis.get_country(code, key_type="code") or \
                                         UNKNOWN_OPT
 
+        # Religion Options
+        religion_opts = settings.get_L10n_religions()
+
         tablename = "pr_person_details"
         self.define_table(tablename,
                           self.pr_person_id(label = T("Person"),
                                             ondelete = "CASCADE",
                                             ),
+                          Field("language", length=16,
+                                represent = lambda opt: \
+                                    languages.get(opt, UNKNOWN_OPT),
+                                requires = IS_EMPTY_OR(IS_IN_SET(languages)),
+                                ),
                           Field("nationality",
                                 label = T("Nationality"),
                                 represent = nationality_repr,
@@ -4239,7 +4285,7 @@ class S3PersonTagModel(S3Model):
 
         tablename = "pr_person_tag"
         self.define_table(tablename,
-                          self.pr_person_id(),
+                          self.pr_person_id(ondelete = "CASCADE"),
                           Field("tag",
                                 label = T("Key"),
                                 ),
@@ -6871,12 +6917,13 @@ def pr_human_resource_update_affiliations(person_id):
 
     # Add affiliations to all masters which are not in current affiliations
     #vol_role = current.deployment_settings.get_hrm_vol_affiliation() or OTHER_ROLE
+    role_type = OU
     for role in masters:
-        if role == VOLUNTEER:
-            #role_type = vol_role
-            role_type = OTHER_ROLE
-        else:
-            role_type = OU
+        #if role == VOLUNTEER:
+        #    #role_type = vol_role
+        #    role_type = OTHER_ROLE
+        #else:
+        #    role_type = OU
         for m in masters[role]:
             pr_add_affiliation(m, pe_id, role=role, role_type=role_type)
 

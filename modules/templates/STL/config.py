@@ -191,6 +191,12 @@ def config(settings):
     settings.dvr.needs_use_service_type = True
     settings.dvr.needs_hierarchical = True
 
+    # Vulnerability types hierarchical ("Protection Assessment")
+    settings.dvr.vulnerability_types_hierarchical = True
+
+    # Response types hierarchical ("Interventions Required")
+    settings.dvr.response_types_hierarchical = True
+
     # Set DVR Default Label
     settings.dvr.label = "Beneficiary"
 
@@ -226,7 +232,12 @@ def config(settings):
             table = r.table
             crud_strings = s3.crud_strings[r.tablename]
 
-            from s3 import IS_ONE_OF, S3HierarchyWidget, FS, S3SQLCustomForm
+            from s3 import FS, \
+                           IS_ONE_OF, \
+                           S3HierarchyWidget, \
+                           S3Represent, \
+                           S3SQLCustomForm, \
+                           S3SQLInlineComponent
 
             service_type = r.get_vars.get("service_type")
             if service_type == "MH":
@@ -266,6 +277,11 @@ def config(settings):
                 field = table.gender
                 field.readable = field.writable = True
 
+                # Expose activity focus
+                field = table.focus_id
+                field.label = T("Focus of Group")
+                field.readable = field.writable = True
+
                 # Custom list fields
                 list_fields = ["name",
                                "service_id",
@@ -274,9 +290,9 @@ def config(settings):
                                (T("Type of Group"), "group_type_id"),
                                "gender",
                                "age_group_id",
-                               "facilitator",
                                "site_id",
                                "room_id",
+                               "facilitator",
                                ]
 
                 # Custom form
@@ -287,9 +303,10 @@ def config(settings):
                                             (T("Type of Group"), "group_type_id"),
                                             "gender",
                                             "age_group_id",
-                                            "facilitator",
+                                            "focus_id",
                                             "site_id",
                                             "room_id",
+                                            "facilitator",
                                             "comments",
                                             )
 
@@ -314,11 +331,22 @@ def config(settings):
                 # Filter activities
                 query = (FS("service_id$root_service").belongs(root_service_ids))
                 if r.representation == "json":
+
+                    import datetime
                     today = r.utcnow.date()
+                    fortnight = datetime.timedelta(days=14)
+
+                    # Filter by date
                     start_date = FS("start_date")
                     end_date = FS("end_date")
                     query &= ((start_date == None) | (start_date <= today)) & \
-                             ((end_date == None) | (end_date >= today))
+                             ((end_date == None) | (end_date >= today - fortnight))
+
+                    # Allow current value to remain
+                    include = r.get_vars.get("include")
+                    if include and include.isdigit():
+                        query |= (FS("id") == int(include))
+
                 r.resource.add_filter(query)
 
                 # Filter service selector
@@ -338,6 +366,46 @@ def config(settings):
                 field = table.gender
                 field.readable = field.writable = True
 
+                # Expose modality (with custom labels for options)
+                field = table.modality
+                modality_opts = {"E": T("CC/Camp"),
+                                 "O": T("Outreach"),
+                                 }
+                field.requires = IS_IN_SET(modality_opts, zero=None)
+                field.represent = S3Represent(options=modality_opts)
+                field.readable = field.writable = True
+
+                # Expose outreach area
+                field = table.location_id
+                field.readable = field.writable = True
+
+                # Toggle visibility of location fields for individual records
+                record = r.record
+                if record:
+                    if record.modality == "O":
+                        table.location_id.readable = True
+                        table.site_id.readable = False
+                        table.room_id.readable = False
+                    else:
+                        table.location_id.readable = False
+                        table.site_id.readable = True
+                        table.room_id.readable = True
+
+                # Customise distributions
+                dtable = s3db.supply_distribution
+
+                # Default date today
+                field = dtable.date
+                field.default = current.request.utcnow.date()
+
+                # Default quantity 1
+                field = dtable.value
+                field.default = 1
+
+                # Don't allow to create new items from here
+                field = dtable.parameter_id
+                field.comment = None
+
                 # Custom list fields
                 list_fields = ["service_id",
                                "start_date",
@@ -345,6 +413,10 @@ def config(settings):
                                "period",
                                "gender",
                                "age_group_id",
+                               "modality",
+                               #"site_id",
+                               #"room_id",
+                               #"location_id",
                                "facilitator",
                                ]
 
@@ -355,7 +427,33 @@ def config(settings):
                                             "period",
                                             "gender",
                                             "age_group_id",
+                                            "modality",
+                                            "site_id",
+                                            "room_id",
+                                            "location_id",
                                             "facilitator",
+                                            S3SQLInlineComponent(
+                                                "distribution",
+                                                explicit_add = T("Add Item"),
+                                                fields = [(T("Date"),"date"),
+                                                          "parameter_id",
+                                                          "value",
+                                                          ],
+                                                label = T("Item Distribution"),
+                                                # Embed the component rather than the link
+                                                link = False,
+                                                name = "distribution",
+                                                ),
+                                            S3SQLInlineComponent(
+                                                "document",
+                                                name = "file",
+                                                label = T("Attachments"),
+                                                fields = ["file", "comments"],
+                                                filterby = {"field": "file",
+                                                            "options": "",
+                                                            "invert": True,
+                                                            },
+                                                ),
                                             "comments",
                                             )
 
@@ -363,6 +461,11 @@ def config(settings):
                                crud_form = crud_form,
                                list_fields = list_fields,
                                )
+
+                scripts = s3.scripts
+                script = "/%s/static/themes/STL/js/activity.js" % r.application
+                if script not in scripts:
+                    scripts.append(script)
 
             return result
         s3.prep = custom_prep
@@ -617,6 +720,16 @@ def config(settings):
             field.label = T("DS/IS Case Explanation")
             field.readable = field.writable = True
 
+            # Customise Activity Details
+            field = table.activity_details
+            field.label = T("Support provided by STL")
+            field.readable = field.writable = True
+
+            # Customise Outside Support
+            field = table.outside_support
+            field.label = T("Support provided by others")
+            field.readable = field.writable = True
+
             # Customise Priority
             field = table.priority
             field.label = T("Priority for DS")
@@ -652,6 +765,8 @@ def config(settings):
             field = ftable.reason
             field.label = T("Justification for SNF")
             field.widget = s3_comments_widget
+            field = ftable.approved
+            field.label = T("SNF Assistance Approved by Committee")
 
             # Custom CRUD form
             crud_form = S3SQLCustomForm("person_id",
@@ -659,8 +774,11 @@ def config(settings):
                                         "human_resource_id",
                                         "project_id",
                                         S3SQLInlineLink("vulnerability_type",
-                                                        label = T("Types of Vulnerability"),
+                                                        label = T("Protection Assessment"),
                                                         field = "vulnerability_type_id",
+                                                        widget = "hierarchy",
+                                                        multiple = True,
+                                                        leafonly = True,
                                                         ),
                                         S3SQLInlineLink("need",
                                                         label = SECTOR,
@@ -671,8 +789,17 @@ def config(settings):
                                                         filter = FILTER,
                                                         ),
                                         "need_details",
+                                        S3SQLInlineLink("response_type",
+                                                        label = T("Interventions Required"),
+                                                        field = "response_type_id",
+                                                        widget = "hierarchy",
+                                                        multiple = True,
+                                                        leafonly = True,
+                                                        ),
                                         "priority",
                                         "start_date",
+                                        "activity_details",
+                                        "outside_support",
                                         "followup",
                                         "followup_date",
                                         "completed",
@@ -680,6 +807,7 @@ def config(settings):
                                         (T("Outcome for DS"), "outcome"),
                                         "activity_funding.funding_required",
                                         "activity_funding.reason",
+                                        "activity_funding.approved",
                                         S3SQLInlineComponent(
                                             "document",
                                             name = "file",
@@ -698,6 +826,8 @@ def config(settings):
                            "project_id",
                            "need__link.need_id",
                            "start_date",
+                           (T("Interventions Required"),
+                                "response_type__link.response_type_id"),
                            "priority",
                            "followup",
                            "followup_date",
@@ -736,13 +866,37 @@ def config(settings):
             # Filter activities
             field = table.activity_id
             field.readable = field.writable = True
+
+            import datetime
             today = r.utcnow.date()
+            fortnight = datetime.timedelta(days=14)
+
             atable = s3db.dvr_activity
             stable = s3db.org_service
             left = stable.on(stable.id == atable.service_id)
             query = (stable.root_service.belongs(root_service_ids)) & \
                     ((atable.start_date == None) | (atable.start_date <= today)) & \
-                    ((atable.end_date == None) | (atable.end_date >= today))
+                    ((atable.end_date == None) | (atable.end_date >= today - fortnight))
+
+            current_activity_id = None
+            if r.component_id:
+
+                # Look up current activity_id
+                # => need to pass it to the Ajax-controller for filterOptionsS3,
+                #    otherwise it would remove the current value from the update
+                #    form when we're past the deadline
+                # => need to allow the current value to pass the validator on
+                #    update, otherwise update with unchanged value would fail
+                #    when we're past the deadline
+                component = r.component
+                component.load()
+                record = component.records().first()
+
+                if record:
+                    current_activity_id = record.activity_id
+                    if current_activity_id:
+                        query |= (atable.id == current_activity_id)
+
             field.requires = IS_EMPTY_OR(IS_ONE_OF(db(query), "dvr_activity.id",
                                                    field.represent,
                                                    left = left,
@@ -752,10 +906,11 @@ def config(settings):
                script = '''$.filterOptionsS3({
 'trigger':'service_id',
 'target':'activity_id',
-'lookupURL': S3.Ap.concat('/dvr/activity.json?service_type=PSS&~.service_id='),
+'lookupURL': S3.Ap.concat('/dvr/activity.json?service_type=PSS&include=%s&~.service_id='),
 'fncRepresent': function(r){return r.service_id+' ('+(r.start_date||'..')+' - '+(r.end_date||'..')+') ('+(r.facilitator||'..')+')'},
 'optional': true
-})'''
+})''' % current_activity_id
+
                s3.jquery_ready.append(script)
 
             # No follow-ups for PSS
@@ -769,13 +924,13 @@ def config(settings):
                                         "activity_id",
                                         S3SQLInlineComponent(
                                             "document",
-                                            name = "file",
-                                            label = T("Attachments"),
                                             fields = ["file", "comments"],
                                             filterby = {"field": "file",
                                                         "options": "",
                                                         "invert": True,
                                                         },
+                                            label = T("Attachments"),
+                                            name = "file",
                                             ),
                                         "comments",
                                         )
@@ -867,6 +1022,15 @@ def config(settings):
             field = table.achievement
             field.readable = field.writable = True
 
+            # Expose provider type field
+            field = table.provider_type_id
+            field.readable = field.writable = True
+
+            # Expose termination type field
+            field = table.termination_type_id
+            field.label = T("Type of Exit")
+            field.readable = field.writable = True
+
             # Custom CRUD form
             crud_form = S3SQLCustomForm("person_id",
                                         S3SQLInlineLink("need",
@@ -881,7 +1045,9 @@ def config(settings):
                                         "human_resource_id",
                                         "project_id",
                                         "activity_id",
+                                        "provider_type_id",
                                         (T("Status of main complaint at last visit"), "achievement"),
+                                        "termination_type_id",
                                         S3SQLInlineComponent(
                                             "document",
                                             name = "file",
@@ -1062,7 +1228,7 @@ def config(settings):
         field.readable = field.writable = False
 
         field = table.value
-        field.label = current.T("Number or Address")
+        field.label = T("Number or Address")
 
         field = table.contact_method
         all_opts = current.msg.CONTACT_OPTS
@@ -1363,6 +1529,7 @@ def config(settings):
                                         (T("Reference Number"), "pe_label"),
                                         "dvr_case.status_id",
                                         "dvr_case.date",
+                                        "case_details.referral_type_id",
                                         "dvr_case.organisation_id",
                                         "dvr_case.human_resource_id",
                                         "first_name",
@@ -1579,6 +1746,14 @@ def config(settings):
                 resource.configure(list_fields = list_fields,
                                    filter_widgets = filter_widgets,
                                    )
+
+                # Sort filterOptionsS3 results alphabetically
+                if r.representation == "json":
+                    resource.configure(orderby = ["pr_person.first_name",
+                                                  "pr_person.middle_name",
+                                                  "pr_person.last_name",
+                                                  ],
+                                       )
             return result
         s3.prep = custom_prep
 
@@ -1814,12 +1989,12 @@ def config(settings):
             # The user-visible functionality of this module isn't normally required. Rather it's main purpose is to be accessed from other modules.
             module_type = None,
         )),
-        #("supply", Storage(
-        #    name_nice = T("Supply Chain Management"),
-        #    #description = "Used within Inventory Management, Request Management and Asset Management",
-        #    restricted = True,
-        #    module_type = None, # Not displayed
-        #)),
+        ("supply", Storage(
+            name_nice = T("Supply Chain Management"),
+            #description = "Used within Inventory Management, Request Management and Asset Management",
+            restricted = True,
+            module_type = None, # Not displayed
+        )),
         #("inv", Storage(
         #    name_nice = T("Warehouses"),
         #    #description = "Receiving and Sending Items",
