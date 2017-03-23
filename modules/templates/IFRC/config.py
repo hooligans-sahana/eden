@@ -1464,7 +1464,7 @@ def config(settings):
                                         label = T("Team"),
                                         fields = [("", "group_id")],
                                         filterby = dict(field = "group_type",
-                                                        options = 3
+                                                        options = 3,
                                                         ),
                                         multiple = False,
                                         ),
@@ -2755,8 +2755,9 @@ def config(settings):
             if controller == "vol":
                 if arcs:
                     # ARCS have a custom Volunteer form
+                    from gluon import IS_EMPTY_OR
                     #from s3 import IS_ADD_PERSON_WIDGET2, IS_ONE_OF, S3LocationSelector, S3SQLCustomForm, S3SQLInlineComponent
-                    from s3 import IS_ONE_OF, S3LocationSelector, S3SQLCustomForm, S3SQLInlineComponent
+                    from s3 import IS_ONE_OF, S3LocationSelector, S3Represent, S3SQLCustomForm, S3SQLInlineComponent
 
                     # Go back to Create form after submission
                     current.session.s3.rapid_data_entry = True
@@ -2812,6 +2813,17 @@ def config(settings):
                                            filter_opts = (organisation_id,),
                                            sort = True,
                                            )
+
+                    # Translate Programmes
+                    #represent = S3Represent(lookup="hrm_programme", translate=True)
+                    #f = s3db.hrm_programme_hours.programme_id
+                    #f.represent = represent
+                    #f.requires = IS_EMPTY_OR(
+                    #                IS_ONE_OF(db, "hrm_programme.id",
+                    #                          represent,
+                    #                          filterby="organisation_id",
+                    #                          filter_opts=(organisation_id,)
+                    #                          ))
 
                     s3db.add_components(tablename,
                                         #hrm_training = {"name": "vol_training",
@@ -2872,17 +2884,24 @@ def config(settings):
 
                     crud_form = S3SQLCustomForm("organisation_id",
                                                 "code",
+                                                S3SQLInlineComponent("programme_hours",
+                                                                     label = "",
+                                                                     fields = ["programme_id",
+                                                                               ],
+                                                                     link = False,
+                                                                     multiple = False,
+                                                                     ),
                                                 "person_id",
                                                 S3SQLInlineComponent("perm_address",
-                                                             label = T("Address"),
-                                                             fields = (("", "location_id"),),
-                                                             filterby = {"field": "type",
-                                                                         "options": 2,
-                                                                         },
-                                                             link = False,
-                                                             update_link = False,
-                                                             multiple = False,
-                                                             ),
+                                                                     label = T("Address"),
+                                                                     fields = (("", "location_id"),),
+                                                                     filterby = {"field": "type",
+                                                                                 "options": 2,
+                                                                                 },
+                                                                     link = False,
+                                                                     update_link = False,
+                                                                     multiple = False,
+                                                                     ),
                                                 S3SQLInlineComponent("current_education",
                                                                      label = T("School / University"),
                                                                      fields = [("", "institute"),
@@ -5052,7 +5071,8 @@ def config(settings):
                 #f = s3db.pr_phone_contact.value
                 #f.represent = s3_phone_represent
                 #f.widget = S3PhoneWidget()
-                s3db.pr_address.location_id.widget = S3LocationSelector(show_map = False)
+                s3db.pr_address.location_id.widget = S3LocationSelector(show_address = T("Village"),
+                                                                        show_map = False)
                 etable = s3db.pr_education
                 etable.level_id.comment = None # Don't Add Education Levels inline
                 organisation_id = current.auth.root_org()
@@ -5066,6 +5086,7 @@ def config(settings):
                 s3db.add_components("pr_person",
                                     pr_address = {"name": "perm_address",
                                                   "joinby": "pe_id",
+                                                  "pkey": "pe_id",
                                                   "filterby": {
                                                       "type": 2,
                                                       },
@@ -5138,13 +5159,13 @@ def config(settings):
                                                 (T("Gender"), "gender"),
                                                 (T("Job"), "person_details.occupation"),
                                                 S3SQLInlineComponent("perm_address",
-                                                             label = T("Address"),
-                                                             fields = (("", "location_id"),),
-                                                             filterby = {"field": "type",
-                                                                         "options": 2,
-                                                                         },
-                                                             multiple = False,
-                                                             ),
+                                                                     label = T("Address"),
+                                                                     fields = (("", "location_id"),),
+                                                                     filterby = {"field": "type",
+                                                                                 "options": 2,
+                                                                                 },
+                                                                     multiple = False,
+                                                                     ),
                                                 S3SQLInlineComponent("current_education",
                                                                      label = T("School / University"),
                                                                      fields = [("", "institute"),
@@ -5246,6 +5267,7 @@ def config(settings):
                                         #                },
                                         pr_address = {"name": "temp_address",
                                                       "joinby": "pe_id",
+                                                      "pkey": "pe_id",
                                                       "filterby": {
                                                           "type": 1,
                                                           },

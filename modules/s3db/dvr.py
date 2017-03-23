@@ -1391,6 +1391,10 @@ class DVRResponseModel(S3Model):
                      Field("parent", "reference dvr_response_type",
                            label = T("Subtype of"),
                            ondelete = "RESTRICT",
+                           represent = S3Represent(lookup = tablename,
+                                                   translate = True,
+                                                   hierarchy = True,
+                                                   ),
                            readable = hierarchical_response_types,
                            writable = hierarchical_response_types,
                            ),
@@ -1505,6 +1509,7 @@ class DVRCaseActivityModel(S3Model):
 
         service_type = settings.get_dvr_activity_use_service_type()
         service_id = self.org_service_id
+        project_id = self.project_project_id
 
         # ---------------------------------------------------------------------
         # Provider Type
@@ -1729,6 +1734,11 @@ class DVRCaseActivityModel(S3Model):
                                 ondelete = "SET NULL",
                                 readable = service_type,
                                 writable = service_type,
+                                ),
+                     # Expose in template as needed:
+                     project_id(ondelete = "SET NULL",
+                                readable = False,
+                                writable = False,
                                 ),
                      Field("name",
                            label = T("Title"),
@@ -1971,10 +1981,10 @@ class DVRCaseActivityModel(S3Model):
                                                 readable = False,
                                                 writable = False,
                                                 ),
-                     self.project_project_id(ondelete = "SET NULL",
-                                             readable = False,
-                                             writable = False,
-                                             ),
+                     project_id(ondelete = "SET NULL",
+                                readable = False,
+                                writable = False,
+                                ),
                      service_id(label = T("Service Type"),
                                 ondelete = "SET NULL",
                                 readable = service_type,
@@ -2021,7 +2031,6 @@ class DVRCaseActivityModel(S3Model):
                      s3_date("followup_date",
                              default = twoweeks,
                              label = T("Date for Follow-up"),
-                             past = 0,
                              ),
                      Field("outcome", "text",
                            label = T("Outcome"),
@@ -4022,6 +4031,10 @@ class DVRVulnerabilityModel(S3Model):
                      Field("parent", "reference dvr_vulnerability_type",
                            label = T("Subtype of"),
                            ondelete = "RESTRICT",
+                           represent = S3Represent(lookup = tablename,
+                                                   translate = True,
+                                                   hierarchy = True,
+                                                   ),
                            readable = hierarchical_vulnerability_types,
                            writable = hierarchical_vulnerability_types,
                            ),

@@ -108,6 +108,17 @@ input.date.hasDatepicker {
     margin-left: 0;
     margin-bottom: 0.5rem;
 }
+table.s3-groupedopts-widget {
+    td {
+        white-space: nowrap;
+        input {
+            vertical-align: top;
+        }
+        label {
+            white-space: pre-wrap;
+        }
+    }
+}
 
 /* ImageCropWidget */
 .imagecrop-btn {
@@ -220,4 +231,9 @@ h4.profile-sub-header {
 .s3-truncate-less:before {
     font-style: italic;
     content: "...";
+}
+
+/* S3SQLInlineLink read-only list representation */
+ul.s3-inline-link {
+    font-size: inherit;
 }

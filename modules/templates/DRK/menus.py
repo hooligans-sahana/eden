@@ -95,6 +95,10 @@ class S3MainMenu(default.S3MainMenu):
                     #homepage("req"),
                     homepage("inv"),
                     SEP(link=False),
+                    MM("Confiscation", c="security", f="seized_item",
+                       restrict = ("ADMINISTRATION", "ADMIN_HEAD"),
+                       ),
+                    SEP(link=False),
                     MM("Surplus Meals", c="default", f="index",
                        args = "surplus_meals",
                        t = "dvr_case_event",
@@ -220,6 +224,15 @@ class S3OptionsMenu(default.S3OptionsMenu):
                           args = [shelter_id, "shelter_unit"],
                           ),
                     ),
+                    M("Room Inspection", f = "shelter", link=False)(
+                          M("Register",
+                            args = [shelter_id, "inspection"],
+                            t = "cr_shelter_inspection",
+                            p = "create",
+                            ),
+                          M("Overview", f = "shelter_inspection"),
+                          M("Defects", f = "shelter_inspection_flag"),
+                          ),
                     M("Administration",
                       link = False,
                       restrict = (ADMIN, "ADMIN_HEAD"),
@@ -344,6 +357,18 @@ class S3OptionsMenu(default.S3OptionsMenu):
                     M("Create", m="create"),
                     M("My Open Tasks", vars={"mine":1}),
                  ),
+                )
+
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def security():
+        """ SECURITY / Security Management """
+
+        return M(c="security")(
+                M("Confiscation", f="seized_item")(
+                    M("Create", m="create"),
+                    M("Item Types", f="seized_item_type"),
+                    ),
                 )
 
 # END =========================================================================

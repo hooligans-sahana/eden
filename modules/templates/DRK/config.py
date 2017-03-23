@@ -175,6 +175,10 @@ def config(settings):
     settings.cr.shelter_housing_unit_management = True
     settings.cr.check_out_is_final = False
 
+    # Generate tasks for shelter inspections
+    settings.cr.shelter_inspection_tasks = True
+    settings.cr.shelter_inspection_task_active_statuses = (2, 3, 6)
+
     # -------------------------------------------------------------------------
     def profile_header(r):
         """
@@ -729,6 +733,11 @@ def config(settings):
                 current.menu.options = None
                 if isinstance(output, dict):
                     output["rheader"] = ""
+
+            # Custom view for shelter inspection
+            if r.method == "inspection":
+               from s3 import S3CustomController
+               S3CustomController._view("DRK", "shelter_inspection.html")
 
             return output
         s3.postp = custom_postp
@@ -2705,6 +2714,28 @@ def config(settings):
 
         db = current.db
         s3db = current.s3db
+
+        # Configure custom form for tasks
+        from s3 import S3SQLCustomForm, S3SQLInlineLink
+        crud_form = S3SQLCustomForm("name",
+                                    "status",
+                                    "priority",
+                                    "description",
+                                    "source",
+                                    S3SQLInlineLink("shelter_inspection_flag",
+                                                    field="inspection_flag_id",
+                                                    label=T("Shelter Inspection"),
+                                                    readonly=True,
+                                                    render_list=True,
+                                                    ),
+                                    "pe_id",
+                                    "date_due",
+                                    )
+        s3db.configure("project_task",
+                       crud_form = crud_form,
+                       )
+
+        # Filter assignees to human resources
         htable = s3db.hrm_human_resource
         ptable = s3db.pr_person
         query = (htable.deleted == False) & \
@@ -2723,6 +2754,24 @@ def config(settings):
                       ))
 
     settings.customise_project_task_resource = customise_project_task_resource
+
+    # -------------------------------------------------------------------------
+    def customise_security_seized_item_resource(r, tablename):
+        """
+            Custom restrictions in seized items form
+        """
+
+        table = current.s3db.security_seized_item
+
+        # Can't add item type from item form
+        field = table.item_type_id
+        field.comment = None
+
+        # Confiscated by not writable (always default)
+        field = table.confiscated_by
+        field.writable = False
+
+    settings.customise_security_seized_item_resource = customise_security_seized_item_resource
 
     # -------------------------------------------------------------------------
     # Comment/uncomment modules here to disable/enable them
@@ -3042,6 +3091,7 @@ def drk_dvr_rheader(r, tabs=[]):
                             (T("Events"), "case_event"),
                             (T("Photos"), "image"),
                             (T("Notes"), "case_note"),
+                            (T("Confiscation"), "seized_item"),
                             ]
 
                 case = resource.select(["dvr_case.status_id",
