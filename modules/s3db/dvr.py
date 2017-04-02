@@ -1736,6 +1736,9 @@ class DVRCaseActivityModel(S3Model):
                                 writable = service_type,
                                 ),
                      # Expose in template as needed:
+                     self.org_organisation_id(readable = False,
+                                              writable = False,
+                                              ),
                      project_id(ondelete = "SET NULL",
                                 readable = False,
                                 writable = False,
@@ -1799,6 +1802,22 @@ class DVRCaseActivityModel(S3Model):
                               readable = False,
                               writable = False,
                               ),
+                     # Certificates for Participants:
+                     # - expose in template if required:
+                     Field("certificate", "boolean",
+                           default = False,
+                           label = T("Certificate issued"),
+                           represent = s3_yes_no_represent,
+                           readable = False,
+                           writable = False,
+                           ),
+                     Field("certificate_details", "text",
+                           label = T("Certificate Details"),
+                           represent = s3_text_represent,
+                           readable = False,
+                           writable = False,
+                           widget = s3_comments_widget,
+                           ),
                      s3_comments(),
                      *s3_meta_fields())
 
