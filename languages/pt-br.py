@@ -3401,7 +3401,7 @@
 'Sahana Community Chat': 'Sahana COMUNIDADE de BATE-PAPO',
 'Sahana Eden <=> Other': 'Sahana Eden <=> Outros',
 'Sahana Eden <=> Sahana Eden': 'Sahana Éden <=> Sahana Éden',
-'Sahana Eden Humanitarian Management Platform': 'plataforma de gerenciamento humanitário Sahana Éden',
+'Sahana Eden Humanitarian Management Platform': 'Plataforma de gerenciamento humanitário de Santa Maria Madalena',
 'Sahana Eden Website': 'SITE Sahana Éden',
 'Sahana Green': 'Sahana Verde',
 'Salted Fish': 'Peixe Salgado',
