@@ -1038,6 +1038,9 @@ class PRPersonModel(S3Model):
                                                 },
                             dvr_case_effort = "person_id",
                             dvr_case_event = "person_id",
+                            dvr_case_flag_case = {"name": "dvr_flag",
+                                                  "joinby": "person_id",
+                                                  },
                             dvr_case_flag = {"link": "dvr_case_flag_case",
                                              "joinby": "person_id",
                                              "key": "flag_id",
@@ -1059,6 +1062,7 @@ class PRPersonModel(S3Model):
                             dvr_note = {"name": "case_note",
                                         "joinby": "person_id",
                                         },
+                            dvr_residence_status = "person_id",
                             # Evacuee Registry
                             evr_case = {"joinby": "person_id",
                                         "multiple": False,
@@ -2999,27 +3003,34 @@ class PRAddressModel(S3Model):
         """
 
         form_vars = form.vars
-        location_id = form_vars.get("location_id")
-        if not location_id:
-            return
 
         try:
             record_id = form_vars["id"]
         except:
             # Nothing we can do
             return
+
         db = current.db
         s3db = current.s3db
         atable = db.pr_address
-        pe_id = db(atable.id == record_id).select(atable.pe_id,
-                                                  limitby=(0, 1)
-                                                  ).first().pe_id
-        requestvars = current.request.form_vars
+
+        row = db(atable.id == record_id).select(atable.location_id,
+                                                atable.pe_id,
+                                                limitby=(0, 1)
+                                                ).first()
+        try:
+            location_id = row.location_id
+        except:
+            # Nothing we can do
+            return
+        pe_id = row.pe_id
+
+        req_vars = current.request.form_vars
         settings = current.deployment_settings
         person = None
         ptable = s3db.pr_person
-        if requestvars and "base_location" in requestvars and \
-           requestvars.base_location == "on":
+        if req_vars and "base_location" in req_vars and \
+           req_vars.base_location == "on":
             # Specifically requested
             S3Tracker()(db.pr_pentity, pe_id).set_base_location(location_id)
             person = db(ptable.pe_id == pe_id).select(ptable.id,
@@ -4712,6 +4723,7 @@ class PRIdentityModel(S3Model):
                            2:  T("National ID Card"),
                            3:  T("Driving License"),
                            #4: T("Credit Card"),
+                           5:  T("Residence Permit"),
                            99: T("other")
                            }
 
@@ -5879,12 +5891,11 @@ class pr_PersonEntityRepresent(S3Represent):
 
         item = object.__getattribute__(row, instance_type)
         if instance_type == "pr_person":
-            pe_str = "%s %s" % (s3_fullname(item),
-                                label)
+            pe_str = "%s %s" % (s3_fullname(item), label)
         elif instance_type == "hrm_training_event":
             pe_str = self.training_event_represent.represent_row(item)
         elif "name" in item:
-            pe_str = s3_unicode(item["name"])
+            pe_str = s3_str(item["name"])
         else:
             pe_str = "[%s]" % label
 
@@ -5892,7 +5903,8 @@ class pr_PersonEntityRepresent(S3Represent):
             etable = current.s3db.pr_pentity
             instance_type_nice = etable.instance_type.represent(instance_type)
             pe_str = "%s (%s)" % (pe_str,
-                                  s3_unicode(instance_type_nice))
+                                  s3_str(instance_type_nice),
+                                  )
 
         return pe_str
 
@@ -5933,7 +5945,7 @@ class pr_PersonRepresent(S3Represent):
                     controller = "dvr"
                 else:
                     controller = "pr"
-            linkto = URL(c=controller, f="person", args=["[id]"])
+            linkto = URL(c=controller, f="person", args=["[id]"], extension="")
 
         if not fields:
             fields = ["first_name", "middle_name", "last_name"]
@@ -6971,8 +6983,9 @@ def pr_update_affiliations(table, record):
             return
         pr_group_update_affiliations(record)
 
-    elif rtype in ("org_organisation_branch",
-                   "org_group_membership",
+    elif rtype in ("org_group_membership",
+                   "org_organisation_branch",
+                   "org_organisation_team",
                    "org_site") or \
          rtype in current.auth.org_site_types:
         # Hierarchy methods in org.py:

@@ -15,7 +15,7 @@ def index():
 # -----------------------------------------------------------------------------
 def index_alt():
     """
-        Module homepage for non-Admin users when no CMS content found
+        Default module homepage
     """
 
     # Just redirect to the person list
@@ -1040,6 +1040,20 @@ def housing_type():
 # -----------------------------------------------------------------------------
 def income_source():
     """ Income Sources: RESTful CRUD Controller """
+
+    return s3_rest_controller()
+
+# =============================================================================
+# Legal Status
+#
+def residence_status_type():
+    """ Residence Status Types: RESTful CRUD controller """
+
+    return s3_rest_controller()
+
+# -----------------------------------------------------------------------------
+def residence_permit_type():
+    """ Residence Permit Types: RESTful CRUD controller """
 
     return s3_rest_controller()
 

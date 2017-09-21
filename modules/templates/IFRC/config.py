@@ -1168,6 +1168,44 @@ def config(settings):
 
     settings.hrm.course_types = hrm_course_types
 
+    def hrm_event_course_mandatory(default):
+        """ Whether (Training) Event Courses are mandatory """
+
+        has_role = current.auth.s3_has_role
+        if (has_role("EVENT_MONITOR") or has_role("EVENT_ORGANISER")):
+            return False
+        else:
+            # True
+            return default
+
+    settings.hrm.event_course_mandatory = hrm_event_course_mandatory
+
+    def hrm_event_site(default):
+        """ Whether (Training) Events use a Site (or Location) """
+
+        has_role = current.auth.s3_has_role
+        if (has_role("EVENT_MONITOR") or has_role("EVENT_ORGANISER") or has_role("EVENT_OFFICE_MANAGER")) and not has_role("ADMIN"):
+            # Use a Location (e.g. Country or Country/L1)
+            return False
+        else:
+            # True: Use Site
+            return default
+
+    settings.hrm.event_site = hrm_event_site
+
+    def hrm_event_types(default):
+        """ Whether (Training) Events have multiple Types to choose from """
+
+        has_role = current.auth.s3_has_role
+        if has_role("EVENT_MONITOR") or has_role("EVENT_ORGANISER") or has_role("EVENT_OFFICE_MANAGER"):
+            # Use Event Types
+            return True
+        else:
+            # False: No
+            return default
+
+    settings.hrm.event_types = hrm_event_types
+
     def hrm_use_certificates(default):
         """ Whether to use Certificates """
 
@@ -1357,6 +1395,13 @@ def config(settings):
         root_org = current.auth.root_org_name()
         if root_org == NRCS:
             return "both"
+
+        has_role = current.auth.s3_has_role
+        if has_role("EVENT_MONITOR") or has_role("EVENT_ORGANISER") or has_role("EVENT_OFFICE_MANAGER"):
+            # Use Status field
+            return None
+
+        # External
         return default
 
     settings.hrm.training_instructors = training_instructors
@@ -2468,7 +2513,8 @@ def config(settings):
             @param row: the row
         """
 
-        items = [row["pr_contact_emergency.name"]]
+        name = row["pr_contact_emergency.name"] or current.messages["NONE"]
+        items = [name]
         relationship = row["pr_contact_emergency.relationship"]
         if relationship:
             items.append(" (%s)" % relationship)
@@ -2661,41 +2707,55 @@ def config(settings):
     # -------------------------------------------------------------------------
     def customise_hrm_human_resource_controller(**attr):
 
+        from s3 import FS
+
+        db = current.db
+        s3db = current.s3db
+        auth = current.auth
+        s3 = current.response.s3
+
+        controller = current.request.controller
+
         tablename = "hrm_human_resource"
 
-        auth = current.auth
-        s3db = current.s3db
-
-        # Special cases for different NS
+        # Special cases for different NS/roles
         arcs = vnrc = False
         root_org = auth.root_org_name()
 
-        controller = current.request.controller
-        if controller == "deploy":
-            # Default Filter
-            from s3 import s3_set_default_filter
-            s3_set_default_filter("~.organisation_id$region_id",
-                                  user_region_and_children_default_filter,
-                                  tablename = tablename)
+        has_role = auth.s3_has_role
+        if has_role("EVENT_MONITOR") and not has_role("ADMIN"):
+            # Bangkok CCST
+            pass
+            # @ToDo:
+            # Filter People to just those from this region's countries & those people traineed by this region
+            #ltable = s3db.org_organisation_organisation
+            #root_orgs = db(ltable.parent_id == auth.user.organisation_id).select(ltable.organisation_id)
+            #root_orgs = [o.organisation_id for o in root_orgs]
+            #s3.filter = FS("~.organisation_id$root_organisation").belongs(root_orgs)
+        else:
+            if controller == "deploy":
+                # Default Filter
+                from s3 import s3_set_default_filter
+                s3_set_default_filter("~.organisation_id$region_id",
+                                      user_region_and_children_default_filter,
+                                      tablename = tablename)
 
-        elif root_org != CRMADA: # CRMADA have too many branches which causes issues
-            # Default Filter
-            from s3 import s3_set_default_filter
-            s3_set_default_filter("~.organisation_id",
-                                  user_org_and_children_default_filter,
-                                  tablename = tablename)
+            elif root_org != CRMADA: # CRMADA have too many branches which causes issues
+                # Default Filter
+                from s3 import s3_set_default_filter
+                s3_set_default_filter("~.organisation_id",
+                                      user_org_and_children_default_filter,
+                                      tablename = tablename)
 
-        if root_org == VNRC:
-            vnrc = True
-            # @ToDo: Make this use the same lookup as in ns_only to check if user can see HRs from multiple NS
-            settings.org.regions = False
-            s3db.hrm_human_resource.site_id.represent = s3db.org_SiteRepresent(show_type = False)
-            #settings.org.site_label = "Office/Center"
+            if root_org == VNRC:
+                vnrc = True
+                # @ToDo: Make this use the same lookup as in ns_only to check if user can see HRs from multiple NS
+                settings.org.regions = False
+                s3db.hrm_human_resource.site_id.represent = s3db.org_SiteRepresent(show_type = False)
+                #settings.org.site_label = "Office/Center"
 
-        elif root_org == ARCS:
-            arcs = True
-
-        s3 = current.response.s3
+            elif root_org == ARCS:
+                arcs = True
 
         # Custom prep
         standard_prep = s3.prep
@@ -2761,8 +2821,6 @@ def config(settings):
 
                     # Go back to Create form after submission
                     current.session.s3.rapid_data_entry = True
-
-                    db = current.db
 
                     settings.pr.request_mobile_phone = False
                     settings.pr.request_email = False
@@ -3138,8 +3196,6 @@ def config(settings):
             elif controller == "deploy":
                 # Custom settings for RDRT
 
-                from s3 import FS
-
                 db = current.db
 
                 if not is_admin:
@@ -3496,116 +3552,134 @@ def config(settings):
     # -------------------------------------------------------------------------
     def customise_hrm_training_controller(**attr):
 
-        tablename = "hrm_training"
+        db = current.db
+        s3db = current.s3db
 
-        # Default Filter
-        from s3 import s3_set_default_filter
-        s3_set_default_filter("~.person_id$human_resource.organisation_id",
-                              user_org_default_filter,
-                              tablename = tablename)
+        # Special cases for different NS/roles
+        auth = current.auth
+        has_role = auth.s3_has_role
+        if has_role("EVENT_MONITOR") and not has_role("ADMIN"):
+            # Bangkok CCST
+            # Filter People to just those from this region's countries
+            # & those who have been trained by the region
+            from s3 import FS
+            ltable = s3db.org_organisation_organisation
+            root_orgs = db(ltable.parent_id == auth.user.organisation_id).select(ltable.organisation_id)
+            root_orgs = [o.organisation_id for o in root_orgs]
+            filter = FS("~.person_id$human_resource.organisation_id$root_organisation").belongs(root_orgs)
+            # @ToDo:
+            #filter |= FS("~.training_event_id")
+            current.response.s3.filter = filter
+        else:
+            tablename = "hrm_training"
 
-        # Special cases for different NS
-        root_org = current.auth.root_org_name()
-        if root_org == VNRC:
-            # Remove link to download Template
-            attr["csv_template"] = "hide"
+            # Default Filter
+            from s3 import s3_set_default_filter
+            s3_set_default_filter("~.person_id$human_resource.organisation_id",
+                                  user_org_default_filter,
+                                  tablename = tablename)
 
-        if current.request.controller == "deploy" and _is_asia_pacific():
-            # Only interested in RDRT courses
+            root_org = auth.root_org_name()
 
-            db = current.db
-            s3db = current.s3db
-            ttable = s3db.hrm_training
+            if root_org == VNRC:
+                # Remove link to download Template
+                attr["csv_template"] = "hide"
 
-            otable = s3db.org_organisation
-            org = db(otable.name == AP_ZONE).select(otable.id,
-                                                    limitby=(0, 1),
-                                                    cache = s3db.cache,
-                                                    ).first()
-            try:
-                organisation_id = org.id
-            except:
-                current.log.error("Cannot find org %s - prepop not done?" % AP_ZONE)
-                organisation_id = None
-            else:
-                from s3 import FS, IS_ONE_OF
-                current.response.s3.filter = (FS("~.course_id$organisation_id") == organisation_id)
-                ctable = s3db.hrm_course
-                query = (ctable.organisation_id == organisation_id) & \
-                        (ctable.deleted == False)
-                courses = db(query).select(ctable.id,
-                                           ctable.name,
-                                           )
-                field = ttable.course_id
-                field.requires = IS_ONE_OF(db, "hrm_course.id",
-                                           field.represent,
-                                           filterby="id",
-                                           filter_opts=[c.id for c in courses],
-                                           )
+            elif current.request.controller == "deploy" and _is_asia_pacific():
+                # AP RDRT
+                # - only interested in RDRT courses
 
-            # Grades 1-4
-            course_grade_opts = {1: "1: %s" % T("Unsatisfactory"),
-                                 2: "2: %s" % T("Partially achieved expectations"),
-                                 3: "3: %s" % T("Fully achieved expectations"),
-                                 4: "4: %s" % T("Exceeded expectations"),
-                                 }
-            field = ttable.grade
-            field.readable = field.writable = True
-            field.represent = None
-            from gluon import IS_EMPTY_OR, IS_IN_SET
-            field.requires = IS_EMPTY_OR(IS_IN_SET(course_grade_opts,
-                                                   zero=None))
+                ttable = s3db.hrm_training
 
-            # Upload Performance Appraisal
-            field = ttable.file
-            field.readable = field.writable = True
-            field.label = T("Performance Appraisal")
+                otable = s3db.org_organisation
+                org = db(otable.name == AP_ZONE).select(otable.id,
+                                                        limitby=(0, 1),
+                                                        cache = s3db.cache,
+                                                        ).first()
+                try:
+                    organisation_id = org.id
+                except:
+                    current.log.error("Cannot find org %s - prepop not done?" % AP_ZONE)
+                    organisation_id = None
+                else:
+                    from s3 import FS, IS_ONE_OF
+                    current.response.s3.filter = (FS("~.course_id$organisation_id") == organisation_id)
+                    ctable = s3db.hrm_course
+                    query = (ctable.organisation_id == organisation_id) & \
+                            (ctable.deleted == False)
+                    courses = db(query).select(ctable.id,
+                                               ctable.name,
+                                               )
+                    field = ttable.course_id
+                    field.requires = IS_ONE_OF(db, "hrm_course.id",
+                                               field.represent,
+                                               filterby="id",
+                                               filter_opts=[c.id for c in courses],
+                                               )
 
-            # Customise Filter Widgets
-            filter_widgets = s3db.get_config(tablename, "filter_widgets")
-            found = None
-            index = 0
-            for w in filter_widgets:
-                if w.field == "person_id$location_id":
-                    found = index
-                elif w.field == "grade":
-                    w.opts.options = dict((g, g) for g in course_grade_opts)
-                elif organisation_id and w.field == "course_id":
-                    w.opts.options = dict((c.id, T(c.name)) for c in courses)
-                elif w.field == "training_event_id$site_id":
-                    w.opts.label = T("Training Location")
-                    w.opts.represent = s3db.org_SiteRepresent(show_type = False)
-                index += 1
-            if found is not None:
-                filter_widgets.pop(found)
+                # Grades 1-4
+                course_grade_opts = {1: "1: %s" % T("Unsatisfactory"),
+                                     2: "2: %s" % T("Partially achieved expectations"),
+                                     3: "3: %s" % T("Fully achieved expectations"),
+                                     4: "4: %s" % T("Exceeded expectations"),
+                                     }
+                field = ttable.grade
+                field.readable = field.writable = True
+                field.represent = None
+                from gluon import IS_EMPTY_OR, IS_IN_SET
+                field.requires = IS_EMPTY_OR(IS_IN_SET(course_grade_opts,
+                                                       zero=None))
 
-            # Customise Report Options
-            report_fields = [(T("Training Event"), "training_event_id"),
-                             "person_id",
-                             "course_id",
-                             "grade",
-                             (T("National Society"), "person_id$human_resource.organisation_id"),
-                             (T("Region"), "person_id$human_resource.organisation_id$region_id"),
-                             (T("Training Location"), "training_event_id$site_id"),
-                             #(T("Month"), "month"),
-                             (T("Year"), "year"),
-                             ]
+                # Upload Performance Appraisal
+                field = ttable.file
+                field.readable = field.writable = True
+                field.label = T("Performance Appraisal")
 
-            report_options = Storage(rows = report_fields,
-                                     cols = report_fields,
-                                     fact = report_fields,
-                                     methods = ["count", "list"],
-                                     defaults = Storage(
-                                        rows = "person_id$human_resource.organisation_id$region_id",
-                                        cols = "training.course_id",
-                                        fact = "count(training.person_id)",
-                                        totals = True,
+                # Customise Filter Widgets
+                filter_widgets = s3db.get_config(tablename, "filter_widgets")
+                found = None
+                index = 0
+                for w in filter_widgets:
+                    if w.field == "person_id$location_id":
+                        found = index
+                    elif w.field == "grade":
+                        w.opts.options = dict((g, g) for g in course_grade_opts)
+                    elif organisation_id and w.field == "course_id":
+                        w.opts.options = dict((c.id, T(c.name)) for c in courses)
+                    elif w.field == "training_event_id$site_id":
+                        w.opts.label = T("Training Location")
+                        w.opts.represent = s3db.org_SiteRepresent(show_type = False)
+                    index += 1
+                if found is not None:
+                    filter_widgets.pop(found)
+
+                # Customise Report Options
+                report_fields = [(T("Training Event"), "training_event_id"),
+                                 "person_id",
+                                 "course_id",
+                                 "grade",
+                                 (T("National Society"), "person_id$human_resource.organisation_id"),
+                                 (T("Region"), "person_id$human_resource.organisation_id$region_id"),
+                                 (T("Training Location"), "training_event_id$site_id"),
+                                 #(T("Month"), "month"),
+                                 (T("Year"), "year"),
+                                 ]
+
+                report_options = Storage(rows = report_fields,
+                                         cols = report_fields,
+                                         fact = report_fields,
+                                         methods = ["count", "list"],
+                                         defaults = Storage(
+                                            rows = "person_id$human_resource.organisation_id$region_id",
+                                            cols = "training.course_id",
+                                            fact = "count(training.person_id)",
+                                            totals = True,
+                                            )
                                         )
-                                    )
 
-            s3db.configure(tablename,
-                           report_options = report_options,
-                           )
+                s3db.configure(tablename,
+                               report_options = report_options,
+                               )
 
         return attr
 
@@ -4828,11 +4902,16 @@ def config(settings):
     # -------------------------------------------------------------------------
     def customise_pr_person_controller(**attr):
 
-        s3db = current.s3db
+        from s3 import FS
 
-        # Special cases for different NS
+        db = current.db
+        s3db = current.s3db
+        s3 = current.response.s3
+
+        # Special cases for different NS / Roles
         arcs = crmada = ircs = vnrc = False
-        root_org = current.auth.root_org_name()
+        auth = current.auth
+        root_org = auth.root_org_name()
         if root_org == ARCS:
             arcs = True
             #settings.member.cv_tab = True
@@ -4925,6 +5004,15 @@ def config(settings):
             #    # Must be already removed
             #    pass
             settings.modules.pop("asset", None)
+        else:
+            has_role = auth.s3_has_role
+            #if has_role("EVENT_MONITOR") and not has_role("ADMIN"):
+            #    # Bangkok CCST
+            #    # Filter People to just those from this region's countries & those people trained by the region
+            #    ltable = s3db.org_organisation_organisation
+            #    root_orgs = db(ltable.parent_id == auth.user.organisation_id).select(ltable.organisation_id)
+            #    root_orgs = [o.organisation_id for o in root_orgs]
+            #    s3.filter = FS("human_resource.organisation_id$root_organisation").belongs(root_orgs)
 
         if current.request.controller == "deploy":
             # Replace default title in imports:
@@ -4933,8 +5021,6 @@ def config(settings):
             # Not working
             #if _is_asia_pacific():
             #    settings.L10n.mandatory_lastname = False
-
-        s3 = current.response.s3
 
         # Custom prep
         standard_prep = s3.prep
@@ -4964,20 +5050,26 @@ def config(settings):
                 field.readable = field.writable = False
                 _customise_job_title_field(atable.job_title_id)
 
-            elif component_name == "experience":
+            if component_name == "experience":
                 if ircs:
                     ctable = r.component.table
                     ctable.hours.readable = ctable.hours.writable = False
                     ctable.job_title_id.readable = ctable.job_title_id.writable = False
 
-            elif component_name == "physical_description":
+            elif component_name == "physical_description" or \
+                 method == "import":
                 from gluon import DIV
-                ctable = r.component.table
-                if crmada or ircs:
-                    ctable.ethnicity.readable = ctable.ethnicity.writable = False
+                ctable = s3db.pr_physical_description
                 ctable.medical_conditions.comment = DIV(_class="tooltip",
                                                         _title="%s|%s" % (T("Medical Conditions"),
                                                                           T("Chronic Illness, Disabilities, Mental/Psychological Condition etc.")))
+                # Add the less-specific blood types (as that's all the data currently available in some cases)
+                from gluon.validators import IS_EMPTY_OR, IS_IN_SET
+                blood_type_opts = ("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "A", "B", "AB", "O")
+                ctable.blood_type.requires = IS_EMPTY_OR(IS_IN_SET(blood_type_opts))
+
+                if crmada or ircs:
+                    ctable.ethnicity.readable = ctable.ethnicity.writable = False
 
             elif component_name == "identity":
                 if crmada:
@@ -5023,7 +5115,7 @@ def config(settings):
                     from gluon import IS_EMPTY_OR
                     from s3 import IS_ONE_OF
                     field.requires = IS_EMPTY_OR(
-                                        IS_ONE_OF(current.db, "pr_education_level.id",
+                                        IS_ONE_OF(db, "pr_education_level.id",
                                                   field.represent,
                                                   filterby = "name",
                                                   filter_opts = levels,
@@ -5065,7 +5157,6 @@ def config(settings):
                 # Changes common to both Members & Volunteers
                 from gluon import IS_EMPTY_OR
                 from s3 import IS_ONE_OF, S3SQLCustomForm, S3SQLInlineComponent, S3LocationSelector
-                db = current.db
                 # Ensure that + appears at the beginning of the number
                 # Done in Model
                 #f = s3db.pr_phone_contact.value
@@ -5377,7 +5468,7 @@ def config(settings):
 
                     from gluon import IS_EMPTY_OR, IS_IN_SET
                     from s3 import IS_ONE_OF
-                    db = current.db
+
                     dtable = s3db.pr_person_details
 
                     # Context-dependent form fields
@@ -5492,8 +5583,6 @@ def config(settings):
 
                     if method == "record" and controller == "hrm":
                         # Custom config for method handler
-
-                        from s3 import FS
 
                         # RC employment history
                         org_type_name = "organisation_id$organisation_organisation_type.organisation_type_id$name"
@@ -5632,14 +5721,6 @@ def config(settings):
                     hide_fields = set(hide_fields)
                     list_fields = (fs for fs in list_fields if fs not in hide_fields)
                     s3db.configure("pr_identity", list_fields = list_fields)
-
-                elif component_name == "physical_description" or \
-                     method == "import":
-                    # Add the less-specific blood types (as that's all the data currently available in some cases)
-                    field = s3db.pr_physical_description.blood_type
-                    from gluon.validators import IS_EMPTY_OR, IS_IN_SET
-                    blood_type_opts = ("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "A", "B", "AB", "O")
-                    field.requires = IS_EMPTY_OR(IS_IN_SET(blood_type_opts))
 
                 elif method == "cv" or component_name == "experience":
                     table = s3db.hrm_experience

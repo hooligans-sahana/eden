@@ -622,6 +622,8 @@ class S3ProjectModel(S3Model):
                                         "key": "theme_id",
                                         "actuate": "hide",
                                         },
+                       # Format needed by S3Filter (unless using $link)
+                       project_theme_project = "project_id",
                        # Programmes
                        project_programme = {"link": "project_programme_project",
                                             "joinby": "project_id",
@@ -630,7 +632,7 @@ class S3ProjectModel(S3Model):
                                             "multiple": False,
                                             },
                        # Format needed by S3Filter (unless using $link)
-                       project_theme_project = "project_id",
+                       project_programme_project = "project_id",
 
                        # Project Needs (e.g. Funding, Volunteers)
                        req_project_needs = {"joinby": "project_id",
@@ -5586,7 +5588,7 @@ class S3ProjectPlanningModel(S3Model):
                 project["overall_status"] += overall_status
                 project["total_current_weighting"] += current_weighting
                 project["total_overall_weighting"] += overall_weighting
-                               
+
         # Update Project Status
         total_current_weighting = project["total_current_weighting"]
         if total_current_weighting:
@@ -6552,7 +6554,7 @@ class project_SummaryReport(S3Method):
             record = r.record
             end_date = current.request.utcnow
             end_date = end_date.date()
-            
+
             project = {"start_date": None, #record.start_date,
                        "end_date": end_date,
                        }
@@ -6873,7 +6875,7 @@ class project_SummaryReport(S3Method):
                                     table.planned_progress,
                                     table.weighting,
                                     )
-            
+
             for row in rows:
                 activity_id = row[ltable.activity_id]
                 activity_name = row[atable.name]
@@ -7264,9 +7266,7 @@ class project_SummaryReport(S3Method):
                 project["planned_progress"] += planned_progress
 
             return project, goals
-        
-        
-        
+
         # Filtered, so we need to recalculate dynamically
         # status_by_indicators
         # Goals
@@ -10180,7 +10180,7 @@ class S3ProjectTaskModel(S3Model):
     """
         Project Task Model
 
-        This class holds the tables used for an Organisation to manage
+        This class holds the tables used for a Person or Organisation to manage
         their Tasks in detail.
     """
 
@@ -12397,7 +12397,8 @@ def project_rheader(r):
         tabs = [(T("Details"), None)]
         append = tabs.append
         append((attachments_label, "document"))
-        if settings.has_module("msg"):
+        if settings.has_module("msg") and \
+           current.auth.permission.has_permission("update", c="msg"):
             append((T("Notify"), "dispatch"))
         #(T("Roles"), "job_title"),
         #(T("Assignments"), "human_resource"),
@@ -12834,7 +12835,7 @@ def project_project_filters(org_label):
 
     if settings.get_project_programmes():
         append_filter(
-            S3OptionsFilter("programme_project.programme_id",
+            S3OptionsFilter("project_programme_project.programme_id",
                             label = T("Program"),
                             hidden = True,
                             )

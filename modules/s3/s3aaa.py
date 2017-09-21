@@ -1456,7 +1456,11 @@ Thank you"""
             utable.utc_offset.writable = True
 
         # Users should not be able to change their Org affiliation
+        # - also hide popup-link to create a new Org (makes
+        #   no sense here if the field is read-only anyway)
         utable.organisation_id.writable = False
+        utable.organisation_id.comment = None
+
         ## Only allowed to select Orgs that the user has update access to
         #utable.organisation_id.requires = \
         #    current.s3db.org_organisation_requires(updateable = True)
@@ -1795,11 +1799,13 @@ $.filterOptionsS3({
                 else:
                     field.requires = IS_EMPTY_OR(requires)
 
-        if "profile" in request.args:
-            return
+        # Link User to Organisation (as staff, volunteer, or member)
+        if any(m in request.args for m in ("profile", "user_profile")):
+            # Irrelevant in personal profile
+            link_user_to_opts = False
+        else:
+            link_user_to_opts = deployment_settings.get_auth_registration_link_user_to()
 
-        # Link User to
-        link_user_to_opts = deployment_settings.get_auth_registration_link_user_to()
         if link_user_to_opts:
             link_user_to = utable.link_user_to
             link_user_to_default = deployment_settings.get_auth_registration_link_user_to_default()
@@ -2321,25 +2327,25 @@ $.filterOptionsS3({
             T.force(language)
             if message == "approve_user":
                 subjects[language] = \
-                    T("%(system_name)s - New User Registration Approval Pending") % \
-                            {"system_name": system_name}
-                messages[language] = auth_messages.approve_user % \
+                    s3_str(T("%(system_name)s - New User Registration Approval Pending") % \
+                            {"system_name": system_name})
+                messages[language] = s3_str(auth_messages.approve_user % \
                             dict(system_name = system_name,
                                  first_name = first_name,
                                  last_name = last_name,
                                  email = email,
                                  url = "%(base_url)s/admin/user/%(id)s" % \
                                     dict(base_url=base_url,
-                                         id=user_id))
+                                         id=user_id)))
             elif message == "new_user":
                 subjects[language] = \
-                    T("%(system_name)s - New User Registered") % \
-                            {"system_name": system_name}
+                    s3_str(T("%(system_name)s - New User Registered") % \
+                            {"system_name": system_name})
                 messages[language] = \
-                    auth_messages.new_user % dict(system_name = system_name,
+                    s3_str(auth_messages.new_user % dict(system_name = system_name,
                                                   first_name = first_name,
                                                   last_name = last_name,
-                                                  email = email)
+                                                  email = email))
 
         # Restore language for UI
         T.force(session.s3.language)
@@ -3935,6 +3941,83 @@ $.filterOptionsS3({
             if realm is None or for_pe is None or for_pe in realm:
                 return True
         return False
+
+    # -------------------------------------------------------------------------
+    def s3_has_roles(self, roles, for_pe=None, all=False):
+        """
+            Check whether the currently logged-in user has at least one
+            out of a set of roles (or all of them, with all=True)
+
+            @param roles: list|tuple|set of role IDs or UIDs
+            @param for_pe: check for this particular realm, possible values:
+                               None - for any entity
+                               0 - site-wide
+                               X - for entity X
+            @param all: check whether the user has all of the roles
+        """
+
+        # Override
+        if self.override or not roles:
+            return True
+
+        # Get the realms
+        session_s3 = current.session.s3
+        if not session_s3:
+            return False
+        realms = None
+        if self.user:
+            realms = self.user.realms
+        elif session_s3.roles:
+            realms = Storage([(r, None) for r in session_s3.roles])
+        if not realms:
+            return False
+
+        # Administrators have all roles (no need to check)
+        system_roles = self.get_system_roles()
+        if system_roles.ADMIN in realms:
+            return True
+
+        # Resolve any role UIDs
+        if not isinstance(roles, (tuple, list, set)):
+            roles = [roles]
+
+        check = set()
+        resolve = set()
+        for role in roles:
+            if isinstance(role, basestring):
+                resolve.add(role)
+            else:
+                check.add(role)
+
+        if resolve:
+            gtable = self.settings.table_group
+            query = (gtable.uuid.belongs(resolve)) & \
+                    (gtable.deleted != True)
+            rows = current.db(query).select(gtable.id,
+                                            cache = (current.cache.ram, 600),
+                                            )
+            for row in rows:
+                check.add(row.id)
+
+        # Check each role
+        for role in check:
+
+            if role == system_roles.ANONYMOUS:
+                # All users have the anonymous role
+                has_role = True
+            elif role in realms:
+                realm = realms[role]
+                has_role = realm is None or for_pe is None or for_pe in realm
+            else:
+                has_role = False
+
+            if has_role:
+                if not all:
+                    return True
+            elif all:
+                return False
+
+        return bool(all)
 
     # -------------------------------------------------------------------------
     def s3_group_members(self, group_id, for_pe=[]):
