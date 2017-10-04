@@ -287,8 +287,8 @@
 'All Inbound & Outbound Messages are stored here': 'Todas as mensagens enviadas e recebidas são armazenados aqui',
 'all records': 'todos os registros',
 'All Resources': 'Todos os recursos',
-'All Stakeholders engaged in disaster risk management work in Santa Maria Madalena can use\
- the Santa Maria Madalena Disaster Risk Management Information System to share information to better plan and coordinate their activities.': 'Todos os Stakeholders envolvidos no trabalho de gestão de risco de desastres em Santa Maria Madalena podem usar o Sistema de Informação de Gerenciamento de Riscos de Desastres de Santa Maria Madalena para compartilhar informações para planejar e coordenar melhor suas atividades.',
+'All Stakeholders engaged in disaster risk management work in Rio de Janeiro can use\
+ the Rio de Janeiro Disaster Risk Management Information System to share information to better plan and coordinate their activities.': 'Todos os Stakeholders envolvidos no trabalho de gestão de risco de desastres no Rio de Janeiro podem usar o Sistema de Informação de Gerenciamento de Riscos de Desastres do Rio de Janeiro para compartilhar informações para planejar e coordenar melhor suas atividades.',
 'Allowed to push': 'Permissão para pressionar',
 'allows a budget to be developed based on staff & equipment costs, including any admin overheads.': 'Permite que um orçamento seja desenvolvido com base em despesas com o pessoal e equipamento, incluindo quaisquer despesas gerais administrativas.',
 'Allows a Budget to be drawn up': 'Permite que um orçamento seja estabelecido',
@@ -1072,7 +1072,7 @@
 'Disabled?': 'Desativado?',
 'Disasters': 'Desastres',
 'Disaster clean-up/repairs': 'Desastre limpeza/reparos',
-'Disaster prevention and management system in Santa Maria Madalena': 'Sistema de prevenção e gestão de desastres em Santa Maria Madalena',
+'Disaster prevention and management system in Rio de Janeiro': 'Sistema de prevenção e gestão de desastres no Rio de Janeiro',
 'Disaster Victim Identification': 'Identificação de Vítima de Desastre',
 'Disaster Victim Registry': 'Registro de Vítima de Desastre',
 'Discharge (cusecs)': 'Quitação (cusecs)',
@@ -1095,6 +1095,7 @@
 'Distribution': 'Distribuição de',
 'Distribution groups': 'Grupos de distribuição',
 'District': 'Distrito',
+'Districts': 'Distritos',
 'divorced': 'divorciado',
 'DNA Profile': 'Perfil de DNA',
 'DNA Profiling': 'Perfil de DNA',
@@ -1782,7 +1783,7 @@
 'Importing data from spreadsheets': 'Importar dados de planilhas',
 'Improper decontamination': 'Descontaminação Imprópria',
 'Improper handling of dead bodies': 'Manipulação inadequada de cadáveres',
-'Improving disaster prevention, preparedness and response in Santa Maria Madalena.': 'Melhorando a prevenção, preparação e resposta a desastres em Santa Maria Madalena.',
+'Improving disaster prevention, preparedness and response in Rio de Janeiro.': 'Melhorando a prevenção, preparação e resposta a desastres no Rio de Janeiro.',
 'In Catalogs': 'Em Catálogos',
 'in Deg Min Sec format': 'GRAUS Celsius no formato Mín. Segundo',
 'in GPS format': 'GPS no formato',
@@ -3560,11 +3561,11 @@
 'Severe': 'Severo',
 'Severity': 'Gravidade',
 'Share a common Marker (unless over-ridden at the Feature level)': 'Compartilhar um marcador comum (a não ser que abaixo-assinado ao nível de Componente)',
-'Share information, knowledge and capacities to effectively anticipate, respond to, and recover from, the impacts of likely, imminent or current hazard events in Santa Maria Madalena': 'Compartilhe informações, conhecimentos e capacidades para efetivamente antecipar,\
-  responder e recuperar dos impactos de eventos de risco prováveis, inminentes ou atuais em Santa Maria Madalena',
+'Share information, knowledge and capacities to effectively anticipate, respond to, and recover from, the impacts of likely, imminent or current hazard events in Rio de Janeiro': 'Compartilhe informações, conhecimentos e capacidades para efetivamente antecipar,\
+  responder e recuperar dos impactos de eventos de risco prováveis, inminentes ou atuais no Rio de Janeiro',
 'Share information to coordinate, cooperate, and collaborate with stakeholders in\
- Santa Maria Madalena county to avoid potential adverse impacts of disasters through advanced actions': 'Compartilhimento de informações para coordenar, cooperar e\
-  colaborar com as partes interessadas no municipio de Santa Maria Madalena para evitar possíveis impactos adversos de desastres através de ações avançadas',
+ Rio de Janeiro county to avoid potential adverse impacts of disasters through advanced actions': 'Compartilhimento de informações para coordenar, cooperar e\
+  colaborar com as partes interessadas no municipio do Rio de Janeiro para evitar possíveis impactos adversos de desastres através de ações avançadas',
 'shaved': 'raspado',
 'Shelter': 'Abrigo',
 'Shelter & Essential NFIs': 'Abrigo & NFIs Essenciais',

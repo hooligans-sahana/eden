@@ -25,8 +25,8 @@ def config(settings):
     # Pre-Populate
     settings.base.prepopulate += ("SMM", "default/users")
 
-    settings.base.system_name = T("Plataforma de gestão de desastres de Santa Maria Madalena")
-    settings.base.system_name_short = T("PGDSMM")
+    settings.base.system_name = T("Plataforma de gestão de desastres do Rio de Janeiro")
+    settings.base.system_name_short = T("PGDRJ")
 
     # =============================================================================
     # System Settings
