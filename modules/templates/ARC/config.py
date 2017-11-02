@@ -522,12 +522,12 @@ def config(settings):
                 restricted = True,
                 #module_type = 4
             )),
-        ("asset", Storage(
-                name_nice = T("Assets"),
-                #description = "Recording and Assigning Assets",
-                restricted = True,
-                #module_type = 5,
-            )),
+        # ("asset", Storage(
+        #         name_nice = T("Assets"),
+        #         #description = "Recording and Assigning Assets",
+        #         restricted = True,
+        #         #module_type = 5,
+        #     )),
         # Vehicle depends on Assets
         ("vehicle", Storage(
             name_nice = T("Vehicles"),

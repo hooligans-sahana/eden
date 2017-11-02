@@ -3565,7 +3565,7 @@
   responder e recuperar dos impactos de eventos de risco prováveis, inminentes ou atuais no Rio de Janeiro',
 'Share information to coordinate, cooperate, and collaborate with stakeholders in\
  Rio de Janeiro county to avoid potential adverse impacts of disasters through advanced actions': 'Compartilhimento de informações para coordenar, cooperar e\
-  colaborar com as partes interessadas no municipio do Rio de Janeiro para evitar possíveis impactos adversos de desastres através de ações avançadas',
+  colaborar com as partes interessadas no Rio de Janeiro para evitar possíveis impactos adversos de desastres através de ações avançadas',
 'shaved': 'raspado',
 'Shelter': 'Abrigo',
 'Shelter & Essential NFIs': 'Abrigo & NFIs Essenciais',

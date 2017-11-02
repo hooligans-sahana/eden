@@ -1,12 +1,13 @@
 uid,role,description,controller,function,table,entity,uacl,oacl,hidden,system,protected,Notes
-ANONYMOUS,Anonymous,,org,organisation,,,READ,,,,,Allow new users to see orgs during registration 
-ANONYMOUS,Anonymous,,,,org_organisation,,READ,,,,,Allow new users to see orgs during registration 
+ANONYMOUS,Anonymous,,org,organisation,,,READ,,,,,Allow new users to see orgs during registration
+ANONYMOUS,Anonymous,,,,org_organisation,,READ,,,,,Allow new users to see orgs during registration
 ANONYMOUS,Anonymous,,default,index,auth_user,,READ,,,,,Allow users to decode the modified_by field
 ANONYMOUS,Anonymous,,doc,,,any,READ,READ,,,,
 ANONYMOUS,Anonymous,,org,,,any,READ,READ,,,,
 ANONYMOUS,Anonymous,,project,,,any,READ,READ,,,,
 ANONYMOUS,Anonymous,,event,,,,READ,READ,,,,
 ANONYMOUS,Anonymous,,pr,,,any,READ,READ,,,,
+ANONYMOUS,Anonymous,,vehicle,,,any,READ,READ,,,,
 ANONYMOUS,Anonymous,,vulnerability,risk,,any,READ,READ,,,,
 ANONYMOUS,Anonymous,,,,gis_layer_bing,,READ,,,,,
 ANONYMOUS,Anonymous,,,,gis_layer_coordinate,,READ,,,,,
@@ -34,6 +35,7 @@ USER,User,,org,,,,READ|CREATE|UPDATE|REVIEW|APPROVE,READ|CREATE|UPDATE|DELETE|RE
 USER,User,,,,org_organisation,,READ|CREATE|UPDATE|REVIEW|APPROVE,READ|CREATE|UPDATE|DELETE|REVIEW|APPROVE,,,,For Profile Organisation Select Updateable Filter
 USER,User,,project,,,,READ|CREATE|UPDATE,READ|CREATE|UPDATE|DELETE,,,,
 USER,User,,pr,,,any,READ|CREATE|UPDATE,READ|CREATE|UPDATE|DELETE,,,,
+USER,User,,vehicle,,,any,READ|CREATE|UPDATE,READ|CREATE|UPDATE|DELETE,,,,
 USER,User,,,,gis_config,,READ|CREATE,READ|UPDATE,,,,
 USER,User,,,,gis_layer_feature,,READ|CREATE,,,,,
 USER,User,,,,gis_layer_geojson,,READ|CREATE,,,,,

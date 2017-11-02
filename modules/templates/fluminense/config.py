@@ -25,7 +25,7 @@ def config(settings):
 
     # -----------------------------------------------------------------------------
     # Pre-Populate
-    settings.base.prepopulate += ("DRMP", "default/users")
+    settings.base.prepopulate += ("fluminense", "default/users")
 
     settings.base.system_name = T("Fluminense Disaster Risk Management Information System")
     settings.base.system_name_short = T("SGDF")
@@ -67,7 +67,7 @@ def config(settings):
     # Owner Entity
     settings.auth.person_realm_human_resource_site_then_org = False
 
-    def drmp_realm_entity(table, row):
+    def fluminense_realm_entity(table, row):
         """
             Assign a Realm Entity to records
         """
@@ -94,7 +94,7 @@ def config(settings):
         # Follow normal rules
         return 0
 
-    settings.auth.realm_entity = drmp_realm_entity
+    settings.auth.realm_entity = fluminense_realm_entity
 
     # -----------------------------------------------------------------------------
     # Theme (folder to use for views/layout.html)
@@ -144,7 +144,7 @@ def config(settings):
     # Resources which can be directly added to the main map
     settings.gis.poi_create_resources = None
     # GeoNames username
-    settings.gis.geonames_username = "tldrmp"
+    settings.gis.geonames_username = "tlfluminense"
 
     # -----------------------------------------------------------------------------
     # Finance settings
@@ -638,7 +638,7 @@ def config(settings):
         item = DIV(DIV(A(IMG(_class="media-object",
                              _src="%s/%s.png" % (URL(c="static",
                                                      f="themes",
-                                                     args=["DRMP", "img"]),
+                                                     args=["fluminense", "img"]),
                                                  image),
                              ),
                          _class="pull-left",
@@ -1430,7 +1430,6 @@ def config(settings):
 
         record_id = record["project_project.id"]
         item_class = "thumbnail"
-
         raw = record._row
         name = record["project_project.name"]
         author = record["project_project.modified_by"]
@@ -1709,7 +1708,6 @@ def config(settings):
 
         record_id = record["org_resource.id"]
         item_class = "thumbnail"
-
         raw = record._row
         author = record["org_resource.modified_by"]
         date = record["org_resource.modified_on"]
@@ -2738,7 +2736,7 @@ def config(settings):
                                    profile_header = DIV(A(IMG(_class="media-object",
                                                               _src="%s/%s.png" % (URL(c="static",
                                                                                       f="themes",
-                                                                                      args=["DRMP", "img"]),
+                                                                                      args=["fluminense", "img"]),
                                                                                   image),
                                                               ),
                                                           _class="pull-left",
@@ -3614,7 +3612,7 @@ def config(settings):
                 #iappend('''i18n.job_title="%s"''' % T("Job Title"))
                 #i18n = '''\n'''.join(i18n)
                 #s3.js_global.append(i18n)
-                #s3.scripts.append('/%s/static/themes/DRMP/js/contacts.js' % request.application)
+                #s3.scripts.append('/%s/static/themes/fluminense/js/contacts.js' % request.application)
 
             return True
         s3.prep = custom_prep
@@ -4097,6 +4095,31 @@ def config(settings):
             #description = 'Lists "who is doing what & where". Allows relief agencies to coordinate their activities',
             restricted = True,
             module_type = None
+        )),
+        ("supply", Storage(
+            name_nice = T("Supply Chain Management"),
+            #description = "Used within Inventory Management, Request Management and Asset Management",
+            restricted = True,
+            #module_type = None, # Not displayed
+        )),
+        ("inv", Storage(
+            name_nice = T("Warehouses"),
+            #description = "Receiving and Sending Items",
+            restricted = True,
+            #module_type = 4
+        )),
+        ("asset", Storage(
+            name_nice = T("Assets"),
+            #description = "Recording and Assigning Assets",
+            restricted = True,
+            module_type = 5,
+        )),
+        # Vehicle depends on Assets
+        ("vehicle", Storage(
+            name_nice = T("Vehicles"),
+            #description = "Manage Vehicles",
+            restricted = True,
+            module_type = 10,
         )),
         # All modules below here should be possible to disable safely
         ("hrm", Storage(

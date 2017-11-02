@@ -10,7 +10,7 @@ from gluon.storage import Storage
 
 from s3 import S3CRUD, S3CustomController, S3DateFilter, S3LocationFilter, S3OptionsFilter, S3TextFilter, S3FilterForm
 
-THEME = "DRMP"
+THEME = "fluminense"
 
 # =============================================================================
 class index(S3CustomController):
