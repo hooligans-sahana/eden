@@ -172,6 +172,10 @@ class S3VehicleModel(S3Model):
                      Field("gps",
                            label = T("GPS ID"),
                            ),
+                     Field("aprs_id",
+                           label = T("APRS Identificator"),
+                           unique=True
+                          ),
                      Field("mileage", "integer",
                            label = T("Current Mileage"),
                            represent = lambda v: int_represent(v),
