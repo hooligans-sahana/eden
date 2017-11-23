@@ -200,6 +200,7 @@ class S3Model(object):
 
         db = current.db
         found = None
+        # import ipdb; ipdb.set_trace()
         if hasattr(db, tablename):
             return ogetattr(db, tablename)
         elif ogetattr(db, "_lazy_tables") and \

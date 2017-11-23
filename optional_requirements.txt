@@ -3,7 +3,7 @@ xlwt>=0.7.2
 # Warning: S3GIS unresolved dependency: shapely required for GIS support
 Shapely>=1.2.14 #shapely
 # Warning: S3PDF unresolved dependency: Python Imaging required for PDF export
-PIL>=1.1.7 #from PIL import Image
+#PIL>=1.1.7 from PIL import Image
 # Warning: S3GIS unresolved dependency: GDAL required for Shapefile support
 GDAL>=1.9.0 #from osgeo import ogr
 # Warning: S3PDF unresolved dependency: reportlab required for PDF export
@@ -24,7 +24,7 @@ pyth>=0.5.6
 # Warning: S3Chart unresolved dependency: matplotlib required for charting in Survey module
 matplotlib>=1.1.1
 # Warning: Survey unresolved dependency: PyRTF required if you want to export assessment/survey templates as a Word document
-PyRTF>=0.45
+#PyRTF>=0.45
 # Warning: Message Parsing unresolved dependency: TwitterSearch required for fetching results from twitter keyword queries
 TwitterSearch>=0.78.4
 # Warning: Messaging unresolved dependency: requests required for posting to Facebook

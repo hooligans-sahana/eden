@@ -169,6 +169,7 @@ class S3Config(Storage):
         self._debug = None
         self._lazy_unwrapped = []
 
+        self.sensor = Storage()
         # Provide a minimal list of core modules
         self.modules = {"default": Storage(name_nice = "Home",
                                            ),      # Default

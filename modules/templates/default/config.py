@@ -1220,6 +1220,11 @@ def config(settings):
             restricted = True,
             module_type = 10
         )),
+        ("sensor", Storage(
+            name_nice = "Sensor",
+            restricted = True,
+            module_type = None
+        )),        
         #("deploy", Storage(
         #    name_nice = T("Deployments"),
         #    #description = "Manage Deployments",
@@ -1302,12 +1307,12 @@ def config(settings):
         #    module_type = 10,
         #)),
         # Requires RPy2 & PostgreSQL
-        #("climate", Storage(
+        # ("climate", Storage(
         #    name_nice = T("Climate"),
         #    #description = "Climate data portal",
         #    restricted = True,
         #    module_type = 10,
-        #)),
+        # )),
         #("delphi", Storage(
         #    name_nice = T("Delphi Decision Maker"),
         #    #description = "Supports the decision making of large groups of Crisis Management Experts by helping the groups create ranked list.",

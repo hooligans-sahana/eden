@@ -4167,6 +4167,16 @@ def config(settings):
             restricted = True,
             module_type = None
         )),
+        ("sensor", Storage(
+            name_nice = "Sensor",
+            restricted = True,
+            module_type = None
+        )),
+        # ("climate", Storage(
+        #     name_nice = "Climate",
+        #     restricted = True,
+        #     module_type = None
+        # )),
         #("transport", Storage(
         #    name_nice = "Transport",
         #    restricted = True,

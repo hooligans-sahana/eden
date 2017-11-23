@@ -112,7 +112,6 @@ def vehicle():
         msg_list_empty = T("No Vehicles currently registered"))
 
     # @ToDo: Tweak the search comment
-
     # Defined in Model
     return s3db.asset_controller()
 

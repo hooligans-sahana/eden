@@ -174,7 +174,8 @@ class S3VehicleModel(S3Model):
                            ),
                      Field("aprs_id",
                            label = T("APRS Identificator"),
-                           unique=True
+                           unique=True,
+                           notnull=False
                           ),
                      Field("mileage", "integer",
                            label = T("Current Mileage"),

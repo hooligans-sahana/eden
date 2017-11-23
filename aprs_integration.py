@@ -2,6 +2,7 @@ import aprslib
 
 def callback(packet):
   parsed_packet = aprslib.parse(packet)
+  print packet
   if parsed_packet['from'] in aprs_names:
     create_gis_location(parsed_packet)
 
