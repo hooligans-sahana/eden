@@ -1,4 +1,3 @@
-
 def sensor_station():
     return s3_rest_controller(rheader = sensor_station_rheader)
 
@@ -11,25 +10,38 @@ def sensor_station_gis():
 
     # Get default organisation_id
     req_vars = request.vars
-    resourcename = "sensor_sensor_station"
+    resourcename = "sensor_station"
     table = s3db.sensor_sensor_station
     # Pre-processor
     def prep(r):
         # Location Filter
         s3db.gis_location_filter(r)
-
         if r.representation == "plain":
             # Map popups want less clutter
-            table.obsolete.readable = False
-
+            # import ipdb; ipdb.set_trace()
+            pass
         elif r.representation == "geojson":
-            marker_fn = s3db.get_config("org_office", "marker_fn")
+            marker_fn = s3db.get_config("sensor_station_", "marker_fn")
             if marker_fn:
                 # Load these models now as they'll be needed when we encode
                 mtable = s3db.gis_marker
 
         return True
     s3.prep = prep
+
+    # Post-processor
+    def postp(r, output):
+        if r.representation == "plain":
+            # Map Popups
+            # Look for a Photo
+            # @ToDo: The default photo not the 1st
+            last_registry = r.record.sensor_sensor_station_registry.select().last()
+            property_table = TABLE()
+            for sensor_property in last_registry.sensor_property.select():
+                property_table.append(TR(TD(sensor_property.name), TD(sensor_property.value)))
+            output['item'].append(property_table)
+        return output
+    s3.postp = postp
 
 
     output = current.rest_controller(resourcename=resourcename)

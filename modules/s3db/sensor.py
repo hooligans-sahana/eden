@@ -150,9 +150,33 @@ class S3SensorModel(S3Model):
         type_represent = S3Represent(lookup=tablename,
             fields=["created_on"],
             translate=True)
+        sensor_sensor_station_registry_id = S3ReusableField("sensor_sensor_station_registry_id", "reference %s" % tablename,
+            label = T("sensor_sensor_station_registry"),
+            ondelete = "RESTRICT",
+            represent = type_represent,
+            requires = IS_EMPTY_OR(
+            IS_ONE_OF(db,
+            "sensor_sensor_station_registry.id",
+            represent,)),
+        )
         s3db.add_components("sensor_sensor_station",
                     sensor_sensor_station_registry = "sensor_sensor_station_id")
 
+        tablename = "sensor_property"
+        self.define_table(tablename,
+        sensor_sensor_station_registry_id(),
+        Field("name",
+            label = T("Name"),
+        ),
+        Field("value", "double",
+            label = T("Value"),
+        ),
+        s3_comments(),
+        *s3_meta_fields())
+
+        type_represent = S3Represent(lookup=tablename,
+            fields=["created_on"],
+            translate=True)
         return dict(sensor_sensor_station_id = sensor_sensor_station_id,)
 
 
