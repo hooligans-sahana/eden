@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 
+import dateutil.parser
+import json
 from gluon import current#, Field, SQLFORM
 from gluon.html import *
+from gluon.http import HTTP
 from gluon.storage import Storage
 from s3 import FS, ICON, s3_auth_user_represent, \
                S3CRUD, S3CustomController, \
@@ -25,7 +28,7 @@ class index(S3CustomController):
         events = custom._events_html()
 
         # Map of Incidents
-        _map = custom._map("Incidents")
+        _map, button = custom._map("Incidents")
 
         # Output
         output = {"alerts": alerts,
@@ -75,7 +78,7 @@ class custom_WACOP(S3CRUD):
         if r.representation == "html":
             return self._html(r, **attr)
 
-        raise HTTP(405, current.ERROR.BAD_METHOD)
+        r.error(405, current.ERROR.BAD_METHOD)
 
     # -------------------------------------------------------------------------
     def _html(self, r, **attr):
@@ -97,9 +100,13 @@ class custom_WACOP(S3CRUD):
                    updateable = True,
                    export = False,
                    event_id = None,
+                   forum_id = None,
                    incident_id = None,
+                   actions = None,
                    ajax_vars = None, # Used to be able to differentiate contexts in customise()
+                                     # & for filter_defaults
                    dt_init = None,
+                   resource = None,
                    ):
         """
             Update output with a dataTable and a create_popup
@@ -113,7 +120,8 @@ class custom_WACOP(S3CRUD):
 
         if ajax_vars is None:
             ajax_vars = {}
-        resource = s3db.resource(tablename)
+        if resource is None:
+            resource = s3db.resource(tablename)
         if event_id:
             ltablename = "event_%s" % f
             if tablename == ltablename:
@@ -132,6 +140,13 @@ class custom_WACOP(S3CRUD):
             else:
                 resource.add_filter(FS("event_%s.incident_id" % f) == incident_id)
                 ajax_vars["event_%s.incident_id" % f] = incident_id
+        elif forum_id:
+            if tablename == "pr_forum_membership":
+                resource.add_filter(FS("forum_id") == forum_id)
+                ajax_vars["~.forum_id"] = forum_id
+            elif tablename == "project_task":
+                resource.add_filter(FS("task_forum.forum_id") == forum_id)
+                ajax_vars["task_forum.forum_id"] = forum_id
 
         dataTable_id = "custom-list-%s" % tablename
 
@@ -153,10 +168,11 @@ class custom_WACOP(S3CRUD):
         get_config = s3db.get_config # Customise these inside customise() functions as-required
         list_fields = get_config(tablename, "list_fields")
         orderby = get_config(tablename, "orderby")
-        dt, totalrows, ids = resource.datatable(fields = list_fields,
-                                                start = 0,
-                                                limit = 2 * displayLength,
-                                                orderby = orderby)
+        dt, totalrows = resource.datatable(fields = list_fields,
+                                           start = 0,
+                                           limit = 2 * displayLength,
+                                           orderby = orderby,
+                                           )
         displayrows = totalrows
 
         if dt.empty:
@@ -174,6 +190,7 @@ class custom_WACOP(S3CRUD):
         if not search:
             dtargs["dt_searching"] = False
 
+        # Action Buttons
         # @ToDo: Permissions
         #messages = current.messages
         #if f in ("event", "incident"):
@@ -195,35 +212,45 @@ class custom_WACOP(S3CRUD):
         #                   args = ["[id]", profile])
         #    delete_url = URL(c=c, f=f,
         #                     args=["[id]", "delete"])
-        # Hide the Action Buttons as we assume that the first column is clickable to open details
-        dtargs["dt_row_actions"] = [{#"label": messages.READ,
-                                     "label": "",
-                                     #"url": read_url,
-                                     "url": "",
-                                    ##"icon": "fa fa-eye",
-                                    # "icon": "fa fa-caret-right",
-                                    # #"_class": "s3_modal",
-                                     },
-                                    # @ToDo: AJAX delete
-                                    #{"label": messages.DELETE,
-                                    # "url": delete_url,
-                                    # "icon": "fa fa-trash",
-                                    # },
-                                    ]
+        if actions is None:
+            # Hide the Action Buttons as we assume that the first column is clickable to open details
+            actions = [{#"label": messages.READ,
+                        "label": "",
+                        #"url": read_url,
+                        "url": "",
+                        ##"icon": "fa fa-eye",
+                        # "icon": "fa fa-caret-right",
+                        # #"_class": "s3_modal",
+                        },
+                        # @ToDo: AJAX delete
+                        #{"label": messages.DELETE,
+                        # "url": delete_url,
+                        # "icon": "fa fa-trash",
+                        # },
+                       ]
+        dtargs["dt_row_actions"] = actions
         # Action Buttons on the right (no longer)
         #dtargs["dt_action_col"] = len(list_fields)
-        # Use Native controller for AJAX  calls
-        #dtargs["dt_ajax_url"] = r.url(vars={"update": tablename},
-        #                              representation="aadata")
-        dtargs["dt_ajax_url"] = URL(c = c,
-                                    f = f,
-                                    vars = ajax_vars,
-                                    extension = "aadata",
-                                    )
+
+        if tablename == "pr_forum_membership":
+            # Use Native controller for AJAX calls
+            dtargs["dt_ajax_url"] = URL(c = "pr",
+                                        f = "forum",
+                                        args = [forum_id, "forum_membership"],
+                                        #vars = ajax_vars,
+                                        extension = "aadata",
+                                        )
+        else:
+            # Use Native controller for AJAX calls
+            dtargs["dt_ajax_url"] = URL(c = c,
+                                        f = f,
+                                        vars = ajax_vars,
+                                        extension = "aadata",
+                                        )
 
         datatable = dt.html(totalrows,
                             displayrows,
-                            id=dataTable_id,
+                            id = dataTable_id,
                             **dtargs)
 
         if dt.data:
@@ -246,6 +273,12 @@ class custom_WACOP(S3CRUD):
                               args=[incident_id, "assign.popup"],
                               vars={"refresh": dataTable_id},
                               )
+            elif tablename == "pr_forum_membership":
+                label = T("Add Member")
+                url = URL(c="pr", f="forum",
+                          args=[forum_id, f, "create.popup"],
+                          vars={"refresh": dataTable_id},
+                          )
             else:
                 if event_id:
                     if f == "team":
@@ -261,6 +294,11 @@ class custom_WACOP(S3CRUD):
                               args=[incident_id, f, "create.popup"],
                               vars={"refresh": dataTable_id},
                               )
+                elif forum_id:
+                    url = URL(c="pr", f="forum",
+                              args=[forum_id, f, "create.popup"],
+                              vars={"refresh": dataTable_id},
+                              )
                 else:
                     url = URL(c=c, f=f,
                               args=["create.popup"],
@@ -270,6 +308,8 @@ class custom_WACOP(S3CRUD):
                     label = T("Add Organization")
                 elif tablename == "project_task":
                     label = T("Create Task")
+                elif tablename == "pr_forum":
+                    label = T("Create Group")
                 else:
                     # event_team
                     label = T("Add")
@@ -307,7 +347,7 @@ class custom_WACOP(S3CRUD):
             _map = None
 
             button = A("DRAW A MAP AREA",
-                       _class="button",
+                       _class="button wide",
                        _id="map_filter_button",
                        )
 
@@ -448,12 +488,10 @@ class custom_WACOP(S3CRUD):
                     L3 = row["gis_location.L3"]
                     lat = row["gis_location.lat"]
                     lon = row["gis_location.lon"]
+                    location_full = "%s, %s; %s, %s" % (L3, L1_abrv, lat, lon)
                 else:
                     # No location or national
-                    L1_abrv = ""
-                    L3 = ""
-                    lat = ""
-                    lon = ""
+                    location_full = T("No Address Given")
                 alerts.append(DIV(TAG["aside"](TAG["header"](UL(LI(_class="item icon",
                                                                    ),
                                                                 LI(status,
@@ -474,7 +512,7 @@ class custom_WACOP(S3CRUD):
                                                           _class="meta",
                                                           ),
                                                      BR(),
-                                                     SPAN("%s, %s; %s, %s" % (L3, L1_abrv, lat, lon),
+                                                     SPAN(location_full,
                                                           _class="meta-location",
                                                           ),
                                                      ),
@@ -617,7 +655,8 @@ class custom_WACOP(S3CRUD):
                     if has_permission("update", etable, record_id):
                         edit = LI(A(ICON("pencil"),
                                     _href=URL(c="event", f="event",
-                                              args=["%s.popup" % record_id, "update"]
+                                              args = ["%s.popup" % record_id, "update"],
+                                              vars = {"refresh": 1},
                                               ),
                                     _title=T("Edit Event"),
                                     _class="s3_modal",
@@ -644,7 +683,7 @@ class custom_WACOP(S3CRUD):
                     # No location
                     L1_abrv = ""
                     L3 = ""
-                    addr_street = ""
+                    addr_street = T("No Address Given")
                     addr_postcode = ""
                 events.append(DIV(TAG["aside"](TAG["header"](UL(LI(status,
                                                                    _class="item primary status",
@@ -684,7 +723,13 @@ class custom_WACOP(S3CRUD):
                                                        end_date,
                                                        _class="event-date-location",
                                                        ),
-                                                   P(meta,
+                                                   P(meta + " ",
+                                                     A(T("Read More"),
+                                                       _href=URL(c="event", f="event",
+                                                                 args=[record_id, "custom"],
+                                                                 ),
+                                                       _class="more",
+                                                       ),
                                                      _class="meta",
                                                      ),
                                                    DIV(row["event_event.comments"],
@@ -692,15 +737,6 @@ class custom_WACOP(S3CRUD):
                                                        ),
                                                    _class="body",
                                                    ),
-                                               TAG["footer"](P(A(T("Read More"),
-                                                                 _href=URL(c="event", f="event",
-                                                                           args=[record_id, "custom"],
-                                                                           ),
-                                                                 _class="more",
-                                                                 ),
-                                                               ),
-                                                             _class="footer",
-                                                             ),
                                                _class="card-event",
                                                ),
                                   _class="medium-4 columns",
@@ -722,14 +758,20 @@ class custom_WACOP(S3CRUD):
         ADMIN = current.auth.s3_has_role("ADMIN")
 
         table = current.s3db.cms_post
-        record = current.db(table.name == "SYSTEM_WIDE").select(table.body,
-                                                                limitby=(0, 1)
-                                                                ).first()
+        query = (table.name == "SYSTEM_WIDE") & \
+                (table.deleted == False)
+        record = current.db(query).select(table.body,
+                                          limitby=(0, 1)
+                                          ).first()
         if record or ADMIN:
             if ADMIN:
-                edit_btn = P(A(current.T("Edit System-wide Alert"),
+                if record:
+                    label = current.T("Edit System-wide Alert")
+                else:
+                    label = current.T("Create System-wide Alert")
+                edit_btn = P(A(label,
                                _href = URL(c="cms", f="post",
-                                           args = "update",
+                                           args = "create",
                                            vars = {"page": "SYSTEM_WIDE"},
                                            ),
                                _class = "button button-info",
@@ -758,7 +800,97 @@ class custom_WACOP(S3CRUD):
         return system_wide
 
     # -------------------------------------------------------------------------
-    def _updates_html(self, r, output, event_id, incident_id, updateable, **attr):
+    def _tasks_html(self,
+                    r,
+                    output,
+                    updateable = True,
+                    event_id = None,
+                    incident_id = None,
+                    forum_id = None,
+                    dt_init = None,
+                    ):
+        """
+            Create the HTML for the Tasks section
+
+            @param r: the S3Request
+        """
+
+        tablename = "project_task"
+        dataTable_id = "custom-list-%s" % tablename
+        ajax_vars = {#"list_id": dataTable_id,
+                     #"refresh": dataTable_id,
+                     }
+
+        s3db = current.s3db
+        resource = s3db.resource(tablename)
+        if event_id:
+            # Done by _datatable
+            #resource.add_filter(FS("event_task.event_id") == event_id)
+            ajax_vars["event_task.event_id"] = event_id
+        elif incident_id:
+            # Done by _datatable
+            #resource.add_filter(FS("event_task.incident_id") == incident_id)
+            ajax_vars["event_task.incident_id"] = incident_id
+        elif forum_id:
+            # Done by _datatable
+            #resource.add_filter(FS("task_forum.forum_id") == forum_id)
+            ajax_vars["task_forum.forum_id"] = forum_id
+        ajaxurl = URL(c="project", f="task", args="datatable",
+                      vars=ajax_vars, extension="aadata")
+
+        customise = current.deployment_settings.customise_resource(tablename)
+        if customise:
+            customise(r, tablename)
+
+        default_filters = S3FilterForm.apply_filter_defaults(r, resource)
+
+        self._datatable(output = output,
+                        tablename = tablename,
+                        search = False,
+                        updateable = updateable,
+                        event_id = event_id,
+                        incident_id = incident_id,
+                        forum_id = forum_id,
+                        ajax_vars = default_filters,
+                        dt_init = dt_init,
+                        resource = resource,
+                        )
+
+        # Filter Form
+        # Widgets defined in customise() to be visible to filter.options
+        filter_widgets = s3db.get_config(tablename, "filter_widgets")
+
+        #ajax_vars.pop("list_id")
+        #ajax_vars.pop("refresh")
+        filter_form = S3FilterForm(filter_widgets,
+                                   formstyle = filter_formstyle_profile,
+                                   submit = True,
+                                   ajax = True,
+                                   url = ajaxurl,
+                                   # Ensure that Filter options update when
+                                   # entries are added/modified
+                                   # => done through target-parameter in html() now,
+                                   #    but /a/ form ID is still required for other
+                                   #    scripts and styles
+                                   _id = "%s-filter-form" % dataTable_id,
+                                   ajaxurl = URL(c="project", f="task",
+                                                 args = ["filter.options"],
+                                                 vars = ajax_vars, # manually applied to s3.filter in customise()
+                                                 ),
+                                   )
+
+        output["project_task_filter_form"] = filter_form.html(resource, r.get_vars,
+                                                              target = dataTable_id,
+                                                              alias = None,
+                                                              )
+
+    # -------------------------------------------------------------------------
+    def _updates_html(self, r, output,
+                      event_id = None,
+                      incident_id = None,
+                      forum_id = None,
+                      updateable = True,
+                      **attr):
         """
             Create the HTML for the Updates section
 
@@ -784,6 +916,12 @@ class custom_WACOP(S3CRUD):
         elif incident_id:
             resource.add_filter(FS("event_post.incident_id") == incident_id)
             ajax_vars["event_post.incident_id"] = incident_id
+        elif forum_id:
+            resource.add_filter(group_filter(forum_id))
+            ajax_vars["forum"] = forum_id
+        elif r.method == "dashboard":
+            resource.add_filter(dashboard_filter())
+            ajax_vars["dashboard"] = 1
         ajaxurl = URL(c="cms", f="post", args="datalist",
                       vars=ajax_vars, extension="dl")
 
@@ -794,13 +932,14 @@ class custom_WACOP(S3CRUD):
         # list_fields defined in customise() to be DRY
         list_fields = s3db.get_config(tablename, "list_fields")
 
-        datalist, numrows, ids = resource.datalist(fields=list_fields,
-                                                   start=None,
-                                                   limit=5,
-                                                   list_id=list_id,
-                                                   # This is the default but needs specifying when talking direct to the back-end
-                                                   orderby="cms_post.date desc",
-                                                   layout=cms_post_list_layout)
+        datalist, numrows = resource.datalist(fields = list_fields,
+                                              start = None,
+                                              limit = 5,
+                                              list_id = list_id,
+                                              # This is the default but needs specifying when talking direct to the back-end
+                                              orderby = "cms_post.date desc",
+                                              layout = cms_post_list_layout,
+                                              )
 
         s3.dl_no_header = True
 
@@ -848,12 +987,29 @@ class custom_WACOP(S3CRUD):
                                    #    but /a/ form ID is still required for other
                                    #    scripts and styles
                                    _id = "%s-filter-form" % list_id,
-                                   ajaxurl = URL(c = "cms",
-                                                 f = "post",
+                                   ajaxurl = URL(c="cms", f="post",
                                                  args = ["filter.options"],
                                                  vars = ajax_vars, # manually applied to s3.filter in customise()
                                                  ),
                                    )
+
+        #get_vars = r.get_vars
+        #if forum_id:
+        #    get_vars = dict((k, v) for k, v in get_vars.items())
+        #    eftable = s3db.event_forum
+        #    base_query = (eftable.forum_id == forum_id)
+        #    etable = s3db.event_event
+        #    query = base_query & (eftable.event_id == etable.id)
+        #    events = db(query).select(etable.id)
+        #    events = [e.id for e in events]
+        #    if events:
+        #        get_vars["event_post.event_id__belongs"] = events
+        #    itable = s3db.event_incident
+        #    query = base_query & (eftable.incident_id == itable.id)
+        #    incidents = db(query).select(itable.id)
+        #    incidents = [i.id for i in incidents]
+        #    if incidents:
+        #        get_vars["event_post.incident_id__belongs"] = incidents
 
         output["filter_form"] = filter_form.html(resource, r.get_vars,
                                                  target = list_id,
@@ -873,9 +1029,23 @@ class custom_WACOP(S3CRUD):
                           args = [incident_id, "post", "create.popup"],
                           vars={"refresh": list_id},
                           )
+            elif forum_id:
+                url = URL(c="pr", f="forum",
+                          args = [forum_id, "post", "create.popup"],
+                          vars={"refresh": list_id},
+                          )
+            elif r.method == "dashboard":
+                url = URL(c="cms", f="post",
+                          args = ["create.popup"],
+                          vars={"dashboard": 1,
+                                "refresh": list_id,
+                                },
+                          )
             else:
-                # Update doesn't make sense here
-                raise NotImplementedError
+                url = URL(c="cms", f="post",
+                          args = ["create.popup"],
+                          vars={"refresh": list_id},
+                          )
             output["create_post_button"] = DIV(A(ICON("add"),
                                                  T("Add Update"),
                                                  _href=url,
@@ -900,6 +1070,7 @@ S3.redraw_fns.push('wacop_comments')'''
         else:
             s3.scripts.append("/%s/static/scripts/tag-it.min.js" % appname)
         if has_permission("update", s3db.cms_tag_post):
+            # @ToDo: Move the ajaxUpdateOptions into callback of getS3?
             readonly = '''afterTagAdded:function(event,ui){
 if(ui.duringInitialization){return}
 var post_id=$(this).attr('data-post_id')
@@ -915,12 +1086,15 @@ S3.search.ajaxUpdateOptions('#updates_datalist-filter-form')
         else:
             readonly = '''readOnly:true'''
         script = \
-'''S3.tagit=function(){$('.s3-tags').tagit({autocomplete:{source:'%s'},%s})}
+'''S3.tagit=function(){$('.s3-tags').tagit({placeholderText:'%s',autocomplete:{source:'%s'},%s})}
 S3.tagit()
-S3.redraw_fns.push('tagit')''' % (URL(c="cms", f="tag",
+S3.redraw_fns.push('tagit')''' % (T("Add tags here…"),
+                                  URL(c="cms", f="tag",
                                       args="tag_list.json"),
                                   readonly)
         s3.jquery_ready.append(script)
+
+        return numrows
 
     # -------------------------------------------------------------------------
     def _view(self, output, view):
@@ -933,10 +1107,18 @@ S3.redraw_fns.push('tagit')''' % (URL(c="cms", f="tag",
 
         current.menu.options = None
 
+        appname = current.request.application
         s3 = current.response.s3
-        s3.scripts.append("/%s/static/themes/WACOP/js/bookmarks.js" % current.request.application)
-        s3.jquery_ready.append('''S3.wacop_bookmarks()
+        scripts_append = s3.scripts.append
+        jqready_append = s3.jquery_ready.append
+
+        scripts_append("/%s/static/themes/WACOP/js/bookmarks.js" % appname)
+        jqready_append('''S3.wacop_bookmarks()
 S3.redraw_fns.push('wacop_bookmarks')''')
+
+        scripts_append("/%s/static/themes/WACOP/js/shares.js" % appname)
+        jqready_append('''S3.wacop_shares()
+S3.redraw_fns.push('wacop_shares')''')
 
         # System-wide Message
         output["system_wide"] = self._system_wide_html()
@@ -975,6 +1157,23 @@ class event_Browse(custom_WACOP):
                   "events": events,
                   "_map": _map,
                   }
+
+        tablename = "event_event"
+        form_id = "%s-filter-form" % tablename
+
+        # Report
+        method = "report"
+        report_widget_id = "event_event_report"
+        handler = r.get_widget_handler(method)
+        content = handler(r,
+                          method = method,
+                          widget_id = report_widget_id,
+                          visible = False,
+                          **attr)
+        output["event_event_report"] = content
+        jqr_append = current.response.s3.jquery_ready.append
+        jqr_append('''S3.search.setup_hidden_widget('%s','%s')''' % (form_id, report_widget_id))
+        jqr_append('''$(document).foundation({tab:{callback:function(tab){S3.search.unhide_section('%s',tab)}}})''' % form_id)
 
         # Filter Form
         date_filter = S3DateFilter(["start_date", "end_date"],
@@ -1036,14 +1235,15 @@ class event_Browse(custom_WACOP):
                                              vars={}),
                                    ajaxurl = URL(c="event", f="event",
                                                  args=["filter.options"], vars={}),
+                                   _id = form_id,
                                    )
         output["filter_form"] = filter_form.html(r.resource, r.get_vars,
                                                  # Map & dataTable
-                                                 target="%s custom-list-event_event" % map_id,
-                                                 alias=None)
+                                                 target = "%s custom-list-event_event" % map_id,
+                                                 alias = None
+                                                 )
 
         # Events dataTable
-        tablename = "event_event"
 
         #ajax_vars = {"browse": 1}
         # Run already by the controller:
@@ -1059,7 +1259,130 @@ class event_Browse(custom_WACOP):
                         #ajax_vars = ajax_vars,
                         )
 
+        output["title"] = T("Events")
         self._view(output, "event_browse.html")
+
+        return output
+
+# =============================================================================
+class group_Browse(custom_WACOP):
+    """
+        Custom browse page for Groups
+        - modelled as pr_forum
+    """
+
+    # -------------------------------------------------------------------------
+    def _html(self, r, **attr):
+        """
+            Handle HTML representation
+
+            @param r: the S3Request
+            @param attr: controller arguments
+        """
+
+        from s3 import s3_str
+
+        T = current.T
+        db = current.db
+        s3db = current.s3db
+
+        output = {}
+
+        # dataTable (& Create button)
+        dt_init = ['''$('.dataTables_filter label,.dataTables_length,.dataTables_info').hide();''']
+        tablename = "pr_forum"
+
+        customise = current.deployment_settings.customise_resource(tablename)
+        if customise:
+            customise(r, tablename)
+
+        # Lookup person_id of current user
+        ptable = s3db.pr_person
+        person_id = db(ptable.pe_id == current.auth.user.pe_id).select(ptable.id,
+                                                                       limitby = (0, 1)
+                                                                       ).first().id
+
+        # Action Buttons
+        table = r.table
+        mtable = s3db.pr_forum_membership
+        # Groups that the User is a Member of
+        query = (table.deleted == False) & \
+                (table.id == mtable.forum_id) & \
+                (mtable.person_id == person_id) & \
+                (mtable.deleted == False)
+        groups = db(query).select(table.id)
+        groups_member_of = [g.id for g in groups]
+        restrict_l = [str(g) for g in groups_member_of]
+        # Public Groups that the User is not a Member of
+        query = (table.forum_type.belongs((1, 2))) & \
+                (~table.id.belongs(groups_member_of)) & \
+                (table.deleted == False)
+        groups = db(query).select(table.id,
+                                  table.forum_type)
+        restrict_j = [str(g.id) for g in groups if g.forum_type == 1]
+        # Private Groups that the User is not a Member of
+        restrict_r = [str(g.id) for g in groups if g.forum_type == 2]
+
+        actions = [dict(label = s3_str(T("Join")),
+                        url = URL(args=["[id]", "join"]),
+                        _class = "action-btn",
+                        restrict = restrict_j,
+                        ),
+                   dict(label = s3_str(T("Leave")),
+                        url = URL(args = ["[id]", "leave"]),
+                        _class = "action-btn",
+                        restrict = restrict_l,
+                        ),
+                   dict(label = s3_str(T("Request Invite")),
+                        url = URL(args = ["[id]", "request"]),
+                        _class = "action-btn",
+                        restrict = restrict_r,
+                        ),
+                   ]
+
+        resource = r.resource
+        self._datatable(output = output,
+                        tablename = tablename,
+                        actions = actions,
+                        dt_init = dt_init,
+                        resource = resource,
+                        search = False,
+                        )
+
+        # Filter Form
+        ajax_vars = {}
+        ajaxurl = URL(c="pr", f="forum", args="datatable",
+                      vars=ajax_vars, extension="aadata")
+        dataTable_id = "custom-list-pr_forum"
+        # Widgets defined in customise() to be visible to filter.options
+        filter_widgets = current.s3db.get_config(tablename, "filter_widgets")
+
+        #ajax_vars.pop("list_id")
+        #ajax_vars.pop("refresh")
+        filter_form = S3FilterForm(filter_widgets,
+                                   formstyle = filter_formstyle_profile,
+                                   submit = True,
+                                   ajax = True,
+                                   url = ajaxurl,
+                                   # Ensure that Filter options update when
+                                   # entries are added/modified
+                                   # => done through target-parameter in html() now,
+                                   #    but /a/ form ID is still required for other
+                                   #    scripts and styles
+                                   _id = "%s-filter-form" % dataTable_id,
+                                   ajaxurl = URL(c="pr", f="forum",
+                                                 args = ["filter.options"],
+                                                 vars = ajax_vars, # would be manually applied to s3.filter in customise()
+                                                 ),
+                                   )
+
+        output["filter_form"] = filter_form.html(resource, r.get_vars,
+                                                 target = dataTable_id,
+                                                 alias = None,
+                                                 )
+
+        output["title"] = T("Groups")
+        self._view(output, "group_browse.html")
 
         return output
 
@@ -1081,20 +1404,37 @@ class incident_Browse(custom_WACOP):
         T = current.T
 
         # Alerts Cards
-        alerts = self._alerts_html()
+        #alerts = self._alerts_html()
 
         # Events Cards
-        events = self._events_html()
+        #events = self._events_html()
 
         # Map of Incidents
         map_id = "incident-gis_location_the_geom-map-filter-map"
         _map, button = self._map("Incidents", map_id=map_id, filter=True)
 
         # Output
-        output = {"alerts": alerts,
-                  "events": events,
+        output = {#"alerts": alerts,
+                  #"events": events,
                   "_map": _map,
                   }
+
+        tablename = "event_incident"
+        form_id = "%s-filter-form" % tablename
+
+        # Report
+        method = "report"
+        report_widget_id = "event_incident_report"
+        handler = r.get_widget_handler(method)
+        content = handler(r,
+                          method = method,
+                          widget_id = report_widget_id,
+                          visible = False,
+                          **attr)
+        output["event_incident_report"] = content
+        jqr_append = current.response.s3.jquery_ready.append
+        jqr_append('''S3.search.setup_hidden_widget('%s','%s')''' % (form_id, report_widget_id))
+        jqr_append('''$(document).foundation({tab:{callback:function(tab){S3.search.unhide_section('%s',tab)}}})''' % form_id)
 
         # Filter Form
         date_filter = S3DateFilter(["date", "end_date"],
@@ -1118,6 +1458,7 @@ class incident_Browse(custom_WACOP):
                                            widget = "multiselect",
                                            #levels = ("L1", "L2", "L3"),
                                            levels = ("L3",),
+                                           no_opts = "",
                                            ),
                           S3MapFilter("location_id$the_geom",
                                       label = "",
@@ -1143,9 +1484,14 @@ class incident_Browse(custom_WACOP):
                                           noneSelectedText = "Incident Type",
                                           no_opts = "",
                                           ),
-                          S3OptionsFilter("organisation_id",
+                          #S3OptionsFilter("organisation_id",
+                          #                label = "",
+                          #                noneSelectedText = "Agency",
+                          #                no_opts = "",
+                          #                ),
+                          S3OptionsFilter("group.organisation_team.organisation_id",
                                           label = "",
-                                          noneSelectedText = "Agency",
+                                          noneSelectedText = "Organization",
                                           no_opts = "",
                                           ),
                           date_filter,
@@ -1171,14 +1517,15 @@ class incident_Browse(custom_WACOP):
                                              vars={}),
                                    ajaxurl = URL(c="event", f="incident",
                                                  args=["filter.options"], vars={}),
+                                   _id = form_id,
                                    )
         output["filter_form"] = filter_form.html(r.resource, r.get_vars,
-                                                 # Map & dataTable
-                                                 target="%s custom-list-event_incident" % map_id,
-                                                 alias=None)
+                                                 # Map, dataTable & Report
+                                                 target = "%s custom-list-event_incident %s" % (map_id, report_widget_id),
+                                                 alias = None
+                                                 )
 
         # Incidents dataTable
-        tablename = "event_incident"
 
         ajax_vars = {"browse": 1}
         # Run already by the controller:
@@ -1196,6 +1543,7 @@ class incident_Browse(custom_WACOP):
                         ajax_vars = ajax_vars,
                         )
 
+        output["title"] = T("Incidents")
         self._view(output, "incident_browse.html")
 
         return output
@@ -1204,6 +1552,7 @@ class incident_Browse(custom_WACOP):
 class resource_Browse(custom_WACOP):
     """
         Custom browse page for Resources
+        - modelled as pr_group as they are typically teams
     """
 
     # -------------------------------------------------------------------------
@@ -1218,20 +1567,37 @@ class resource_Browse(custom_WACOP):
         T = current.T
 
         # Alerts Cards
-        alerts = self._alerts_html()
+        #alerts = self._alerts_html()
 
         # Events Cards
-        events = self._events_html()
+        #events = self._events_html()
 
         # Map of Resources
         map_id = "group-gis_location_the_geom-map-filter-map"
         _map, button = self._map("Resources", map_id=map_id, filter=True)
 
         # Output
-        output = {"alerts": alerts,
-                  "events": events,
+        output = {#"alerts": alerts,
+                  #"events": events,
                   "_map": _map,
                   }
+
+        tablename = "pr_group"
+        form_id = "%s-filter-form" % tablename
+
+        # Report
+        method = "report"
+        report_widget_id = "pr_group_report"
+        handler = r.get_widget_handler(method)
+        content = handler(r,
+                          method = method,
+                          widget_id = report_widget_id,
+                          visible = False,
+                          **attr)
+        output["pr_group_report"] = content
+        jqr_append = current.response.s3.jquery_ready.append
+        jqr_append('''S3.search.setup_hidden_widget('%s','%s')''' % (form_id, report_widget_id))
+        jqr_append('''$(document).foundation({tab:{callback:function(tab){S3.search.unhide_section('%s',tab)}}})''' % form_id)
 
         # Filter Form
         filter_widgets = [S3TextFilter(["name",
@@ -1247,6 +1613,7 @@ class resource_Browse(custom_WACOP):
                                            widget = "multiselect",
                                            #levels = ("L1", "L2", "L3"),
                                            levels = ("L3",),
+                                           no_opts = "",
                                            ),
                           S3MapFilter("location_id$the_geom",
                                       label = "",
@@ -1255,6 +1622,11 @@ class resource_Browse(custom_WACOP):
                           S3OptionsFilter("organisation_team.organisation_id",
                                           label = "",
                                           noneSelectedText = "Organization",
+                                          no_opts = "",
+                                          ),
+                          S3OptionsFilter("source",
+                                          label = "",
+                                          noneSelectedText = "Source",
                                           no_opts = "",
                                           ),
                           S3OptionsFilter("status_id",
@@ -1272,20 +1644,21 @@ class resource_Browse(custom_WACOP):
                                    #          vars={}),
                                    ajaxurl = URL(c="pr", f="group",
                                                  args=["filter.options"], vars={}),
+                                   _id = form_id,
                                    )
         output["filter_form"] = filter_form.html(r.resource, r.get_vars,
-                                                 # Map & dataTable
+                                                 # Map, dataTable & Report
                                                  # We also want to filter the Active Resources datatable, however the selectors don't match for that
                                                  #custom-list-event_team
-                                                 target="%s custom-list-pr_group" % map_id,
-                                                 alias=None)
+                                                 target = "%s custom-list-pr_group %s" % (map_id, report_widget_id),
+                                                 alias = None
+                                                 )
 
         # DataTables
         datatable = self._datatable
         #current.deployment_settings.ui.datatables_pagingType = "bootstrap"
 
         # Resources dataTable
-        tablename = "pr_group"
 
         #ajax_vars = {"browse": 1}
         # Run already by the controller:
@@ -1319,6 +1692,7 @@ class resource_Browse(custom_WACOP):
                   dt_init = dt_init,
                   )
 
+        output["title"] = T("Resources")
         self._view(output, "resource_browse.html")
 
         return output
@@ -1339,22 +1713,17 @@ class event_Profile(custom_WACOP):
         """
 
         event_id = r.id
-        incident_id = None
 
         T = current.T
         auth = current.auth
         db = current.db
         s3db = current.s3db
+        settings = current.deployment_settings
 
         etable = s3db.event_event
         itable = s3db.event_incident
-        ptable = s3db.cms_post
-        gtable = s3db.gis_location
-        #rtable = s3db.pr_group
         ertable = s3db.event_team
         eptable = s3db.event_post
-        ttable = s3db.cms_tag
-        ittable = s3db.event_tag
 
         date_represent = lambda dt: S3DateTime.date_represent(dt,
                                                               format = "%b %d %Y %H:%M",
@@ -1363,10 +1732,11 @@ class event_Profile(custom_WACOP):
                                                               )
 
         # Map of Incidents
-        _map = self._map("Incidents", filter="~.event_id=%s" % event_id)
+        _map, button = self._map("Incidents", filter="~.event_id=%s" % event_id)
 
         # Output
-        output = {"map": _map,
+        output = {"event_id": event_id,
+                  "map": _map,
                   }
 
         # Event Details
@@ -1385,22 +1755,104 @@ class event_Profile(custom_WACOP):
             if exists:
                 bookmark = A(ICON("bookmark"),
                              _title=T("Remove Bookmark"),
-                             _class="button radius small bookmark",
+                             _class="bookmark",
                              )
             else:
                 bookmark = A(ICON("bookmark-empty"),
                              _title=T("Add Bookmark"),
-                             _class="button radius small bookmark",
+                             _class="bookmark",
                              )
             bookmark["_data-c"] = "event"
             bookmark["_data-f"] = "event"
             bookmark["_data-i"] = event_id
             # Done globally in _view
-            #script = '''wacop_bookmarks()'''
+            #script = '''S3.wacop_bookmarks()'''
             #s3.jquery_ready.append(script)
         else:
             bookmark = ""
         output["bookmark_btn"] = bookmark
+
+        if user:
+            ptable = s3db.pr_person
+            mtable = s3db.pr_forum_membership
+            ftable = s3db.pr_forum
+            query = (ptable.pe_id == user.pe_id) & \
+                    (ptable.id == mtable.person_id) & \
+                    (mtable.forum_id == ftable.id)
+            forums = db(query).select(ftable.id,
+                                      ftable.name,
+                                      cache = s3db.cache)
+            if len(forums):
+                ADMIN = auth.s3_has_role("ADMIN")
+                forum_ids = [f.id for f in forums]
+                ltable = s3db.event_forum
+                query = (ltable.event_id == event_id) & \
+                        (ltable.forum_id.belongs(forum_ids))
+                shares = db(query).select(ltable.forum_id,
+                                          ltable.created_by,
+                                          ).as_dict(key="forum_id")
+                share_btn = A(ICON("share"),
+                               _href = "#",
+                               _class = "",
+                               _title = T("Share"),
+                               )
+                share_btn["_data-dropdown"] = "share_event_dropdown"
+                share_btn["_aria-controls"] = "share_event_dropdown"
+                share_btn["_aria-expanded"] = "false"
+
+                dropdown = UL(_id = "share_event_dropdown",
+                              _class = "f-dropdown share",
+                              tabindex = "-1",
+                              )
+                dropdown["_data-dropdown-content"] = ""
+                dropdown["_aria-hidden"] = "true"
+                dropdown["_data-c"] = "event"
+                dropdown["_data-f"] = "event"
+                dropdown["_data-i"] = event_id
+
+                dappend = dropdown.append
+                for f in forums:
+                    forum_id = f.id
+                    checkbox_id = "event_forum_%s" % forum_id
+                    if forum_id in shares:
+                        if ADMIN or shares[forum_id]["created_by"] == user_id:
+                            # Shared by us (or we're ADMIN), so render Checked checkbox which we can deselect
+                            checkbox = INPUT(_checked = "checked",
+                                             _id = checkbox_id,
+                                             _type = "checkbox",
+                                             _value = forum_id,
+                                             )
+                        else:
+                            # Shared by someone else, so render Checked checkbox which is disabled
+                            checkbox = INPUT(_checked = "checked",
+                                             _disabled = "disabled",
+                                             _id = checkbox_id,
+                                             _type = "checkbox",
+                                             _value = forum_id,
+                                             )
+                    else:
+                        # Not Shared so render empty checkbox
+                        checkbox = INPUT(_id = checkbox_id,
+                                         _type = "checkbox",
+                                         _value = forum_id,
+                                         )
+                    dappend(LI(checkbox,
+                               LABEL(f.name,
+                                     _for = checkbox_id,
+                                     ),
+                               ))
+
+                share_btn = TAG[""](share_btn,
+                                    dropdown,
+                                    )
+                # Done globally in _view
+                #script = '''S3.wacop_shares()'''
+                #s3.jquery_ready.append(script)
+            else:
+                share_btn = ""
+        else:
+            share_btn = ""
+        output["share_btn"] = share_btn
 
         event = Storage()
         record = r.record
@@ -1454,13 +1906,13 @@ class event_Profile(custom_WACOP):
                 (eptable.deleted == False)
         updates = db(query).count()
         event.updates = A("%s %s" % (updates, T("Updates")),
-                            _href = URL(c="event", f="event",
-                                        args = "post.popup",
-                                        vars = {"view": 1},
-                                        ),
-                            _class = "s3_modal",
-                            _title = T("Updates"),
-                            )
+                          _href = URL(c="event", f="event",
+                                      args = "post.popup",
+                                      vars = {"view": 1},
+                                      ),
+                          _class = "s3_modal",
+                          _title = T("Updates"),
+                          )
 
         if record.exercise:
             event.status = T("Testing")
@@ -1473,13 +1925,13 @@ class event_Profile(custom_WACOP):
 
         # DataTables
         datatable = self._datatable
-        #current.deployment_settings.ui.datatables_pagingType = "bootstrap"
+        #settings.ui.datatables_pagingType = "bootstrap"
         dt_init = ['''$('.dataTables_filter label,.dataTables_length,.dataTables_info').hide();''']
 
         # Incidents dataTable
         tablename = "event_incident"
 
-        customise = current.deployment_settings.customise_resource(tablename)
+        customise = settings.customise_resource(tablename)
         if customise:
             customise(r, tablename)
 
@@ -1493,7 +1945,7 @@ class event_Profile(custom_WACOP):
         # Resources dataTable
         tablename = "event_team"
 
-        customise = current.deployment_settings.customise_resource(tablename)
+        customise = settings.customise_resource(tablename)
         if customise:
             customise(r, tablename)
 
@@ -1505,23 +1957,16 @@ class event_Profile(custom_WACOP):
                   )
 
         # Tasks dataTable
-        tablename = "project_task"
-
-        customise = current.deployment_settings.customise_resource(tablename)
-        if customise:
-            customise(r, tablename)
-
-        datatable(output = output,
-                  tablename = tablename,
-                  updateable = updateable,
-                  event_id = event_id,
-                  dt_init = dt_init,
-                  )
+        self._tasks_html(r, output,
+                         updateable = updateable,
+                         event_id = event_id,
+                         dt_init = dt_init,
+                         )
 
         # Staff dataTable
         tablename = "event_human_resource"
 
-        customise = current.deployment_settings.customise_resource(tablename)
+        customise = settings.customise_resource(tablename)
         if customise:
             customise(r, tablename)
 
@@ -1530,12 +1975,19 @@ class event_Profile(custom_WACOP):
                   updateable = updateable,
                   event_id = event_id,
                   dt_init = dt_init,
+                  # @ToDo: AJAX Delete
+                  actions = [{"label": T("Unassign"),
+                              "url": URL(c="event", f="event",
+                                         args=[event_id, "human_resource", "[id]", "delete"]),
+                              "icon": "fa fa-trash",
+                              },
+                             ],
                   )
 
         # Organisations dataTable
         tablename = "event_organisation"
 
-        customise = current.deployment_settings.customise_resource(tablename)
+        customise = settings.customise_resource(tablename)
         if customise:
             customise(r, tablename)
 
@@ -1544,12 +1996,140 @@ class event_Profile(custom_WACOP):
                   updateable = updateable,
                   event_id = event_id,
                   dt_init = dt_init,
+                  # @ToDo: AJAX Delete
+                  actions = [{"label": T("Remove"),
+                              "url": URL(c="event", f="event",
+                                         args=[event_id, "event_organisation", "[id]", "delete"]),
+                              "icon": "fa fa-trash",
+                              },
+                             ],
                   )
 
         # Updates DataList
-        self._updates_html(r, output, event_id, incident_id, updateable, **attr)
+        self._updates_html(r, output,
+                           event_id = event_id,
+                           updateable = updateable,
+                           **attr)
 
         self._view(output, "event_profile.html")
+
+        return output
+
+# =============================================================================
+class group_Profile(custom_WACOP):
+    """
+        Custom profile page for Groups
+        - modelled as pr_forum
+    """
+
+    # -------------------------------------------------------------------------
+    def _html(self, r, **attr):
+        """
+            Handle HTML representation
+
+            @param r: the S3Request
+            @param attr: controller arguments
+        """
+
+        from s3 import s3_fullname
+
+        db = current.db
+        s3db = current.s3db
+        auth = current.auth
+
+        table = r.table
+        record = r.record
+        forum_id = r.id
+
+        updateable = auth.s3_has_permission("update", table,
+                                            record_id=forum_id,
+                                            c="pr",
+                                            f="forum")
+
+        output = {"forum_id": forum_id,
+                  "updateable": updateable,
+                  }
+
+        mtable = s3db.pr_forum_membership
+        query = (mtable.forum_id == forum_id) & \
+                (mtable.deleted == False)
+        members = db(query).select(mtable.person_id,
+                                   mtable.admin)
+        admins = [s3_fullname(m.person_id) for m in members if m.admin]
+
+        # Updates DataList
+        numrows = self._updates_html(r, output,
+                                     forum_id = forum_id,
+                                     **attr)
+
+        date_represent = lambda dt: S3DateTime.date_represent(dt,
+                                                              format = "%b %d %Y %H:%M",
+                                                              utc = True,
+                                                              #calendar = calendar,
+                                                              )
+
+        output["group"] = Storage(name = record.name,
+                                  description = record.comments,
+                                  forum_type = table.forum_type.represent(record.forum_type),
+                                  created_on = date_represent(record.created_on),
+                                  modified_on = date_represent(record.modified_on),
+                                  admin = ", ".join(admins),
+                                  members = len(members),
+                                  updates = numrows,
+                                  )
+
+        dt_init = ['''$('.dataTables_filter label,.dataTables_length,.dataTables_info').hide();''']
+
+        # Members dataTable
+        tablename = "pr_forum_membership"
+
+        customise = current.deployment_settings.customise_resource(tablename)
+        if customise:
+            customise(r, tablename)
+
+        self._datatable(output = output,
+                        tablename = tablename,
+                        dt_init = dt_init,
+                        forum_id = forum_id,
+                        # @ToDo: AJAX Delete
+                        actions = [{"label": current.T("Remove"),
+                                    "url": URL(c="pr", f="forum",
+                                               args=[forum_id, "forum_membership", "[id]", "delete"]),
+                                    "icon": "fa fa-trash",
+                                    },
+                                   ],
+                        )
+
+        # Tasks dataTable
+        self._tasks_html(r, output,
+                         dt_init = dt_init,
+                         forum_id = forum_id,
+                         )
+
+        # Notifications
+        ftable = s3db.pr_filter
+        stable = s3db.pr_subscription
+
+        pe_id = auth.user.pe_id
+        filter_string = '[["~.id", %s]]' % forum_id
+
+        query = (ftable.pe_id == pe_id) & \
+                (ftable.resource == "pr_forum") & \
+                (ftable.query == filter_string) & \
+                (ftable.id == stable.filter_id)
+        exists = db(query).select(stable.frequency,
+                                  limitby=(0, 1)
+                                  ).first()
+        if exists:
+            output["notify"] = True
+            output["frequency"] = exists.frequency
+        else:
+            output["notify"] = False
+            output["frequency"] = "immediately"
+
+        current.response.s3.scripts.append("/%s/static/themes/WACOP/js/group_profile.js" % r.application)
+
+        self._view(output, "group_profile.html")
 
         return output
 
@@ -1574,6 +2154,8 @@ class incident_Profile(custom_WACOP):
         auth = current.auth
         db = current.db
         s3db = current.s3db
+        s3 = current.response.s3
+        settings = current.deployment_settings
 
         ptable = s3db.cms_post
         gtable = s3db.gis_location
@@ -1590,7 +2172,12 @@ class incident_Profile(custom_WACOP):
                                                               #calendar = calendar,
                                                               )
 
+        # Map of Incident
+        # @ToDo: Add Resources
+        _map, button = self._map("Incidents", filter="~.id=%s" % incident_id)
+
         output = {"incident_id": incident_id,
+                  "_map": _map,
                   }
 
         # Incident Details
@@ -1633,10 +2220,7 @@ class incident_Profile(custom_WACOP):
             output["lon"] = location.lon or ""
             # @ToDo: BBOX should include the resources too
             bbox = current.gis.get_bounds(features=[location])
-            output["lat_max"] = bbox["lat_max"]
-            output["lat_min"] = bbox["lat_min"]
-            output["lon_max"] = bbox["lon_max"]
-            output["lon_min"] = bbox["lon_min"]
+            s3.js_global.append('''incident_bounds=%s''' % json.dumps(bbox))
         else:
             output["L1"] = ""
             output["L3"] = ""
@@ -1644,11 +2228,13 @@ class incident_Profile(custom_WACOP):
             output["postcode"] = ""
             output["lat"] = ""
             output["lon"] = ""
-            # @ToDo: Defaults for Seattle
-            output["lat_max"] = ""
-            output["lat_min"] = ""
-            output["lon_max"] = ""
-            output["lon_min"] = ""
+            # Defaults for Washington
+            bbox = {"lat_max": "45.5437202453613",
+                    "lat_min": "49.00244140625",
+                    "lon_max": "-116.917427062988",
+                    "lon_min": "-124.836097717285",
+                    }
+            s3.js_global.append('''incident_bounds=%s''' % json.dumps(bbox))
 
         updateable = auth.s3_has_permission("update", itable, record_id=incident_id, c="event", f="incident")
         output["updateable"] = updateable
@@ -1672,7 +2258,7 @@ class incident_Profile(custom_WACOP):
             script = '''incident_tags(%s)''' % incident_id
         else:
             script = '''incident_tags(false)'''
-        current.response.s3.jquery_ready.append(script)
+        s3.jquery_ready.append(script)
 
         user = auth.user
         if user:
@@ -1697,11 +2283,93 @@ class incident_Profile(custom_WACOP):
             bookmark["_data-f"] = "incident"
             bookmark["_data-i"] = incident_id
             # Done globally in _view
-            #script = '''wacop_bookmarks()'''
+            #script = '''S3.wacop_bookmarks()'''
             #s3.jquery_ready.append(script)
         else:
             bookmark = ""
         output["bookmark_btn"] = bookmark
+
+        if user:
+            ptable = s3db.pr_person
+            mtable = s3db.pr_forum_membership
+            ftable = s3db.pr_forum
+            query = (ptable.pe_id == user.pe_id) & \
+                    (ptable.id == mtable.person_id) & \
+                    (mtable.forum_id == ftable.id)
+            forums = db(query).select(ftable.id,
+                                      ftable.name,
+                                      cache = s3db.cache)
+            if len(forums):
+                ADMIN = auth.s3_has_role("ADMIN")
+                forum_ids = [f.id for f in forums]
+                ltable = s3db.event_forum
+                query = (ltable.incident_id == incident_id) & \
+                        (ltable.forum_id.belongs(forum_ids))
+                shares = db(query).select(ltable.forum_id,
+                                          ltable.created_by,
+                                          ).as_dict(key="forum_id")
+                share_btn = A(ICON("share"),
+                               _href = "#",
+                               _class = "",
+                               _title = T("Share"),
+                               )
+                share_btn["_data-dropdown"] = "share_incident_dropdown"
+                share_btn["_aria-controls"] = "share_incident_dropdown"
+                share_btn["_aria-expanded"] = "false"
+
+                dropdown = UL(_id = "share_incident_dropdown",
+                              _class = "f-dropdown share",
+                              tabindex = "-1",
+                              )
+                dropdown["_data-dropdown-content"] = ""
+                dropdown["_aria-hidden"] = "true"
+                dropdown["_data-c"] = "event"
+                dropdown["_data-f"] = "incident"
+                dropdown["_data-i"] = incident_id
+
+                dappend = dropdown.append
+                for f in forums:
+                    forum_id = f.id
+                    checkbox_id = "incident_forum_%s" % forum_id
+                    if forum_id in shares:
+                        if ADMIN or shares[forum_id]["created_by"] == user_id:
+                            # Shared by us (or we're ADMIN), so render Checked checkbox which we can deselect
+                            checkbox = INPUT(_checked = "checked",
+                                             _id = checkbox_id,
+                                             _type = "checkbox",
+                                             _value = forum_id,
+                                             )
+                        else:
+                            # Shared by someone else, so render Checked checkbox which is disabled
+                            checkbox = INPUT(_checked = "checked",
+                                             _disabled = "disabled",
+                                             _id = checkbox_id,
+                                             _type = "checkbox",
+                                             _value = forum_id,
+                                             )
+                    else:
+                        # Not Shared so render empty checkbox
+                        checkbox = INPUT(_id = checkbox_id,
+                                         _type = "checkbox",
+                                         _value = forum_id,
+                                         )
+                    dappend(LI(checkbox,
+                               LABEL(f.name,
+                                     _for = checkbox_id,
+                                     ),
+                               ))
+
+                share_btn = TAG[""](share_btn,
+                                    dropdown,
+                                    )
+                # Done globally in _view
+                #script = '''S3.wacop_shares()'''
+                #s3.jquery_ready.append(script)
+            else:
+                share_btn = ""
+        else:
+            share_btn = ""
+        output["share_btn"] = share_btn
 
         # Is this Incident part of an Event?
         event_id = record.event_id
@@ -1789,13 +2457,13 @@ class incident_Profile(custom_WACOP):
 
         # DataTables
         datatable = self._datatable
-        #current.deployment_settings.ui.datatables_pagingType = "bootstrap"
+        #settings.ui.datatables_pagingType = "bootstrap"
         dt_init = ['''$('.dataTables_filter label,.dataTables_length,.dataTables_info').hide();''']
 
         # Resources dataTable
         tablename = "event_team"
 
-        customise = current.deployment_settings.customise_resource(tablename)
+        customise = settings.customise_resource(tablename)
         if customise:
             customise(r, tablename)
 
@@ -1807,23 +2475,16 @@ class incident_Profile(custom_WACOP):
                   )
 
         # Tasks dataTable
-        tablename = "project_task"
-
-        customise = current.deployment_settings.customise_resource(tablename)
-        if customise:
-            customise(r, tablename)
-
-        datatable(output = output,
-                  tablename = tablename,
-                  updateable = updateable,
-                  incident_id = incident_id,
-                  dt_init = dt_init,
-                  )
+        self._tasks_html(r, output,
+                         updateable = updateable,
+                         incident_id = incident_id,
+                         dt_init = dt_init,
+                         )
 
         # Staff dataTable
         tablename = "event_human_resource"
 
-        customise = current.deployment_settings.customise_resource(tablename)
+        customise = settings.customise_resource(tablename)
         if customise:
             customise(r, tablename)
 
@@ -1832,12 +2493,19 @@ class incident_Profile(custom_WACOP):
                   updateable = updateable,
                   incident_id = incident_id,
                   dt_init = dt_init,
+                  # @ToDo: AJAX Delete
+                  actions = [{"label": T("Unassign"),
+                              "url": URL(c="event", f="incident",
+                                         args=[incident_id, "human_resource", "[id]", "delete"]),
+                              "icon": "fa fa-trash",
+                              },
+                             ],
                   )
 
         # Organisations dataTable
         tablename = "event_organisation"
 
-        customise = current.deployment_settings.customise_resource(tablename)
+        customise = settings.customise_resource(tablename)
         if customise:
             customise(r, tablename)
 
@@ -1846,15 +2514,101 @@ class incident_Profile(custom_WACOP):
                   updateable = updateable,
                   incident_id = incident_id,
                   dt_init = dt_init,
+                  # @ToDo: AJAX Delete
+                  actions = [{"label": T("Remove"),
+                              "url": URL(c="event", f="incident",
+                                         args=[incident_id, "event_organisation", "[id]", "delete"]),
+                              "icon": "fa fa-trash",
+                              },
+                             ],
                   )
 
         # Updates DataList
-        event_id = None # Don't pass Event in
-        self._updates_html(r, output, event_id, incident_id, updateable, **attr)
+        self._updates_html(r, output,
+                           incident_id = incident_id,
+                           updateable = updateable,
+                           **attr)
 
         self._view(output, "incident_profile.html")
 
         return output
+
+# =============================================================================
+def group_Notify(r, **attr):
+    """
+        Manage Notifications for a Group
+
+        S3Method for interactive requests
+        - designed to be called via AJAX
+    """
+
+    forum_id = r.id
+    if not forum_id or r.http != "POST":
+        r.error(405, current.ERROR.BAD_METHOD)
+
+    tablename = "pr_forum"
+    controller, function = tablename.split("_", 1)
+    filter_string = '[["~.id", %s]]' % forum_id
+
+    pe_id = current.auth.user.pe_id
+
+    post_vars_get = r.post_vars.get
+    email = post_vars_get("email")
+    frequency = post_vars_get("frequency")
+
+    db = current.db
+    s3db = current.s3db
+
+    ftable = s3db.pr_filter
+    stable = s3db.pr_subscription
+
+    query = (ftable.pe_id == pe_id) & \
+            (ftable.query == filter_string) & \
+            (ftable.resource == tablename) & \
+            (ftable.id == stable.filter_id)
+    exists = db(query).select(ftable.id,
+                              stable.id,
+                              limitby=(0, 1)
+                              ).first()
+    if exists:
+        if email == "1":
+            db(stable.id == exists["pr_subscription.id"]).update(frequency = frequency)
+        else:
+            # Delete the Subscription
+            # (cascades to the subscription_resource)
+            resource = s3db.resource("pr_subscription", id=exists["pr_subscription.id"])
+            resource.delete()
+            # Delete the Filter
+            resource = s3db.resource("pr_filter", id=exists["pr_filter.id"])
+            resource.delete()
+    else:
+        if email == "1":
+            # Create the Filter
+            filter_id = ftable.insert(pe_id = pe_id,
+                                      # Just used by Saved Filters, not Subscription
+                                      #controller = controller,
+                                      #function = function,
+                                      resource = tablename, # But still useful to distinguish, in case saved filters also used
+                                      query = filter_string,
+                                      )
+            # Create the Subscription
+            subscription_id = stable.insert(pe_id = pe_id,
+                                            filter_id = filter_id,
+                                            notify_on = ["upd"],
+                                            frequency = frequency,
+                                            # Default:
+                                            #method = ["EMAIL"],
+                                            )
+            # Create the Subscription Resource
+            db.pr_subscription_resource.insert(subscription_id = subscription_id,
+                                               resource = tablename,
+                                               url = "%s/%s" % (controller, function),
+                                               )
+
+
+    output = current.xml.json_message(True, 200, current.T("Notification Settings Updated"))
+    current.response.headers["Content-Type"] = "application/json"
+    return output
 
 # =============================================================================
 class person_Dashboard(custom_WACOP):
@@ -1871,34 +2625,57 @@ class person_Dashboard(custom_WACOP):
             @param attr: controller arguments
         """
 
+        settings = current.deployment_settings
+
         # Map of Incidents
-        _map = self._map("Incidents")
+        _map, button = self._map("Incidents")
 
         output = {"map": _map,
                   }
 
+        # Greeting
+        user = current.auth.user
+        organisation_id = user.organisation_id
+        if organisation_id:
+            s3db = current.s3db
+            ptable = s3db.pr_person
+            ltable = s3db.pr_person_user
+            hrtable = s3db.hrm_human_resource
+            organisation = hrtable.organisation_id.represent(organisation_id)
+            query = (ltable.user_id == user.id) & \
+                    (ltable.pe_id == ptable.pe_id) & \
+                    (hrtable.person_id == ptable.id)
+            hr = current.db(query).select(hrtable.job_title_id,
+                                          limitby = (0, 1),
+                                          ).first()
+            if hr:
+                job_title = hrtable.organisation_id.represent(hr.job_title_id)
+                staff_role = XML("%s, %s" % (job_title, organisation))
+
+            else:
+                staff_role = organisation
+        else:
+            staff_role = ""
+        output["greeting"] = Storage(first_name = user.first_name,
+                                     last_name = user.last_name,
+                                     staff_role = staff_role,
+                                     )
+
         # DataTables
         datatable = self._datatable
-        #current.deployment_settings.ui.datatables_pagingType = "bootstrap"
+        #settings.ui.datatables_pagingType = "bootstrap"
         dt_init = ['''$('.dataTables_filter label,.dataTables_length,.dataTables_info').hide();''']
 
         # Tasks dataTable
-        tablename = "project_task"
-
-        customise = current.deployment_settings.customise_resource(tablename)
-        if customise:
-            customise(r, tablename)
-
-        datatable(output = output,
-                  tablename = tablename,
-                  updateable = True,
-                  dt_init = dt_init,
-                  )
+        self._tasks_html(r, output,
+                         updateable = True,
+                         dt_init = dt_init,
+                         )
 
         # Staff dataTable
         tablename = "hrm_human_resource"
 
-        customise = current.deployment_settings.customise_resource(tablename)
+        customise = settings.customise_resource(tablename)
         if customise:
             customise(r, tablename)
 
@@ -1911,7 +2688,7 @@ class person_Dashboard(custom_WACOP):
         # Organisations dataTable
         tablename = "org_organisation"
 
-        customise = current.deployment_settings.customise_resource(tablename)
+        customise = settings.customise_resource(tablename)
         if customise:
             customise(r, tablename)
 
@@ -1921,13 +2698,100 @@ class person_Dashboard(custom_WACOP):
                   dt_init = dt_init,
                   )
 
-        # Updates DataList (without Create...at least until we can select an Incident to link it to)
-        event_id = incident_id = None
-        self._updates_html(r, output, event_id, incident_id, False, **attr)
+        # Updates DataList
+        self._updates_html(r, output, **attr)
 
         self._view(output, "dashboard.html")
 
         return output
+
+# =============================================================================
+def dashboard_filter():
+    """
+        Filter Updates on the Dashboard
+         - Updates we have Bookmarked
+         - Updates linked to Incidents we have Bookmarked
+         - Updates linked to Events we have Bookmarked
+           #(unless that update is also linked to an Incident)
+         - Updates linked to Groups which we are a Member of
+    """
+
+    db = current.db
+    s3db = current.s3db
+    user = current.auth.user
+    user_id = user.id
+
+    btable = s3db.event_bookmark
+    query = (btable.user_id == user_id) & \
+            (btable.deleted == False)
+    bookmarks = db(query).select(btable.event_id,
+                                 btable.incident_id,
+                                 )
+    incident_ids = []
+    iappend = incident_ids.append
+    event_ids = []
+    eappend = event_ids.append
+    for b in bookmarks:
+        incident_id = b.incident_id
+        if incident_id is not None:
+            iappend(incident_id)
+        else:
+            eappend(b.event_id)
+
+    ptable = s3db.pr_person
+    mtable = s3db.pr_forum_membership
+    query = (ptable.pe_id == user.pe_id) & \
+            (mtable.person_id == ptable.id) & \
+            (mtable.deleted == False)
+    forums = db(query).select(mtable.forum_id,
+                              )
+    forum_ids = [f.forum_id for f in forums]
+
+    filter = (FS("bookmark.user_id") == user_id) | \
+             (FS("post_forum.forum_id").belongs(forum_ids)) | \
+             (FS("incident_post.incident_id").belongs(incident_ids)) | \
+             (FS("incident_post.event_id").belongs(event_ids))
+             #((FS("incident_post.event_id").belongs(event_ids)) & \
+             # (FS("incident_post.incident_id") == None))
+
+    return filter
+
+# =============================================================================
+def group_filter(forum_id):
+    """
+        Filter Updates for a Group
+         - Updates shared to this Group
+         - Updates linked to Incidents shared to this Group
+         - Updates linked to Events shared to this Group
+           #(unless that update is also linked to an Incident)
+    """
+
+    stable = current.s3db.event_forum
+    query = (stable.forum_id == forum_id) & \
+            (stable.deleted == False)
+    shared = current.db(query).select(stable.event_id,
+                                      stable.incident_id,
+                                      )
+    incident_ids = []
+    iappend = incident_ids.append
+    event_ids = []
+    eappend = event_ids.append
+    for s in shared:
+        incident_id = s.incident_id
+        if incident_id is not None:
+            iappend(incident_id)
+        else:
+            eappend(s.event_id)
+
+    filter = (FS("post_forum.forum_id") == forum_id)
+    if incident_ids:
+        filter |= (FS("incident_post.incident_id").belongs(incident_ids))
+    if event_ids:
+        filter |= (FS("event_post.event_id").belongs(event_ids))
+                  #((FS("event_post.event_id").belongs(event_ids)) & \
+                  # (FS("event_post.incident_id") == None))
+
+    return filter
 
 # =============================================================================
 def cms_post_list_layout(list_id, item_id, resource, rfields, record):
@@ -2029,8 +2893,11 @@ def cms_post_list_layout(list_id, item_id, resource, rfields, record):
     else:
         delete_btn = ""
 
-    user = current.auth.user
+    # Bookmarks
+    auth = current.auth
+    user = auth.user
     if user: #and settings.get_cms_bookmarks():
+        # @ToDo: Bulk lookup (via list_fields?)
         ltable = s3db.cms_post_user
         query = (ltable.post_id == record_id) & \
                 (ltable.user_id == user.id)
@@ -2058,6 +2925,91 @@ def cms_post_list_layout(list_id, item_id, resource, rfields, record):
         bookmark["_data-i"] = record_id
     else:
         bookmark = ""
+
+    # Shares
+    if user:
+        # @ToDo: Bulk lookup (via list_fields?)
+        ptable = s3db.pr_person
+        mtable = s3db.pr_forum_membership
+        ftable = s3db.pr_forum
+        query = (ptable.pe_id == user.pe_id) & \
+                (ptable.id == mtable.person_id) & \
+                (mtable.forum_id == ftable.id)
+        forums = db(query).select(ftable.id,
+                                  ftable.name,
+                                  cache = s3db.cache)
+        if len(forums):
+            ADMIN = auth.s3_has_role("ADMIN")
+            forum_ids = [f.id for f in forums]
+            ltable = s3db.cms_post_forum
+            query = (ltable.post_id == record_id) & \
+                    (ltable.forum_id.belongs(forum_ids))
+            shares = db(query).select(ltable.forum_id,
+                                      ltable.created_by,
+                                      ).as_dict(key="forum_id")
+            share_btn = A(ICON("share"),
+                           _href = "#",
+                           _class = "",
+                           _title = T("Share"),
+                           )
+            dropdown_id = "share_post_dropdown_%s" % record_id
+            share_btn["_data-dropdown"] = dropdown_id
+            share_btn["_aria-controls"] = dropdown_id
+            share_btn["_aria-expanded"] = "false"
+
+            dropdown = UL(_id = dropdown_id,
+                          _class = "f-dropdown share",
+                          tabindex = "-1",
+                          )
+            dropdown["_data-dropdown-content"] = ""
+            dropdown["_aria-hidden"] = "true"
+            dropdown["_data-c"] = "cms"
+            dropdown["_data-f"] = "post"
+            dropdown["_data-i"] = record_id
+
+            dappend = dropdown.append
+            user_id = user.id
+            for f in forums:
+                forum_id = f.id
+                checkbox_id = "post_%s_forum_%s" % (record_id, forum_id)
+                if forum_id in shares:
+                    if ADMIN or shares[forum_id]["created_by"] == user_id:
+                        # Shared by us (or we're ADMIN), so render Checked checkbox which we can deselect
+                        checkbox = INPUT(_checked = "checked",
+                                         _id = checkbox_id,
+                                         _type = "checkbox",
+                                         _value = forum_id,
+                                         )
+                    else:
+                        # Shared by someone else, so render Checked checkbox which is disabled
+                        checkbox = INPUT(_checked = "checked",
+                                         _disabled = "disabled",
+                                         _id = checkbox_id,
+                                         _type = "checkbox",
+                                         _value = forum_id,
+                                         )
+                else:
+                    # Not Shared so render empty checkbox
+                    checkbox = INPUT(_id = checkbox_id,
+                                     _type = "checkbox",
+                                     _value = forum_id,
+                                     )
+                dappend(LI(checkbox,
+                           LABEL(f.name,
+                                 _for = checkbox_id,
+                                 ),
+                           ))
+
+            share_btn = TAG[""](share_btn,
+                                dropdown,
+                                )
+            # Done globally in _view
+            #script = '''S3.wacop_shares()'''
+            #s3.jquery_ready.append(script)
+        else:
+            share_btn = ""
+    else:
+        share_btn = ""
 
     # Dropdown of available documents
     documents = raw["doc_document.file"]
@@ -2098,37 +3050,31 @@ def cms_post_list_layout(list_id, item_id, resource, rfields, record):
     divider = LI("|")
     divider["_aria-hidden"] = "true"
 
-    toolbar = UL(LI(A(ICON("share"),
-                      SPAN("share this",
-                           _class = "show-for-sr",
-                           ),
-                      _href="#",
-                      _title="Share",
-                      ),
+    toolbar = UL(LI(share_btn,
                     _class="item",
                     ),
-                 LI(A(ICON("flag"), # @ToDo: Use flag-alt if not flagged & flag if already flagged (like for bookmarks)
-                      SPAN("flag this",
-                           _class = "show-for-sr",
-                           ),
-                      _href="#",
-                      _title=T("Flag"),
-                      ),
-                    _class="item",
-                    ),
+                 #LI(A(ICON("flag"), # @ToDo: Use flag-alt if not flagged & flag if already flagged (like for bookmarks)
+                 #     SPAN("flag this",
+                 #          _class = "show-for-sr",
+                 #          ),
+                 #     _href="#",
+                 #     _title=T("Flag"),
+                 #     ),
+                 #   _class="item",
+                 #   ),
                  LI(bookmark,
                     _class="item",
                     ),
-                 LI(A(I(_class="fa fa-users",
-                        ),
-                      SPAN("make public",
-                           _class = "show-for-sr",
-                           ),
-                      _href="#",
-                      _title=T("Make Public"),
-                      ),
-                    _class="item",
-                    ),
+                 #LI(A(I(_class="fa fa-users",
+                 #       ),
+                 #     SPAN("make public",
+                 #          _class = "show-for-sr",
+                 #          ),
+                 #     _href="#",
+                 #     _title=T("Make Public"),
+                 #     ),
+                 #   _class="item",
+                 #   ),
                  LI(edit_btn,
                     _class="item",
                     ),
@@ -2159,28 +3105,18 @@ def cms_post_list_layout(list_id, item_id, resource, rfields, record):
 
     #if settings.get_cms_comments():
     # Add existing comments (oldest 1st)
-    comment_ids = raw["cms_comment.id"]
+    # - should sort by default by ID which is equivalent to oldest first,
+    #   however they seem to come in in a random order (even if orderby set on the component) so need to be sorted manually here
+    comments = raw["cms_comment.json_dump"]
     ncomments = 0
-    if comment_ids:
-        # Read extra data (can't have this as separate list_fields since come in unsorted & unable to match whole records
-        ctable = s3db.cms_comment
-        if isinstance(comment_ids, list):
-            comments = db(ctable.id.belongs(comment_ids)).select(ctable.body,
-                                                                 ctable.created_on,
-                                                                 ctable.created_by,
-                                                                 # Will sort by default by ID which is equivalent to oldest first
-                                                                 # orderby
-                                                                 )
-        else:
-            comment = db(ctable.id == comment_ids).select(ctable.body,
-                                                          ctable.created_on,
-                                                          ctable.created_by,
-                                                          limitby=(0, 1)
-                                                          ).first()
-            comments = [comment]
+    if comments:
+        if not isinstance(comments, list):
+            comments = [comments]
+        comments = [json.loads(comment) for comment in comments]
+        comments.sort(key=lambda c: c["created_on"])
         for comment in comments:
-            author = s3_auth_user_represent(comment.created_by)
-            cdate = comment.created_on
+            author = s3_auth_user_represent(comment["created_by"])
+            cdate = dateutil.parser.parse(comment["created_on"])
             ctime = cdate.time().strftime("%H:%M")
             cdate = cdate.date().strftime("%b %d, %Y")
             comment = LI(TAG["ASIDE"](P(T("Updated %(date)s @ %(time)s by %(author)s") % \
@@ -2190,7 +3126,7 @@ def cms_post_list_layout(list_id, item_id, resource, rfields, record):
                                                      ),
                                         _class="meta",
                                         ),
-                                      DIV(comment.body,
+                                      DIV(comment["body"],
                                           _class="desc",
                                           ),
                                       # @ToDo: Show this if more than x chars?
@@ -2361,14 +3297,14 @@ def filter_formstyle_profile(form, fields, *args, **kwargs):
 
         controls = DIV(widget, _class="controls")
 
-        if comment:
-            comment = render_tooltip(label,
-                                     comment,
-                                     _class="inline-tooltip tooltip",
-                                     )
-            if hasattr(comment, "add_class"):
-                comment.add_class("inline-tooltip")
-            controls_col.append(comment)
+        #if comment:
+        #    comment = render_tooltip(label,
+        #                             comment,
+        #                             _class="inline-tooltip tooltip",
+        #                             )
+        #    if hasattr(comment, "add_class"):
+        #        comment.add_class("inline-tooltip")
+        #    controls_col.append(comment)
 
         _class = "row hide" if hidden else "row"
         return DIV(DIV(label,

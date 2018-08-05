@@ -2,7 +2,7 @@
 
 """ Sahana Eden Vehicle Model
 
-    @copyright: 2009-2017 (c) Sahana Software Foundation
+    @copyright: 2009-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -52,6 +52,7 @@ class S3VehicleModel(S3Model):
         T = current.T
         db = current.db
 
+        configure = self.configure
         crud_strings = current.response.s3.crud_strings
         define_table = self.define_table
         float_represent = IS_FLOAT_AMOUNT.represent
@@ -67,11 +68,9 @@ class S3VehicleModel(S3Model):
                            label = T("Code"),
                            requires = IS_LENGTH(64),
                            ),
-                     Field("name", notnull=True, length=64,
+                     Field("name", length=128,
                            label = T("Name"),
-                           requires = [IS_NOT_EMPTY(),
-                                       IS_LENGTH(64),
-                                       ],
+                           requires = IS_LENGTH(128),
                            ),
                      #Field("parent", "reference event_event_type", # This form of hierarchy may not work on all Databases
                      #      label = T("SubType of"),
@@ -142,6 +141,10 @@ class S3VehicleModel(S3Model):
             msg_list_empty = T("No Vehicle Types currently registered")
             )
 
+        configure(tablename,
+                  deduplicate = S3Duplicate(primary=("code",)),
+                  )
+
         vehicle_type_id = S3ReusableField("vehicle_type_id", "reference %s" % tablename,
                                           label = T("Vehicle Type"),
                                           ondelete = "RESTRICT",
@@ -180,11 +183,17 @@ class S3VehicleModel(S3Model):
                      Field("mileage", "integer",
                            label = T("Current Mileage"),
                            represent = lambda v: int_represent(v),
+                           requires = IS_EMPTY_OR(
+                                          IS_INT_IN_RANGE(0, None)
+                                          ),
                            ),
                      Field("service_mileage", "integer",
                            comment = T("Mileage"),
                            label = T("Service Due"),
                            represent = lambda v: int_represent(v),
+                           requires = IS_EMPTY_OR(
+                                          IS_INT_IN_RANGE(0, None)
+                                          ),
                            ),
                      s3_date("service_date",
                              label = T("Service Due"),
@@ -220,10 +229,10 @@ class S3VehicleModel(S3Model):
                                                               )),
                                      )
 
-        self.configure(tablename,
-                       context = {"location": "asset_id$location_id"
-                                  },
-                       )
+        configure(tablename,
+                  context = {"location": "asset_id$location_id"
+                             },
+                  )
 
         # ---------------------------------------------------------------------
         # Pass names back to global scope (s3.*)

@@ -26,6 +26,9 @@ def config(settings):
     # In Production, prepopulate = 0 (to save 1x DAL hit every page)
     settings.base.prepopulate.append("default")
 
+    # Uncomment this to prefer scalability-optimized strategies globally
+    #settings.base.bigtable = True
+
     # Theme (folder to use for views/layout.html)
     #settings.base.theme = "default"
 
@@ -64,6 +67,8 @@ def config(settings):
     #settings.auth.registration_requests_organisation = True
     # Uncomment this to have the Organisation selection during registration be mandatory
     #settings.auth.registration_organisation_required = True
+    # Uncomment this to hide the Create-Organisation link in registration forms
+    #settings.auth.registration_organisation_link_create = False
     # Uncomment this to have the Organisation input hidden unless the user enters a non-whitelisted domain
     #settings.auth.registration_organisation_hidden = True
     # Uncomment this to default the Organisation during registration
@@ -114,7 +119,9 @@ def config(settings):
     # Uncomment this to allow users to Login using OpenID
     #settings.auth.openid = True
     # Uncomment this to block password changes since managed externally (OpenID / SMTP / LDAP)
-    #settings.auth.password_changes = True
+    #settings.auth.password_changes = False
+    # Uncomment this to disable password retrieval (e.g. if impractical or unsafe)
+    #settings.auth.password_retrieval = False
     # Uncomment this to enable presence records on login based on HTML5 geolocations
     #settings.auth.set_presence_on_login = True
     # Uncomment this and specify a list of location levels to be ignored by presence records
@@ -123,38 +130,45 @@ def config(settings):
     #settings.auth.create_unknown_locations = True
 
     # L10n settings
-    # Languages used in the deployment (used for Language Toolbar & GIS Locations)
+    # Languages used in the deployment (used for Language Toolbar, GIS Locations, etc)
     # http://www.loc.gov/standards/iso639-2/php/code_list.php
     settings.L10n.languages = OrderedDict([
-        ("ar", "العربية"),
-        ("bs", "Bosanski"),
+        ("ar", "Arabic"),
+        ("bs", "Bosnian"),
+        #("dv", "Divehi"), # Maldives
+        #("dz", "Dzongkha"), # Bhutan
         ("en", "English"),
-        ("fr", "Français"),
-        ("de", "Deutsch"),
-        ("el", "ελληνικά"),
-        ("es", "Español"),
-        ("it", "Italiano"),
-        ("ja", "日本語"),
-        ("km", "ភាសាខ្មែរ"),
-        ("ko", "한국어"),
-        ("mn", "Монгол хэл"),  # Mongolian
-        ("my", "မြန်မာစာ"),       # Burmese
-        ("ne", "नेपाली"),         # Nepali
-        ("prs", "دری"),        # Dari
-        ("ps", "پښتو"),         # Pashto
-        ("pt", "Português"),
-        ("pt-br", "Português (Brasil)"),
-        ("ru", "русский"),
+        ("fr", "French"),
+        ("de", "German"),
+        ("el", "Greek"),
+        ("es", "Spanish"),
+        #("id", "Bahasa Indonesia"),
+        ("it", "Italian"),
+        ("ja", "Japanese"),
+        ("km", "Khmer"), # Cambodia
+        ("ko", "Korean"),
+        #("lo", "Lao"),
+        #("lt", "Lithuanian"),
+        #("mg", "Malagasy"),
+        ("mn", "Mongolian"),
+        #("ms", "Malaysian"),
+        ("my", "Burmese"), # Myanmar
+        ("ne", "Nepali"),
+        ("prs", "Dari"), # Afghan Persian
+        ("ps", "Pashto"), # Afghanistan, Pakistan
+        ("pt", "Portuguese"),
+        ("pt-br", "Portuguese (Brazil)"),
+        ("ru", "Russian"),
         ("tet", "Tetum"),
-        #("si", "සිංහල"),                 # Sinhala
-        #("ta", "தமிழ்"),                 # Tamil
-        #("th", "ภาษาไทย"),              # Thai
-        ("tl", "Tagalog"),
-        ("tr", "Türkçe"),
-        ("ur", "اردو"),
-        ("vi", "Tiếng Việt"),
-        ("zh-cn", "中文 (简体)"),
-        ("zh-tw", "中文 (繁體)"),
+        #("si", "Sinhala"), # Sri Lanka
+        #("ta", "Tamil"), # India, Sri Lanka
+        ("th", "Thai"),
+        ("tl", "Tagalog"), # Philippines
+        ("tr", "Turkish"),
+        ("ur", "Urdu"), # Pakistan
+        ("vi", "Vietnamese"),
+        ("zh-cn", "Chinese (Simplified)"), # Mainland China
+        ("zh-tw", "Chinese (Taiwan)"),
     ])
     # Default language for Language Toolbar (& GIS Locations in future)
     #settings.L10n.default_language = "en"
@@ -287,6 +301,8 @@ def config(settings):
     #settings.gis.layer_tree_radio = True
     # Uncomment to display the Map Legend as a floating DIV
     #settings.gis.legend = "float"
+    # Uncomment to use scalability-optimized options lookups in location filters
+    #settings.gis.location_filter_bigtable_lookups = True
     # Uncomment to prevent showing LatLon in Location Represents
     #settings.gis.location_represent_address_only = True
     # Mouse Position: 'normal', 'mgrs' or None
@@ -299,7 +315,7 @@ def config(settings):
     #settings.gis.permalink = False
     # Resources which can be directly added to the main map
     #settings.gis.poi_create_resources = None
-    #settings.gis.poi_create_resources = [{"c":"event", "f":"incident_report", "table": "gis_poi", label": T("Add Incident Report") ,"tooltip": T("Add Incident Report"), "layer":"Incident Reports", "location": "popup"}]
+    #settings.gis.poi_create_resources = [{"c":"event", "f":"incident_report", "table": "gis_poi", "label": T("Add Incident Report") ,"tooltip": T("Add Incident Report"), "layer":"Incident Reports", "location": "popup"}]
     # PoIs to export in KML/OSM feeds from Admin locations
     #settings.gis.poi_export_resources = ["cr_shelter", "hms_hospital", "org_office"]
     # Uncomment to show the Print control:
@@ -328,6 +344,8 @@ def config(settings):
     #settings.gis.zoomcontrol = False
     # Uncomment to open Location represent links in a Popup Window
     #settings.gis.popup_location_link = True
+    # Uncomment to include WKT in XML exports
+    #settings.gis.xml_wkt = True
     # GeoNames username
     settings.gis.geonames_username = "eden_test"
 
@@ -442,6 +460,11 @@ def config(settings):
     #settings.ui.menu_logo = URL(c="static", f="img", args=["S3menulogo.png"])
 
     # -------------------------------------------------------------------------
+    # Sync
+    # Uncomment if this deployment exposes public data sets
+    #settings.sync.data_repository = True
+
+    # -------------------------------------------------------------------------
     # Asset
     # Uncomment to have a specific asset type for Telephones
     #settings.asset.telephones = True
@@ -552,6 +575,8 @@ def config(settings):
     # Events
     # Uncomment to use the term Disaster instead of Event
     #settings.event.label = "Disaster"
+    # Uncomment to not use Incidents under Events
+    #settings.event.incident = False
     # Uncomment to preserve linked Incidents when an Event is deleted
     # NB Changing this setting requires a DB migration
     #settings.event.cascade_delete_incidents = False
@@ -616,6 +641,8 @@ def config(settings):
     #settings.org.autocomplete = True
     # Enable the Organisation Sector field
     #settings.org.sector = True
+    # But hide it from the rheader
+    #settings.org.sector_rheader = False
     # Enable the use of Organisation Branches
     #settings.org.branches = True
     # Show branches as tree rather than as table
@@ -631,6 +658,8 @@ def config(settings):
     #settings.org.organisation_types_hierarchical = True
     # Make Organisation Types Multiple
     #settings.org.organisation_types_multiple = True
+    # Show Organisation Types in the rheader
+    #settings.org.organisation_type_rheader = True
     # Enable the use of Organisation Regions
     #settings.org.regions = True
     # Make Organisation Regions Hierarchical
@@ -901,9 +930,12 @@ def config(settings):
 
     # -------------------------------------------------------------------------
     # Supply
+    # Name of the Default Item Catalog. Do not edit after deployment
+    #settings.supply.catalog_default = "Default"
+    # Disable the use of Multiple Item Catalogs
+    #settings.supply.catalog_multi = False
+    # Disable the use of Alternative Items
     #settings.supply.use_alt_name = False
-    # Do not edit after deployment
-    #settings.supply.catalog_default = T("Default")
 
     # -------------------------------------------------------------------------
     # Projects
@@ -923,6 +955,10 @@ def config(settings):
     #settings.project.activity_types = True
     # Uncomment this to filter dates in Activities
     #settings.project.activity_filter_year = True
+    # Uncomment this to not use Beneficiaries for Activities
+    #settings.project.get_project_activity_beneficiaries = False
+    # Uncomment this to not use Item Catalog for Distributions
+    #settings.project.activity_items = False
     # Uncomment this to use Codes for projects
     #settings.project.codes = True
     # Uncomment this to call project locations 'Communities'
@@ -1037,6 +1073,13 @@ def config(settings):
             #description = "Needed for Breadcrumbs",
             restricted = False,
             module_type = None  # No Menu
+        )),
+        ("setup", Storage(
+            name_nice = T("Setup"),
+            #description = "WebSetup",
+            restricted = True,
+            access = "|1|",     # Only Administrators can see this module in the default menu & access the controller
+             module_type = None  # No Menu
         )),
         ("sync", Storage(
             name_nice = T("Synchronization"),
@@ -1256,12 +1299,6 @@ def config(settings):
         #   #description = "Helps to report and search for missing persons",
         #   restricted = True,
         #   module_type = 10,
-        #)),
-        #("scenario", Storage(
-        #    name_nice = T("Scenarios"),
-        #    #description = "Define Scenarios for allocation of appropriate Resources (Human, Assets & Facilities).",
-        #    restricted = True,
-        #    module_type = 10,
         #)),
         #("vulnerability", Storage(
         #    name_nice = T("Vulnerability"),

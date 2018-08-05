@@ -2,7 +2,7 @@
 
 """ Sahana Eden Budget Model
 
-    @copyright: 2009-2017 (c) Sahana Software Foundation
+    @copyright: 2009-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -26,7 +26,6 @@
     FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
     OTHER DEALINGS IN THE SOFTWARE.
 """
-from reportlab.lib.validators import Percentage
 
 __all__ = ("S3BudgetModel",
            "S3BudgetKitModel",
@@ -71,6 +70,9 @@ class S3BudgetModel(S3Model):
         s3 = current.response.s3
         crud_strings = s3.crud_strings
 
+        amount_represent = lambda v: \
+                           IS_FLOAT_AMOUNT.represent(v, precision=2)
+
         # ---------------------------------------------------------------------
         # Budget Entity (super-entity for resources that can have a budget)
         entity_types = Storage(#event_incident = T("Incident"),
@@ -81,7 +83,9 @@ class S3BudgetModel(S3Model):
                                )
 
         tablename = "budget_entity"
-        self.super_entity(tablename, "budget_entity_id", entity_types)
+        self.super_entity(tablename, "budget_entity_id", entity_types,
+                          Field("name"), # shared field
+                          )
 
         self.add_components(tablename,
                             # Budget Details
@@ -138,29 +142,33 @@ class S3BudgetModel(S3Model):
                      Field("total_onetime_costs", "double",
                            default = 0.0,
                            label = T("Total One-time Costs"),
+                           represent = amount_represent,
                            writable = False,
                            ),
                      Field("total_recurring_costs", "double",
                            default = 0.0,
                            label = T("Total Recurring Costs"),
+                           represent = amount_represent,
                            writable = False,
                            ),
                      Field("total_budget", "double",
                            default = 0.0,
                            label = T("Total Budget"),
+                           represent = amount_represent,
+                           requires = IS_EMPTY_OR(IS_FLOAT_AMOUNT(minimum=0.0)),
                            ),
                      s3_currency(required = True),
                      Field("monitoring_frequency", "integer",
                            default = 1,
                            label = T("Monitoring Frequency"),
                            represent = lambda opt: \
-                            monitoring_opts.get(opt, UNKNOWN_OPT),
+                                       monitoring_opts.get(opt, UNKNOWN_OPT),
                            requires = IS_IN_SET(monitoring_opts),
                            ),
                      Field("status", "integer",
                            default = 1,
                            represent = lambda opt: \
-                            status_opts.get(opt, UNKNOWN_OPT),
+                                       status_opts.get(opt, UNKNOWN_OPT),
                            requires = IS_IN_SET(status_opts),
                            ),
                      s3_comments(),
@@ -218,22 +226,26 @@ class S3BudgetModel(S3Model):
                      Field("shipping", "double", notnull=True,
                            default = 15.0,
                            label = T("Shipping cost"),
-                           requires = IS_FLOAT_IN_RANGE(0, 100),
+                           represent = amount_represent,
+                           requires = IS_FLOAT_AMOUNT(0, 100),
                            ),
                      Field("logistics", "double", notnull=True,
                            default = 0.0,
                            label = T("Procurement & Logistics cost"),
-                           requires = IS_FLOAT_IN_RANGE(0, 100),
+                           represent = amount_represent,
+                           requires = IS_FLOAT_AMOUNT(0, 100),
                            ),
                      Field("admin", "double", notnull=True,
                            default = 0.0,
                            label = T("Administrative support cost"),
-                           requires = IS_FLOAT_IN_RANGE(0, 100),
+                           represent = amount_represent,
+                           requires = IS_FLOAT_AMOUNT(0, 100),
                            ),
                      Field("indirect", "double", notnull=True,
                            default = 7.0,
                            label = T("Indirect support cost HQ"),
-                           requires = IS_FLOAT_IN_RANGE(0, 100),
+                           represent = amount_represent,
+                           requires = IS_FLOAT_AMOUNT(0, 100),
                            ),
                      *s3_meta_fields())
 
@@ -330,12 +342,17 @@ class S3BudgetModel(S3Model):
                            ),
                      Field("salary", "integer", notnull=True,
                            label = T("Monthly Salary"),
-                           requires = IS_NOT_EMPTY(),
+                           requires = [IS_NOT_EMPTY(),
+                                        IS_INT_IN_RANGE(0, None),
+                                        ],
                            ),
                      s3_currency(),
                      Field("travel", "integer",
                            default = 0,
                            label = T("Travel Cost"),
+                           requires = IS_EMPTY_OR(
+                                        IS_INT_IN_RANGE(0, None),
+                                        ),
                            ),
                      # Shouldn't be grade-dependent, but purely
                      # location-dependent
@@ -449,9 +466,9 @@ class S3BudgetModel(S3Model):
         """
 
         try:
-           budget_entity_id = form.vars.budget_entity_id
-        except:
-           return
+            budget_entity_id = form.vars.budget_entity_id
+        except AttributeError:
+            return
         budget_budget_totals(budget_entity_id)
         return
 
@@ -465,7 +482,7 @@ class S3BudgetModel(S3Model):
 
         try:
             record_id = form.vars.id
-        except:
+        except AttributeError:
             return
         linktable = current.s3db.budget_budget_staff
         budget_entity_id = linktable.budget_entity_id
@@ -486,7 +503,7 @@ class S3BudgetModel(S3Model):
 
         try:
             record_id = form.vars.id
-        except:
+        except AttributeError:
             return
         linktable = current.s3db.budget_budget_staff
         budget_entity_id = linktable.budget_entity_id
@@ -506,7 +523,7 @@ class S3BudgetModel(S3Model):
 
         try:
             record_id = form.vars.id
-        except:
+        except AttributeError:
             return
         table = current.s3db.budget_budget_staff
         row = current.db(table.id == record_id).select(table.budget_entity_id,
@@ -526,7 +543,7 @@ class S3BudgetModel(S3Model):
         linktable = current.s3db.budget_budget_staff
         try:
             record_id = row.id
-        except:
+        except AttributeError:
             return
         link = db(linktable.id == record_id).select(linktable.deleted_fk,
                                                     limitby=(0, 1)).first()
@@ -817,7 +834,7 @@ class S3BudgetKitModel(S3Model):
         """
         try:
             kit_id = form.vars.id
-        except:
+        except AttributeError:
             return
         budget_kit_totals(kit_id)
         return
@@ -833,7 +850,7 @@ class S3BudgetKitModel(S3Model):
 
         try:
             item_id = form.vars.id
-        except:
+        except AttributeError:
             return
 
         # Update totals of all kits with this item
@@ -877,7 +894,7 @@ class S3BudgetKitModel(S3Model):
 
         try:
             record_id = form.vars.id
-        except:
+        except AttributeError:
             return
         table = current.s3db.budget_kit_item
         row = current.db(table.id == record_id).select(table.kit_id,
@@ -897,7 +914,7 @@ class S3BudgetKitModel(S3Model):
         linktable = current.s3db.budget_kit_item
         try:
             record_id = row.id
-        except:
+        except AttributeError:
             return
         link = db(linktable.id == record_id).select(linktable.deleted_fk,
                                                     limitby=(0, 1)).first()
@@ -1173,7 +1190,7 @@ class S3BudgetBundleModel(S3Model):
         """
         try:
             bundle_id = form.vars.id
-        except:
+        except AttributeError:
             return
         budget_bundle_totals(bundle_id)
         return
@@ -1187,7 +1204,7 @@ class S3BudgetBundleModel(S3Model):
 
         try:
             record_id = form.vars.id
-        except:
+        except AttributeError:
             return
         table = current.s3db.budget_bundle_item
         row = current.db(table.id == record_id).select(table.bundle_id,
@@ -1207,7 +1224,7 @@ class S3BudgetBundleModel(S3Model):
         linktable = current.s3db.budget_bundle_item
         try:
             record_id = row.id
-        except:
+        except AttributeError:
             return
         link = db(linktable.id == record_id).select(linktable.deleted_fk,
                                                     limitby=(0, 1)).first()
@@ -1227,7 +1244,7 @@ class S3BudgetBundleModel(S3Model):
 
         try:
             record_id = form.vars.id
-        except:
+        except AttributeError:
             return
         table = current.s3db.budget_bundle_kit
         row = current.db(table.id == record_id).select(table.bundle_id,
@@ -1247,7 +1264,7 @@ class S3BudgetBundleModel(S3Model):
         linktable = current.s3db.budget_bundle_kit
         try:
             record_id = row.id
-        except:
+        except AttributeError:
             return
         link = db(linktable.id == record_id).select(linktable.deleted_fk,
                                                     limitby=(0, 1)).first()
@@ -1267,7 +1284,7 @@ class S3BudgetBundleModel(S3Model):
 
         try:
             record_id = form.vars.id
-        except:
+        except AttributeError:
             return
         table = current.s3db.budget_budget_bundle
         row = current.db(table.id == record_id).select(table.budget_entity_id,
@@ -1287,7 +1304,7 @@ class S3BudgetBundleModel(S3Model):
         linktable = current.s3db.budget_budget_bundle
         try:
             record_id = row.id
-        except:
+        except AttributeError:
             return
         link = db(linktable.id == record_id).select(linktable.deleted_fk,
                                                     limitby=(0, 1)).first()
@@ -1340,22 +1357,31 @@ class S3BudgetAllocationModel(S3Model):
         self.define_table(tablename,
                           # This is a component, so needs to be a super_link
                           # - can't override field name, ondelete or requires
-                          super_link("budget_entity_id", "budget_entity"),
+                          super_link("budget_entity_id", "budget_entity",
+                                     # @todo: proper representation method incl.
+                                     #        entity type (currently only one
+                                     #        type defined, so using that as
+                                     #        label for now)
+                                     label = T("Project"),
+                                     represent = S3Represent(lookup="budget_entity"),
+                                     ),
                           # Component not instance
                           super_link("cost_item_id", "budget_cost_item",
                                      readable = True,
                                      writable = True,
                                      represent = self.budget_CostItemRepresent(),
                                      ),
-                          # @ToDo: s3_datetime
-                          s3_date("start_date",
-                                  label = T("Start Date")
-                                  ),
-                          s3_date("end_date",
-                                  label = T("End Date"),
-                                  start_field = "budget_allocation_start_date",
-                                  default_interval = 12,
-                                  ),
+                          s3_datetime("start_date",
+                                      label = T("Start Date"),
+                                      widget = "date",
+                                      ),
+                          s3_datetime("end_date",
+                                      label = T("End Date"),
+                                      # Not supported by s3_datetime
+                                      #start_field = "budget_allocation_start_date",
+                                      #default_interval = 12,
+                                      widget = "date",
+                                      ),
                           Field("unit_cost", "double",
                                 default = 0.00,
                                 label = T("One-Time Cost"),
@@ -1412,7 +1438,7 @@ class S3BudgetAllocationModel(S3Model):
             table = item.table
 
             start_date = data.get("start_date")
-            end_date = data.get("end_date")
+            #end_date = data.get("end_date")
 
             # Regard same budget_entity_id and cost_item_id, and with
             # start_date = None or same start_date as match
@@ -1530,7 +1556,7 @@ class S3BudgetMonitoringModel(S3Model):
                                                   limitby=(0, 1)
                                                   ).first()
         if not record:
-            s3_debug("Cannot find Budget Monitoring record (no record for this ID), so can't update start_date")
+            current.log.debug("Cannot find Budget Monitoring record (no record for this ID), so can't update start_date")
             return
         budget_entity_id = record.budget_entity_id
         start_date = record.start_date
@@ -1578,7 +1604,7 @@ class S3BudgetMonitoringModel(S3Model):
                                                    limitby=(0, 1)
                                                    ).first()
         if not record:
-            s3_debug("Cannot find Budget Monitoring record (no record for this ID), so can't check whether Total Budget is exceeded")
+            current.log.debug("Cannot find Budget Monitoring record (no record for this ID), so can't check whether Total Budget is exceeded")
             return
         budget_entity_id = record.budget_entity_id
 
@@ -1589,7 +1615,7 @@ class S3BudgetMonitoringModel(S3Model):
                                   limitby=(0, 1)
                                   ).first()
         if not budget:
-            s3_debug("Cannot find Budget record (no record for this super_key), so can't check whether Total Budget is exceeded")
+            current.log.debug("Cannot find Budget record (no record for this super_key), so can't check whether Total Budget is exceeded")
             return
 
         # Read the total Planned
@@ -1635,7 +1661,7 @@ class S3BudgetMonitoringModel(S3Model):
 
         if hasattr(row, "id"):
             # Reload the record
-            #s3_debug("Reloading budget_monitoring record")
+            #current.log.debug("Reloading budget_monitoring record")
             table = current.s3db.budget_monitoring
             r = current.db(table.id == row.id).select(table.planned,
                                                       table.value,
@@ -1674,7 +1700,7 @@ class budget_CostItemRepresent(S3Represent):
         }
 
     # -------------------------------------------------------------------------
-    def lookup_rows(self, key, values, fields=[]):
+    def lookup_rows(self, key, values, fields=None):
         """
             Custom rows lookup function
 
@@ -1689,7 +1715,7 @@ class budget_CostItemRepresent(S3Represent):
         instance_fields = {
             "event_asset": ["incident_id", "asset_id"],
             "event_site": ["incident_id", "site_id"],
-            "event_human_resource": ["incident_id", "human_resource_id"],
+            "event_human_resource": ["incident_id", "job_title_id"],
         }
 
         # Get all super-entity rows
@@ -1791,7 +1817,7 @@ class budget_CostItemRepresent(S3Represent):
             table = s3db.event_human_resource
             repr_str = "%s - %s" % \
                         (table.incident_id.represent(item.incident_id),
-                         self.represent["human_resource_id"](item.human_resource_id),
+                         self.represent["job_title_id"](item.job_title_id),
                          )
         else:
             # Unknown instance type

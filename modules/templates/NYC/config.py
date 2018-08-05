@@ -3,7 +3,7 @@
 from collections import OrderedDict
 
 from gluon import current
-from gluon.html import A, URL, TR, TD
+from gluon.html import A, URL
 from gluon.storage import Storage
 
 from s3 import s3_fullname, S3Represent, S3SQLInlineLink
@@ -18,7 +18,8 @@ def config(settings):
     T = current.T
 
     # Pre-Populate
-    settings.base.prepopulate.append("NYC")
+    settings.base.prepopulate += ("NYC",)
+    #settings.base.prepopulate_demo += ("NYC\Demo",)
 
     settings.base.system_name = T("NYC Prepared")
     settings.base.system_name_short = T("NYC Prepared")
@@ -67,6 +68,7 @@ def config(settings):
     # NB This can also be over-ridden for specific contexts later
     # e.g. Activities filtered to those of parent Project
     settings.gis.countries = ("US",)
+    gis_levels = ("L2", "L3", "L4")
 
     settings.fin.currencies = {
         "USD" : "United States Dollars",
@@ -342,19 +344,18 @@ def config(settings):
                 marker = "%s_green" % marker
 
         mtable = db.gis_marker
-        try:
-            marker = db(mtable.name == marker).select(mtable.image,
-                                                      mtable.height,
-                                                      mtable.width,
-                                                      cache=s3db.cache,
-                                                      limitby=(0, 1)
-                                                      ).first()
-        except:
+        marker = db(mtable.name == marker).select(mtable.image,
+                                                  mtable.height,
+                                                  mtable.width,
+                                                  cache = s3db.cache,
+                                                  limitby = (0, 1),
+                                                  ).first()
+        if not marker:
             marker = db(mtable.name == "office").select(mtable.image,
                                                         mtable.height,
                                                         mtable.width,
-                                                        cache=s3db.cache,
-                                                        limitby=(0, 1)
+                                                        cache = s3db.cache,
+                                                        limitby = (0, 1),
                                                         ).first()
         return marker
 
@@ -390,7 +391,7 @@ def config(settings):
             S3OptionsFilter("organisation_id",
                             ),
             S3LocationFilter("location_id",
-                             levels = ("L2", "L3", "L4"),
+                             levels = gis_levels,
                              ),
             #S3OptionsFilter("site_org_group.group_id",
             #                represent = "%(name)s",
@@ -454,8 +455,7 @@ def config(settings):
                     field = table.location_id
                     if r.method in ("create", "update"):
                         field.label = "" # Gets replaced by widget
-                    levels = ("L2", "L3", "L4")
-                    field.widget = S3LocationSelector(levels=levels,
+                    field.widget = S3LocationSelector(levels=gis_levels,
                                                       show_address=True,
                                                       # Using L4 instead
                                                       show_postcode=False,
@@ -579,7 +579,6 @@ def config(settings):
                        S3MultiSelectWidget, \
                        S3SQLCustomForm, \
                        S3SQLInlineComponent, \
-                       S3SQLInlineComponentMultiSelectWidget, \
                        S3SQLVerticalSubFormLayout
 
         s3db = current.s3db
@@ -624,7 +623,7 @@ def config(settings):
                                                              ).first()
                 try:
                     pe_id = org.pe_id
-                except:
+                except AttributeError:
                     current.log.error("Org %s not found: cannot set rss_import correctly" % r.component_id)
                     # Default
                     rss_import = None
@@ -646,7 +645,7 @@ def config(settings):
                 # Create form: Default
                 rss_import = None
 
-        s3db.org_organisation_location.location_id.widget = S3LocationSelector(levels=("L2", "L3", "L4"),
+        s3db.org_organisation_location.location_id.widget = S3LocationSelector(levels=gis_levels,
                                                                                show_map=False,
                                                                                labels=False,
                                                                                )
@@ -668,13 +667,11 @@ def config(settings):
                                        multiple = False,
                                        #widget = "hierarchy",
                                        ),
-                       # activate hierarchical org_service:
-                       #S3SQLInlineLink(
-                       S3SQLInlineComponentMultiSelectWidget(
+                       S3SQLInlineLink(
                             "service",
                             label = T("Services"),
                             field = "service_id",
-                            # activate hierarchical org_service:
+                            # Activate hierarchical org_service:
                             #leafonly = False,
                             #widget = "hierarchy",
                             ),
@@ -697,8 +694,7 @@ def config(settings):
                        S3SQLInlineComponent(
                             "organisation_location",
                             label = T("Areas Served"),
-                            fields = [("", "location_id"),
-                                      ],
+                            fields = [("", "location_id")],
                             ),
                        S3SQLInlineComponent(
                             "facility",
@@ -817,12 +813,12 @@ def config(settings):
                             ),
             S3LocationFilter("org_facility.location_id",
                              label = T("Location"),
-                             levels = ("L2", "L3", "L4"),
+                             levels = gis_levels,
                              #hidden = True,
                              ),
             S3LocationFilter("organisation_location.location_id",
                              label = T("Areas Served"),
-                             levels = ("L2", "L3", "L4"),
+                             levels = gis_levels,
                              #hidden = True,
                              ),
             S3OptionsFilter("service_organisation.service_id",
@@ -887,8 +883,7 @@ def config(settings):
                         field = table.location_id
                         if r.method in ("create", "update"):
                             field.label = "" # Gets replaced by widget
-                        levels = ("L2", "L3", "L4")
-                        field.widget = S3LocationSelector(levels=levels,
+                        field.widget = S3LocationSelector(levels=gis_levels,
                                                           show_address=True,
                                                           # Using L4 instead
                                                           show_postcode=False,
@@ -965,7 +960,6 @@ def config(settings):
                     from gluon.html import DIV, INPUT
                     from s3 import S3SQLCustomForm, S3SQLInlineComponent
                     if r.method != "read":
-                        from gluon.validators import IS_EMPTY_OR
                         from s3 import S3LocationSelector
                         field = table.location_id
                         field.label = "" # Gets replaced by widget
@@ -1152,16 +1146,12 @@ def config(settings):
         if r.representation != "html":
             return None
 
-        from gluon import DIV, H4, A
-        from s3 import s3_rheader_resource, s3_rheader_tabs, s3_avatar_represent
+        from gluon import DIV, H4
+        from s3 import s3_rheader_resource, s3_rheader_tabs
 
         tablename, record = s3_rheader_resource(r)
         if record:
             rheader_tabs = s3_rheader_tabs(r, tabs)
-
-            T = current.T
-            db = current.db
-            s3db = current.s3db
 
             if tablename == "pr_person":
 
@@ -1312,8 +1302,7 @@ $.filterOptionsS3({
                                            "options": 2,
                                            }]
                         # Hide access-level
-                        contact_fields = [("", "value"),
-                                          ]
+                        contact_fields = [("", "value")]
 
                     # Custom CRUD form
                     crud_fields = ["first_name",
@@ -1334,8 +1323,8 @@ $.filterOptionsS3({
                                         #multiple = True,
                                         fields = contact_fields,
                                         filterby = [{"field": "contact_method",
-                                                        "options": "EMAIL",
-                                                        },
+                                                     "options": "EMAIL",
+                                                     },
                                                     ] + contact_filter,
                                         ),
                                    S3SQLInlineComponent(
@@ -1443,7 +1432,7 @@ $.filterOptionsS3({
             row = row.pr_group
         try:
             group_id = row.id
-        except:
+        except AttributeError:
             # not available
             return current.messages["NONE"]
 
@@ -1483,7 +1472,10 @@ $.filterOptionsS3({
                 if not result:
                     return False
 
-            from s3 import S3Represent, S3TextFilter, S3OptionsFilter, S3SQLCustomForm, S3SQLInlineComponent
+            from s3 import S3TextFilter, \
+                           S3OptionsFilter, \
+                           S3SQLCustomForm, \
+                           S3SQLInlineComponent
 
             s3db = current.s3db
 
@@ -1704,7 +1696,7 @@ $.filterOptionsS3({
                                         ),
                         S3LocationFilter("location_id",
                                          label = T("Location"),
-                                         levels = ("L2", "L3", "L4"),
+                                         levels = gis_levels,
                                          #hidden = True,
                                          ),
                         S3OptionsFilter("group_membership.group_id",
@@ -1768,7 +1760,7 @@ $.filterOptionsS3({
         from gluon import DIV
         field.comment = DIV(_class="tooltip", _title="%s|%s" % (POC, POC_HELP))
 
-        from s3 import S3SQLCustomForm, S3SQLInlineComponent
+        from s3 import S3SQLCustomForm
         crud_form = S3SQLCustomForm("person_id",
                                     "organisation_id",
                                     "org_contact",
@@ -1844,7 +1836,7 @@ $.filterOptionsS3({
                 result = True
 
             if not r.component and (r.interactive or r.representation == "aadata"):
-                from s3 import S3SQLCustomForm, S3SQLInlineComponent, S3SQLInlineComponentCheckbox
+                from s3 import S3SQLCustomForm, S3SQLInlineComponent
                 s3db = current.s3db
 
                 table = r.table
@@ -1873,7 +1865,7 @@ $.filterOptionsS3({
                         "location",
                         label = T("Location"),
                         fields = [("", "location_id")],
-                    ),
+                        ),
                     # Partner Orgs
                     S3SQLInlineComponent(
                         "organisation",
@@ -1885,7 +1877,7 @@ $.filterOptionsS3({
                         filterby = dict(field = "role",
                                         options = "2"
                                         ),
-                    ),
+                        ),
                     S3SQLInlineComponent(
                         "document",
                         name = "media",
@@ -1896,22 +1888,17 @@ $.filterOptionsS3({
                                   "comments",
                                   ],
                         filterby = dict(field = "name")
-                    ),
-                    S3SQLInlineComponentCheckbox(
+                        ),
+                    S3SQLInlineLink(
                         "activity_type",
                         label = T("Categories"),
                         field = "activity_type_id",
                         cols = 3,
-                        # Filter Activity Type by Project
-                        filter = {"linktable": "project_activity_type_project",
-                                  "lkey": "project_id",
-                                  "rkey": "activity_type_id",
-                                  },
-                    ),
+                        ),
                     #"budget",
                     #"currency",
                     "comments",
-                )
+                    )
 
                 from s3 import S3TextFilter, S3OptionsFilter, S3LocationFilter, S3DateFilter
                 filter_widgets = [
@@ -1937,7 +1924,7 @@ $.filterOptionsS3({
                     #                ),
                     S3LocationFilter("location.location_id",
                                      label = T("Location"),
-                                     levels = ("L2", "L3", "L4"),
+                                     levels = gis_levels,
                                      #hidden = True,
                                      ),
                     # @ToDo: Widget to handle Start & End in 1!
@@ -2063,7 +2050,7 @@ $.filterOptionsS3({
                                                             cache=s3db.cache,
                                                             limitby=(0, 1)
                                                             ).first().id
-        except:
+        except AttributeError:
             # Prepop hasn't been run
             series_id = None
 
@@ -2249,11 +2236,11 @@ $.filterOptionsS3({
         #        module_type = 1,
         #    )),
         #("project", Storage(
-        #        name_nice = T("Projects"),
-        #        #description = "Tracking of Projects, Activities and Tasks",
-        #        restricted = True,
-        #        module_type = 10
-        #    )),
+        #       name_nice = T("Projects"),
+        #       #description = "Tracking of Projects, Activities and Tasks",
+        #       restricted = True,
+        #       module_type = 10
+        #   )),
         #("assess", Storage(
         #        name_nice = T("Assessments"),
         #        #description = "Rapid Assessments & Flexible Impact Assessments",
@@ -2469,9 +2456,9 @@ def pr_contact_postprocess(form):
     s3db.msg_parser_enable(_id)
 
     # Check Now
-    async = current.s3task.async
-    async("msg_poll", args=["msg_rss_channel", channel_id])
-    async("msg_parse", args=[channel_id, "parse_rss"])
+    run_async = current.s3task.async
+    run_async("msg_poll", args=["msg_rss_channel", channel_id])
+    run_async("msg_parse", args=[channel_id, "parse_rss"])
 
 # =============================================================================
 class S3SQLHRPersonLink(S3SQLInlineLink):

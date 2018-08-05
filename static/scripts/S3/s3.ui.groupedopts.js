@@ -1,7 +1,7 @@
 /**
  * jQuery UI GroupedOpts Widget for S3GroupedOptionsWidget
  *
- * @copyright 2013-2017 (c) Sahana Software Foundation
+ * @copyright 2013-2018 (c) Sahana Software Foundation
  * @license MIT
  *
  * requires jQuery 1.9.1+
@@ -28,13 +28,16 @@
          *                              'columns' (columns=>rows), or
          *                              'rows' (rows=>columns)
          * @prop {bool} sort - alpha-sort the options
+         * @prop {bool} table - render options inside an HTML TABLE
+         * @prop {string} comment - HTML template to render after the LABELs
          */
         options: {
             columns: 3,
             emptyText: 'No options available',
             orientation: 'columns',
             sort: true,
-            table: true
+            table: true,
+            comment: ''
         },
 
         /**
@@ -236,7 +239,8 @@
          */
         _renderItem: function(item, row, table) {
 
-            var multiple = this.multiple;
+            var comment = this.options.comment,
+                multiple = this.multiple;
 
             var $item = $(item),
                 id = 's3-groupedopts-option-' + this.id + '-' + this.index,
@@ -280,6 +284,12 @@
                 var widget = $('<td>').append(oinput).append($(olabel));
             } else {
                 var widget = $('<div>').append(oinput).append($(olabel));
+            }
+            if (comment) {
+                 _.templateSettings = {interpolate: /\{(.+?)\}/g};
+                var template = _.template(comment);
+                var ocomment = template({v: value});
+                widget.append($(ocomment));
             }
             row.append(widget);
         },

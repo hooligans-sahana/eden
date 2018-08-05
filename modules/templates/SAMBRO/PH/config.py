@@ -19,12 +19,14 @@ def config(settings):
 
     # Theme (folder to use for views/layout.html)
     settings.base.theme = "SAMBRO.PH"
+    settings.base.theme_base = "default"
 
     # L10n (Localization) settings
     languages = OrderedDict([
         ("en-US", "English"),
         ("tl", "Tagalog"), # Filipino
     ])
+    settings.cap.languages = languages
     settings.L10n.languages = languages
 
     # for creating location from SAME geocodes

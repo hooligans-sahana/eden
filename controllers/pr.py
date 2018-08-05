@@ -176,17 +176,23 @@ def person():
         s3db.set_method(module, resourcename,
                         method = "contacts",
                         action = s3db.pr_Contacts)
-        contacts_tabs.append((T("Contacts"), "contacts"))
+        contacts_tabs.append((settings.get_pr_contacts_tab_label("all"),
+                              "contacts",
+                              ))
     if "public" in setting:
         s3db.set_method(module, resourcename,
                         method = "public_contacts",
                         action = s3db.pr_Contacts)
-        contacts_tabs.append((T("Public Contacts"), "public_contacts"))
+        contacts_tabs.append((settings.get_pr_contacts_tab_label("public_contacts"),
+                              "public_contacts",
+                              ))
     if "private" in setting and auth.is_logged_in():
         s3db.set_method(module, resourcename,
                         method = "private_contacts",
                         action = s3db.pr_Contacts)
-        contacts_tabs.append((T("Private Contacts"), "private_contacts"))
+        contacts_tabs.append((settings.get_pr_contacts_tab_label("private_contacts"),
+                              "private_contacts",
+                              ))
 
     # All tabs
     tabs = [(T("Basic Details"), None),
@@ -340,8 +346,7 @@ def contact():
         return True
     s3.prep = prep
 
-    output = s3_rest_controller()
-    return output
+    return s3_rest_controller()
 
 # -----------------------------------------------------------------------------
 def contact_emergency():
@@ -406,15 +411,53 @@ def person_search():
     return s3_rest_controller(module, "person")
 
 # -----------------------------------------------------------------------------
-def check_duplicates():
-    """
-        Person REST controller
-        - limited to just check_duplicates for use in S3AddPersonWidget2
-        - allows differential access permissions
-    """
+def forum():
+    """ RESTful CRUD controller """
 
-    s3.prep = lambda r: r.method == "check_duplicates"
-    return s3_rest_controller(module, "person")
+    # CRUD pre-process
+    def prep(r):
+        if auth.s3_has_role("ADMIN"):
+            # No restrictions
+            return True
+
+        from s3 import FS
+        if r.id:
+            if r.method == "join":
+                # Only possible for Public Groups
+                filter_ = FS("forum_type") == 1
+            elif r.method == "request":
+                # Only possible for Private Groups
+                filter_ = FS("forum_type") == 2
+            else:
+                # Can only see Public Groups
+                filter_ = FS("forum_type") == 1
+                user = auth.user
+                if user:
+                    # unless the User is a Member of them
+                    filter_ |= FS("forum_membership.person_id$pe_id") == user.pe_id
+        else:
+            # Cannot see Seceret Groups
+            filter_ = FS("forum_type") != 3
+            user = auth.user
+            if user:
+                # unless the User is a Member of them
+                filter_ |= FS("forum_membership.person_id$pe_id") == user.pe_id
+
+        r.resource.add_filter(filter_)
+
+        return True
+    s3.prep = prep
+
+    output = s3_rest_controller(rheader = s3db.pr_rheader)
+    return output
+
+# -----------------------------------------------------------------------------
+#def forum_membership():
+#    """ RESTful CRUD controller """
+#
+#    output = s3_rest_controller()
+#
+#    return output
 
 # -----------------------------------------------------------------------------
 def group():
@@ -440,7 +483,7 @@ def group():
                                    (T("Members"), "group_membership")
                                    ])
 
-    output = s3_rest_controller(rheader=rheader)
+    output = s3_rest_controller(rheader = rheader)
 
     return output
 
@@ -619,5 +662,13 @@ def human_resource():
     s3.prep = prep
 
     return s3_rest_controller("hrm", "human_resource")
+
+# =============================================================================
+# Messaging
+# =============================================================================
+def compose():
+    """ Send message to people/teams """
+
+    return s3db.pr_compose()
 
 # END =========================================================================

@@ -2,7 +2,7 @@
 
 """ Sahana Eden GUI Layouts (HTML Renderers)
 
-    @copyright: 2012-2017 (c) Sahana Software Foundation
+    @copyright: 2012-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -110,7 +110,12 @@ class S3MainMenuDefaultLayout(S3NavigationItem):
                         if item.selected:
                             classes.append("active")
                         _class = " ".join(classes)
-                        return LI(A(item.label,
+                        icon = item.opts.icon
+                        if icon:
+                            label = LABEL(ICON(icon), item.label)
+                        else:
+                            label = item.label
+                        return LI(A(label,
                                     _href=item_url,
                                     _id=item.attr._id,
                                     _target=item.attr._target,
@@ -430,7 +435,7 @@ class S3HomepageMenuLayout(S3NavigationItem):
                 title = H3(item.label) if item.label else ""
                 menu = DIV(title,
                            DIV(TAG[""](components),
-                               _class = "icon-bar five-up",
+                               _class = "icon-bar four-up",
                                ),
                            _id = item.attr._id,
                            _class = item.attr._class,
@@ -449,18 +454,14 @@ class S3HomepageMenuLayout(S3NavigationItem):
 
                 icon = item.opts.icon
                 if icon:
-                    return A(ICON(icon),
-                             LABEL(item.label),
-                             _class = _class,
-                             _href = item.url(),
-                             _id = _id,
-                             )
+                    label = LABEL(ICON(icon), item.label)
                 else:
-                    return A(LABEL(item.label),
-                             _class = _class,
-                             _href = item.url(),
-                             _id = _id,
-                             )
+                    label = LABEL(item.label)
+                return A(label,
+                         _class = _class,
+                         _href = item.url(),
+                         _id = _id,
+                         )
         else:
             return None
 
@@ -517,15 +518,15 @@ class S3PopupLink(S3NavigationItem):
                 # Fall back to label_update
                 label = S3CRUD.crud_string(t, "label_update")
 
-        return super(S3PopupLink, self).__init__(label,
-                                                 c=c, f=f, t=t,
-                                                 m=m,
-                                                 args=args,
-                                                 vars=vars,
-                                                 info=info,
-                                                 title=title,
-                                                 tooltip=tooltip,
-                                                 mandatory=True)
+        super(S3PopupLink, self).__init__(label,
+                                          c=c, f=f, t=t,
+                                          m=m,
+                                          args=args,
+                                          vars=vars,
+                                          info=info,
+                                          title=title,
+                                          tooltip=tooltip,
+                                          mandatory=True)
 
     # -------------------------------------------------------------------------
     @staticmethod

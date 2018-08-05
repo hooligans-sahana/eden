@@ -4,7 +4,7 @@
     - a front-end UI to manage Assessments which uses the Dynamic Tables
       back-end
 
-    @copyright: 2014-2017 (c) Sahana Software Foundation
+    @copyright: 2014-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -31,13 +31,18 @@
 
 __all__ = ("DataCollectionTemplateModel",
            "DataCollectionModel",
+           #"dc_TargetReport",
            "dc_rheader",
            )
 
 from gluon import *
+from gluon.languages import read_dict, write_dict
 
 from ..s3 import *
 from s3layouts import S3PopupLink
+
+# Compact JSON encoding
+SEPARATORS = (",", ":")
 
 # =============================================================================
 class DataCollectionTemplateModel(S3Model):
@@ -59,11 +64,18 @@ class DataCollectionTemplateModel(S3Model):
         db = current.db
 
         crud_strings = current.response.s3.crud_strings
+        settings = current.deployment_settings
 
+        add_components = self.add_components
         configure = self.configure
         define_table = self.define_table
 
         UNKNOWN_OPT = current.messages.UNKNOWN_OPT
+
+        master_opts = {"dc_response": T("Assessments"),
+                       "event_sitrep": T("Situation Reports"),
+                       #"hrm_training_event": T("Training Events"), # Currently using dc_target
+                       }
 
         # =====================================================================
         # Data Collection Templates
@@ -73,6 +85,15 @@ class DataCollectionTemplateModel(S3Model):
                      Field("name",
                            label = T("Name"),
                            requires = IS_NOT_EMPTY(),
+                           ),
+                     Field("master", length=32,
+                           default = "dc_response",
+                           label = T("Used for"),
+                           represent = S3Represent(options = master_opts),
+                           requires = IS_IN_SET(master_opts),
+                           # Either set via Controller or on Import
+                           readable = False,
+                           writable = False,
                            ),
                      # The Dynamic Table used to store the Questions and Answers
                      # (An alternative design would be to use Tables as reusable
@@ -87,6 +108,7 @@ class DataCollectionTemplateModel(S3Model):
 
         configure(tablename,
                   create_onaccept = self.dc_template_create_onaccept,
+                  deduplicate = S3Duplicate(),
                   )
 
         # Reusable field
@@ -117,17 +139,19 @@ class DataCollectionTemplateModel(S3Model):
             msg_list_empty = T("No Templates currently registered"))
 
         # Components
-        self.add_components(tablename,
-                            dc_question = "template_id",
-                            dc_section = "template_id",
-                            )
+        add_components(tablename,
+                       dc_question = "template_id",
+                       dc_section = "template_id",
+                       )
 
         # =====================================================================
         # Template Sections
         #
-        #Currently support Sections, SubSections & SubSubSections only
+        # Currently support Sections, SubSections & SubSubSections only
         #
-        hierarchical_sections = True # @ToDo: deployment_setting
+        # @ToDo: l10n
+        #
+        hierarchical_sections = True # @ToDo: deployment_setting if need to support non-SCPHIMS contexts
 
         tablename = "dc_section"
         define_table(tablename,
@@ -212,6 +236,8 @@ class DataCollectionTemplateModel(S3Model):
                      7: T("Date"),
                      #8: T("Date/Time"),
                      9: T("Grid"), # Pseudo-question
+                     10: T("Large Text"),
+                     11: T("Rich Text"),
                      #: T("Organization"),
                      #: T("Location"),
                      #: T("Person"),
@@ -236,7 +262,7 @@ class DataCollectionTemplateModel(S3Model):
                                         ),
                            comment = DIV(_class="tooltip",
                                          _title="%s|%s" % (T("Code"),
-                                                           T("Unique code for the field - required if using Auto-Totals or Grids"),
+                                                           T("Unique code for the field - required if using Auto-Totals, Grids or Show Hidden"),
                                                            ),
                                          ),
                            ),
@@ -286,6 +312,15 @@ class DataCollectionTemplateModel(S3Model):
                                                            ),
                                          ),
                            ),
+                     Field("show_hidden", "json",
+                           label = T("Show Hidden"),
+                           requires = IS_EMPTY_OR(IS_JSONS3()),
+                           comment = DIV(_class="tooltip",
+                                         _title="%s|%s" % (T("Show Hidden"),
+                                                           T("List of fields (codes) which this one unhides when selected"),
+                                                           ),
+                                         ),
+                           ),
                      Field("require_not_empty", "boolean",
                            default = False,
                            label = T("Required?"),
@@ -306,8 +341,17 @@ class DataCollectionTemplateModel(S3Model):
                                  ),
                      *s3_meta_fields())
 
+        unique_question_names_per_template = settings.get_dc_unique_question_names_per_template()
+        if unique_question_names_per_template:
+            # Deduplicate Questions by Name/Template
+            # - needed for importing multiple translations
+            deduplicate = S3Duplicate(primary=("name", "template_id"))
+        else:
+            deduplicate = None
+
         configure(tablename,
                   onaccept = self.dc_question_onaccept,
+                  deduplicate = deduplicate,
                   )
 
         # Reusable field
@@ -338,23 +382,27 @@ class DataCollectionTemplateModel(S3Model):
             msg_record_deleted = T("Question deleted"),
             msg_list_empty = T("No Questions currently registered"))
 
+        # Components
+        add_components(tablename,
+                       dc_question_l10n = "question_id",
+                       )
+
         # =====================================================================
         # Question Translations
         #
-        l10n_languages = current.deployment_settings.get_L10n_languages()
-
         tablename = "dc_question_l10n"
         define_table(tablename,
                      question_id(),
-                     Field("language",
-                           label = T("Language"),
-                           represent = lambda opt: \
-                                        l10n_languages.get(opt, UNKNOWN_OPT),
-                           requires = IS_ISO639_2_LANGUAGE_CODE(),
-                           ),
+                     s3_language(empty = False),
                      Field("name_l10n",
-                           label = T("Translated Field Name"),
+                           label = T("Translated Question"),
                            ),
+                     Field("options_l10n", "json",
+                           label = T("Translated Options"),
+                           represent = lambda opts: ", ".join(json.loads(opts)),
+                           requires = IS_EMPTY_OR(IS_JSONS3()),
+                           ),
+                     # @ToDo: Implement this when-required
                      Field("tooltip_l10n",
                            label = T("Translated Tooltip"),
                            ),
@@ -373,6 +421,10 @@ class DataCollectionTemplateModel(S3Model):
             msg_record_modified = T("Translation updated"),
             msg_record_deleted = T("Translation deleted"),
             msg_list_empty = T("No Translations currently registered"))
+
+        configure(tablename,
+                  onaccept = self.dc_question_l10n_onaccept,
+                  )
 
         # =====================================================================
         # Pass names back to global scope (s3.*)
@@ -406,24 +458,53 @@ class DataCollectionTemplateModel(S3Model):
         except AttributeError:
             return
 
+        db = current.db
+        s3db = current.s3db
+
+        title = form_vars.get("name")
+        master = form_vars.get("master")
+        if master is None:
+            # Load full record
+            ttable = s3db.dc_template
+            record = db(ttable.id == template_id).select(ttable.master,
+                                                         ttable.name,
+                                                         limitby = (0, 1),
+                                                         ).first()
+            title = record.name
+            master = record.master
+
+        table_settings = {}
+        if master == "dc_response":
+            settings = current.deployment_settings
+            mobile_form = True # For SCPHIMS at least
+            mobile_data = settings.get_dc_mobile_data()
+            if not settings.get_dc_mobile_inserts():
+                table_settings["insertable"] = False
+            # Configure table.response_id.represent
+            table_settings["card"] = {"title": "{{record.response_id}}",
+                                      }
+        elif master == "event_sitrep":
+            mobile_form = False # For SCPHIMS at least
+            mobile_data = False
+        else:
+            raise TypeError
+
         # Create the Dynamic Table
-        mobile_data = current.deployment_settings.get_dc_mobile_data()
-        table_id = current.s3db.s3_table.insert(title = form_vars.get("name"),
-                                                #mobile_form = False,
-                                                mobile_data = mobile_data,
-                                                )
+        table_id = s3db.s3_table.insert(title = title,
+                                        mobile_form = mobile_form,
+                                        mobile_data = mobile_data,
+                                        settings = table_settings,
+                                        )
 
         # Add a Field to link Answers together
-        db = current.db
         db.s3_field.insert(table_id = table_id,
-                           name = "response_id",
-                           field_type = "reference dc_response",
-                           #label = "Response",
+                           name = "%s_id" % master.split("_", 1)[1],
+                           field_type = "reference %s" % master,
                            require_not_empty = True,
                            component_key = True,
                            component_alias = "answer",
                            component_tab = True,
-                           master = "dc_response",
+                           master = master,
                            settings = {"component_multiple": False},
                            )
         # @ToDo: Call onaccept if this starts doing anything other than just setting 'master'
@@ -461,6 +542,7 @@ class DataCollectionTemplateModel(S3Model):
                                                        ).first()
 
         field_type = question.field_type
+        field_settings = {}
         options = None
         if field_type == 1:
             field_type = "string"
@@ -468,6 +550,8 @@ class DataCollectionTemplateModel(S3Model):
             field_type = "integer"
         elif field_type == 4:
             field_type = "boolean"
+            field_settings["mobile"] = {}
+            field_settings["mobile"]["widget"] = "checkbox"
         elif field_type == 5:
             T = current.T
             options = [T("Yes"),
@@ -485,6 +569,12 @@ class DataCollectionTemplateModel(S3Model):
         elif field_type == 9:
             # Grid: Pseudo-question, no dynamic field
             return
+        elif field_type == 10:
+            field_type = "text"
+            field_settings["widget"] = "comments"
+        elif field_type == 11:
+            field_type = "text"
+            field_settings["widget"] = "richtext"
         else:
             current.log.debug(field_type)
             raise NotImplementedError
@@ -495,7 +585,7 @@ class DataCollectionTemplateModel(S3Model):
             db(current.s3db.s3_field.id == field_id).update(label = question.name,
                                                             field_type = field_type,
                                                             options = options,
-                                                            #settings = settings,
+                                                            settings = field_settings,
                                                             require_not_empty = question.require_not_empty,
                                                             comments = question.comments,
                                                             )
@@ -514,7 +604,7 @@ class DataCollectionTemplateModel(S3Model):
                                                     name = name,
                                                     field_type = field_type,
                                                     options = options,
-                                                    #settings = settings,
+                                                    settings = field_settings,
                                                     require_not_empty = question.require_not_empty,
                                                     comments = question.comments,
                                                     )
@@ -523,6 +613,64 @@ class DataCollectionTemplateModel(S3Model):
 
             # Link the Field to the Question
             question.update_record(field_id=field_id)
+
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def dc_question_l10n_onaccept(form):
+        """
+            On-accept routine for dc_question_l10n:
+                - Update the Translations file with translated Options
+        """
+
+        try:
+            question_l10n_id = form.vars.id
+        except AttributeError:
+            return
+
+        db = current.db
+
+        # Read the Question
+        qtable = db.dc_question
+        ltable = db.dc_question_l10n
+        query = (qtable.id == ltable.question_id) & \
+                (ltable.id == question_l10n_id)
+        question = db(query).select(qtable.field_type,
+                                    qtable.options,
+                                    ltable.options_l10n,
+                                    ltable.language,
+                                    limitby=(0, 1)
+                                    ).first()
+
+        if question["dc_question.field_type"] != 6:
+            # Nothing we need to do
+            return
+
+        options = question["dc_question.options"]
+        options_l10n = question["dc_question_l10n.options_l10n"]
+
+        len_options = len(options)
+        if len_options != len(options_l10n):
+            current.session.error(T("Number of Translated Options don't match original!"))
+            return
+
+        # Read existing translations (if any)
+        w2pfilename = os.path.join(current.request.folder, "languages",
+                                   "%s.py" % question["dc_question_l10n.language"])
+
+        if os.path.exists(w2pfilename):
+            translations = read_dict(w2pfilename)
+        else:
+            translations = {}
+
+        # Add ours
+        for i in range(len_options):
+            original = s3_str(options[i])
+            translated = s3_str(options_l10n[i])
+            if original != translated:
+                translations[original] = translated
+
+        # Write out new file
+        write_dict(w2pfilename, translations)
 
 # =============================================================================
 class DataCollectionModel(S3Model):
@@ -535,6 +683,7 @@ class DataCollectionModel(S3Model):
              "dc_target_id",
              "dc_response",
              "dc_response_id",
+             "dc_answer_form",
              )
 
     def model(self):
@@ -559,7 +708,13 @@ class DataCollectionModel(S3Model):
         define_table(tablename,
                      template_id(),
                      s3_date(default = "now"),
-                     location_id(widget = S3LocationSelector(show_map=False)),
+                     # Enable in-templates as-required
+                     s3_language(readable = False,
+                                 writable = False,
+                                 ),
+                     location_id(widget = S3LocationSelector(show_map = False,
+                                                             show_postcode = False,
+                                                             )),
                      #self.org_organisation_id(),
                      #self.pr_person_id(),
                      s3_comments(),
@@ -567,12 +722,25 @@ class DataCollectionModel(S3Model):
 
         # Components
         add_components(tablename,
+
                        dc_response = "target_id",
+
                        event_event = {"link": "event_target",
                                       "joinby": "target_id",
                                       "key": "event_id",
                                       "actuate": "replace",
                                       },
+
+                       hrm_training_event = {"link": "hrm_event_target",
+                                             "joinby": "target_id",
+                                             "key": "training_event_id",
+                                             "multiple": False,
+                                             "actuate": "replace",
+                                             },
+                       # Format for S3InlineComponent
+                       hrm_event_target = {"joinby": "target_id",
+                                           "multiple": False,
+                                           }
                        )
 
         # CRUD strings
@@ -588,6 +756,10 @@ class DataCollectionModel(S3Model):
             msg_record_modified = T("Data Collection Target updated"),
             msg_record_deleted = T("Data Collection Target deleted"),
             msg_list_empty = T("No Data Collection Targets currently registered"))
+
+        self.set_method("dc", "target",
+                        method = "results",
+                        action = dc_TargetReport())
 
         target_id = S3ReusableField("target_id", "reference %s" % tablename,
                                     requires = IS_EMPTY_OR(
@@ -608,6 +780,10 @@ class DataCollectionModel(S3Model):
                      target_id(),
                      template_id(),
                      s3_datetime(default = "now"),
+                     # Enable in-templates as-required
+                     s3_language(readable = False,
+                                 writable = False,
+                                 ),
                      location_id(),
                      self.org_organisation_id(),
                      self.pr_person_id(
@@ -701,6 +877,7 @@ class DataCollectionModel(S3Model):
         # Pass names back to global scope (s3.*)
         return dict(dc_response_id = response_id,
                     dc_target_id = target_id,
+                    dc_answer_form = self.dc_answer_form,
                     )
 
     # -------------------------------------------------------------------------
@@ -716,6 +893,727 @@ class DataCollectionModel(S3Model):
         return dict(dc_response_id = lambda **attr: dummy("response_id"),
                     dc_target_id = lambda **attr: dummy("target_id"),
                     )
+
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def dc_answer_form(r, tablename):
+        """
+            Customise the form for Answers to a Template
+            Web UI:
+                Create the crud_form, autototals, grids, hides & subheadings
+            Mobile Client:
+                Create the crud_form
+                (autototals, grids, hides & subheadings are in the table.settings)
+        """
+
+        T = current.T
+        db = current.db
+
+        # Mobile form configuration required for both schema and data export
+        #mform = r.method == "mform"
+        mform = r.tablename == tablename
+        if mform:
+            # Going direct to Dynamic Table
+            dtable = db.s3_table
+            ttable = db.dc_template
+            query = (dtable.name == tablename) & \
+                    (ttable.table_id == dtable.id)
+            template = db(query).select(ttable.id,
+                                        limitby = (0, 1),
+                                        ).first()
+            template_id = template.id
+        else:
+            # Going via Component
+            template_id = r.record.template_id
+
+        # Extract the Sections
+        # @ToDo: l10n
+        stable = db.dc_section
+        query = (stable.template_id == template_id) & \
+                (stable.deleted == False)
+        sections = db(query).select(stable.id,
+                                    stable.parent,
+                                    stable.name,
+                                    stable.posn,
+                                    distinct = True,
+                                    )
+
+        # Put them into the hierarchy
+        root_sections = {}
+        subsections = {}
+        for section in sections:
+            parent = section.parent
+            if parent:
+                # Store this for next parse
+                if parent in subsections:
+                    subsections[parent].append(section)
+                else:
+                    subsections[parent] = [section]
+            else:
+                # Root section
+                root_sections[section.id] = {"id": section.id,
+                                             "name": section.name,
+                                             "posn": section.posn,
+                                             "questions": [],
+                                             "subsections": {},
+                                             }
+
+        # Add the subsections
+        subsubsections = {}
+        for parent in subsections:
+            _subsections = subsections[parent]
+            if parent in root_sections:
+                # SubSections
+                for sub in _subsections:
+                    root_sections[parent]["subsections"][sub.id] = {"id": sub.id,
+                                                                    "name": sub.name,
+                                                                    "posn": sub.posn,
+                                                                    "questions": [],
+                                                                    "subsubsections": {},
+                                                                    }
+            else:
+                # SubSubSections - store for next parse
+                subsubsections[parent] = _subsections
+
+        # Add the subsubsections
+        for parent in subsubsections:
+            for root in root_sections:
+                subsections = root_sections[root]["subsections"]
+                if parent in subsections:
+                    _subsubsections = subsubsections[parent]
+                    for subsub in _subsubsections:
+                        subsections[parent]["subsubsections"][subsub.id] = {"id": subsub.id,
+                                                                            "name": subsub.name,
+                                                                            "posn": subsub.posn,
+                                                                            "questions": [],
+                                                                            }
+
+        # Add the Questions
+        # Prep for Auto-Totals
+        # Prep for Grids
+        qtable = db.dc_question
+        ttable = db.dc_question_l10n
+        ftable = db.s3_field
+
+        language = current.session.s3.language
+        if language == current.deployment_settings.get_L10n_default_language():
+            translate = False
+        else:
+            # @ToDo: Translate Section names too (for Subheadings)
+            translate = True
+
+        query = (qtable.template_id == template_id) & \
+                (qtable.deleted == False)
+        left = [stable.on(stable.id == qtable.section_id),
+                ftable.on(ftable.id == qtable.field_id),
+                ]
+        fields = [stable.id,
+                  ftable.name,
+                  ftable.label,
+                  qtable.code,
+                  qtable.posn,
+                  qtable.totals,
+                  qtable.grid,
+                  qtable.show_hidden,
+                  ]
+        if translate:
+            left.append(ttable.on((ttable.question_id == qtable.id) & \
+                                  (ttable.language == language)))
+            fields.append(ttable.name_l10n)
+        questions = db(query).select(*fields,
+                                     left = left
+                                     )
+        auto_totals = {}
+        codes = {}
+        grids = {}
+        grid_children = {}
+        show_hidden = {}
+        root_questions = []
+        for question in questions:
+            field_name = question.get("s3_field.name")
+            code = question["dc_question.code"]
+            if code:
+                codes[code] = field_name
+            totals = question["dc_question.totals"]
+            if totals:
+                auto_totals[field_name] = {"codes": totals,
+                                           "fields": [],
+                                           }
+            grid = question["dc_question.grid"]
+            if grid:
+                len_grid = len(grid)
+                if len_grid == 2:
+                    # Grid Pseudo-Question
+                    if not code:
+                        # @ToDo: Make mandatory in onvalidation
+                        raise ValueError("Code required for Grid Questions")
+                    rows = [s3_str(T(v)) for v in grid[0]]
+                    cols = [s3_str(T(v)) for v in grid[1]]
+                    fields = [[0 for x in range(len(rows))] for y in range(len(cols))]
+                    grids[code] = {"r": rows,
+                                   "c": cols,
+                                   "f": fields,
+                                   }
+                elif len_grid == 3:
+                    # Child Question
+                    grid_children[field_name] = grid
+                else:
+                    current.log.warning("Invalid grid data for %s - ignoring" % (code or field_name))
+            hides = question["dc_question.show_hidden"]
+            if hides:
+                show_hidden[field_name] = {"codes": hides,
+                                           "fields": [],
+                                           }
+
+            section_id = question["dc_section.id"]
+            label = None
+            if translate:
+                label = question.get("dc_question_l10n.name_l10n")
+            if not label:
+                label = question.get("s3_field.label")
+            question = {question["dc_question.posn"]: {"name": field_name,
+                                                       "code": code,
+                                                       "label": label,
+                                                       },
+                        }
+            if not section_id:
+                root_questions.append(question)
+                continue
+            if section_id in root_sections:
+                root_sections[section_id]["questions"].append(question)
+                continue
+            for section in root_sections:
+                if section_id in root_sections[section]["subsections"]:
+                    root_sections[section]["subsections"][section_id]["questions"].append(question)
+                    continue
+                for subsection in root_sections[section]["subsections"]:
+                    if section_id in root_sections[section]["subsections"][subsection]["subsubsections"]:
+                        root_sections[section]["subsections"][subsection]["subsubsections"][section_id]["questions"].append(question)
+
+        # Sort them by Position
+        root_questions.sort()
+        sections = [{v["posn"]: v} for k, v in root_sections.items()]
+        sections.sort()
+        for s in sections:
+            section = s[s.items()[0][0]]
+            subsections = [{v["posn"]: v} for k, v in section["subsections"].items()]
+            subsections.sort()
+            section["subsections"] = subsections
+            section["questions"].sort()
+            for sub in subsections:
+                _sub = sub[sub.items()[0][0]]
+                subsubsections = [{v["posn"]: v} for k, v in _sub["subsubsections"].items()]
+                subsubsections.sort()
+                _sub["subsubsections"] = subsubsections
+                _sub["questions"].sort()
+                for subsub in subsubsections:
+                    subsub[subsub.items()[0][0]]["questions"].sort()
+
+        # Append questions to the form, with subheadings
+        crud_fields = []
+        cappend = crud_fields.append
+
+        # 1st add those questions without a section (likely the only questions then)
+        for q in root_questions:
+            question = q[q.items()[0][0]]
+            fname = question["name"]
+            if fname:
+                cappend((question["label"], fname))
+            else:
+                # Grid Pseudo-Question
+                fname = question["code"]
+                cappend(S3SQLDummyField(fname))
+        # Next add those questions with a section (likely the only questions then)
+        subheadings = {}
+        for s in sections:
+            section = s[s.items()[0][0]]
+            section_name = section["name"]
+            # 1st add those questions without a subsection
+            questions = section["questions"]
+            first = True
+            for question in questions:
+                question = question.items()[0][1]
+                fname = question["name"]
+                if fname:
+                    cappend((question["label"], fname))
+                else:
+                    # Grid Pseudo-Question
+                    fname = question["code"]
+                    cappend(S3SQLDummyField(fname))
+                if first:
+                    subheadings[fname] = section_name
+                    first = False
+            # Next add those questions in a subsection
+            subsections = section["subsections"]
+            for sub in subsections:
+                _sub = sub[sub.items()[0][0]]
+                subsection_name = _sub["name"]
+                questions = _sub["questions"]
+                ffirst = True
+                for question in questions:
+                    question = question.items()[0][1]
+                    fname = question["name"]
+                    if fname:
+                        cappend((question["label"], fname))
+                    else:
+                        # Grid Pseudo-Question
+                        fname = question["code"]
+                        cappend(S3SQLDummyField(fname))
+                    if ffirst:
+                        if first:
+                            subheadings[fname] = [section_name, subsection_name]
+                            first = False
+                        else:
+                            subheadings[fname] = subsection_name
+                        ffirst = False
+                # Next add those questions in a subsubsection
+                subsubsections = _sub["subsubsections"]
+                for subsub in subsubsections:
+                    _subsub = subsub[subsub.items()[0][0]]
+                    subsubsection_name = _subsub["name"]
+                    questions = _subsub["questions"]
+                    fffirst = True
+                    for question in questions:
+                        question = question.items()[0][1]
+                        fname = question["name"]
+                        if fname:
+                            cappend((question["label"], fname))
+                        else:
+                            # Grid Pseudo-Question
+                            fname = question["code"]
+                            cappend(S3SQLDummyField(fname))
+                        if fffirst:
+                            if first:
+                                subheadings[fname] = [section_name, subsection_name, subsubsection_name]
+                                first = False
+                                ffirst = False
+                            elif ffirst:
+                                subheadings[fname] = [subsection_name, subsubsection_name]
+                                ffirst = False
+                            else:
+                                subheadings[fname] = subsubsection_name
+                            fffirst = False
+
+        # Auto-Totals
+        autototals = {}
+        for field in auto_totals:
+            f = auto_totals[field]
+            append = f["fields"].append
+            for code in f["codes"]:
+                append(codes.get(code))
+            autototals[field] = f["fields"]
+
+        # Grids
+        # Place the child fields in the correct places in their grids
+        if len(grids):
+            for child in grid_children:
+                code, row, col = grid_children[child]
+                try:
+                    grids[code]["f"][col - 1][row - 1] = child
+                except:
+                    current.log.warning("Invalid grid data for %s - ignoring" % code)
+
+        # Hides
+        hides = {}
+        for field in show_hidden:
+            f = show_hidden[field]
+            append = f["fields"].append
+            for code in f["codes"]:
+                fname = codes.get(code) or code
+                append(fname)
+            hides[field] = f["fields"]
+
+        if mform:
+            # Add response_id to form (but keep invisible) so that it can be used for the dataList represent
+            f = r.table.response_id
+            f.readable = f.writable = False
+            crud_fields.insert(0, "response_id")
+
+            crud_form = S3SQLCustomForm(*crud_fields)
+
+            current.s3db.configure(tablename,
+                                   crud_form = crud_form,
+                                   autototals = autototals,
+                                   grids = grids,
+                                   show_hidden = hides,
+                                   subheadings = subheadings,
+                                   )
+
+        else:
+            crud_form = S3SQLCustomForm(*crud_fields)
+
+            current.s3db.configure(tablename,
+                                   crud_form = crud_form,
+                                   subheadings = subheadings,
+                                   )
+
+            s3 = current.response.s3
+
+            # Compact JSON encoding
+            SEPARATORS = (",", ":")
+            jappend = s3.jquery_ready.append
+
+            # Auto-Totals
+            for field in autototals:
+                jappend('''S3.autoTotals('%s',%s,'%s')''' % \
+                    (field,
+                     json.dumps(autototals[field], separators=SEPARATORS),
+                     tablename))
+
+            # Grids
+            if len(grids):
+                jappend('''S3.dc_grids(%s,'%s')''' % \
+                    (json.dumps(grids, separators=SEPARATORS),
+                     tablename))
+
+            # Show Hidden
+            for field in hides:
+                jappend('''S3.showHidden('%s',%s,'%s')''' % \
+                    (field,
+                     json.dumps(hides[field], separators=SEPARATORS),
+                     tablename))
+
+            # Add JS
+            if s3.debug:
+                s3.scripts.append("/%s/static/scripts/S3/s3.dc_answer.js" % r.application)
+            else:
+                s3.scripts.append("/%s/static/scripts/S3/s3.dc_answer.min.js" % r.application)
+
+# =============================================================================
+class dc_TargetReport(S3Method):
+    """
+        Display a Summary of the Target (i.e. collection of Responses)
+
+        Results in charts for quantitative questions and
+                   full text of the qualitative answers
+    """
+
+    # -------------------------------------------------------------------------
+    def apply_method(self, r, **attr):
+        """
+            Entry point for REST API
+
+            @param r: the S3Request
+            @param attr: controller arguments
+        """
+
+        if r.name == "target":
+            representation = r.representation
+            label = current.deployment_settings.get_dc_response_label()
+            if label == "Assessment":
+                title = current.T("Assessment Report")
+            elif label == "Survey":
+                title = current.T("Survey Report")
+            elif label == "Evaluation":
+                title = current.T("Evaluation Report")
+            elif label == "Event":
+                title = current.T("Event Report")
+            else:
+                title = current.T("Target Report")
+            if representation == "html":
+                output = self.html(r, title, **attr)
+                return output
+            #elif representation == "pdf":
+            #    output = self.pdf(r, title, **attr)
+            #    return output
+        r.error(405, current.ERROR.BAD_METHOD)
+
+    # -------------------------------------------------------------------------
+    def _extract(self, r, **attr):
+        """
+            Extract the Data
+
+            @ToDo: Order by Section
+            @ToDo: Translate Question Names/Options
+        """
+
+        db = current.db
+        s3db = current.s3db
+
+        target_id = r.id
+        template_id = r.record.template_id
+
+        # Questions
+        qtable = s3db.dc_question
+        ftable = s3db.s3_field
+        query = (qtable.template_id == template_id) & \
+                (qtable.deleted == False) & \
+                (ftable.id == qtable.field_id)
+        questions = db(query).select(qtable.id,
+                                     qtable.name,
+                                     #qtable.field_type,
+                                     qtable.options,
+                                     qtable.posn,
+                                     ftable.name,
+                                     orderby = qtable.posn,
+                                     )
+
+        # Index Dictionary by Fieldname
+        FIELD_NAME = "s3_field.name"
+        fields = {row[FIELD_NAME]: [] for row in questions}
+
+        # Lookup the Dynamic Tablename from the Template
+        ttable = s3db.dc_template
+        dtable = s3db.s3_table
+        query = (ttable.id == template_id) & \
+                (ttable.table_id == dtable.id)
+        template = db(query).select(dtable.name,
+                                    limitby=(0, 1),
+                                    ).first()
+
+        # Responses (for Stats)
+        rtable = s3db.dc_response
+        ptable = s3db.pr_person
+        query = (rtable.target_id == target_id) & \
+                (rtable.deleted == False) & \
+                (rtable.person_id == ptable.id)
+        responses = db(query).select(ptable.id,
+                                     ptable.gender,
+                                     )
+
+        # Answers
+        atable = s3db.table(template.name)
+        answer_fields = [atable[f] for f in fields]
+        answer_fields.append(rtable.person_id) # For Stats & Contacts
+        query = (rtable.target_id == target_id) & \
+                (atable.response_id == rtable.id)
+        answers = db(query).select(*answer_fields)
+
+        # Build Data structure
+        # Collate Answers & collect people for Stats & Contacts
+        replied = []
+        rappend = replied.append
+        can_contact = []
+        cappend = can_contact.append
+
+        for row in answers:
+            person_id = row["dc_response.person_id"]
+            rappend(person_id)
+            answer = row[atable]
+            for fieldname in answer:
+                value = answer[fieldname]
+                fields[fieldname].append(value)
+                if value == "yes":
+                    # Hardcoded to IFRC bkk_training_evaluation!
+                    # - the only Question with Yes/No answers!
+                    cappend(person_id)
+
+        # Stats
+        total = 0
+        total_female = 0
+        total_replied = 0
+        replied_female = 0
+        for row in responses:
+            total += 1
+            gender = row.gender
+            if gender == 2:
+                total_female += 1
+            if row.id in replied:
+                total_replied += 1
+                if gender == 2:
+                    replied_female += 1
+        stats = {"total": total,
+                 "total_female": total_female,
+                 "total_replied": total_replied,
+                 "replied_female": replied_female,
+                 }
+
+        # List of Questions
+        ID = "dc_question.id"
+        NAME = "dc_question.name"
+        OPTIONS = "dc_question.options"
+        for question in questions:
+            question.id = question[ID]
+            question.name = question[NAME]
+            answers = fields[question[FIELD_NAME]]
+            options = question[OPTIONS]
+            if options:
+                options = [s3_str(opt) for opt in options]
+                unsorted_options = {opt: 0 for opt in options}
+                for answer in answers:
+                    unsorted_options[answer] += 1
+                question.options = [(opt, unsorted_options[opt]) for opt in options]
+            else:
+                question.options = None
+                question.answers = answers
+
+        # Contacts
+        ctable = s3db.pr_contact
+        query = (ptable.id.belongs(can_contact))
+        left = ctable.on((ctable.pe_id == ptable.pe_id) & \
+                         (ctable.contact_method.belongs(("EMAIL", "SMS"))) & \
+                         (ctable.deleted == False))
+        rows = db(query).select(ptable.id,
+                                ptable.first_name,
+                                ptable.middle_name,
+                                ptable.last_name,
+                                ctable.contact_method,
+                                ctable.priority,
+                                ctable.value,
+                                left = left,
+                                orderby = ctable.priority,
+                                )
+        contacts = {}
+        for row in rows:
+            person = row.pr_person
+            person_id = person.id
+            if person_id not in contacts:
+                contacts[person_id] = {"name": s3_fullname(person),
+                                       "email": None,
+                                       "phone": None,
+                                       }
+            contact_ = contacts[person_id]
+            contact = row.pr_contact
+            if not contact_["email"] and contact.contact_method == "EMAIL":
+                contact_["email"] = contact.value
+            elif not contact_["phone"] and contact.contact_method == "SMS":
+                contact_["phone"] = contact.value
+
+        for person_id in contacts:
+            contact = contacts[person_id]
+            repr_str = contact["name"]
+            email = contact["email"]
+            if email:
+                repr_str = "%s <%s>" % (repr_str,
+                                        email,
+                                        )
+            phone = contact["phone"]
+            if phone:
+                repr_str = "%s %s" % (repr_str,
+                                      s3_phone_represent(phone),
+                                      )
+            contact["repr_str"] = repr_str
+
+        stats["contacts"] = contacts
+
+        return questions, stats
+
+    # -------------------------------------------------------------------------
+    def html(self, r, title, **attr):
+        """
+            HTML Representation
+        """
+
+        T = current.T
+        table = r.table
+        date_represent = table.date.represent
+
+        response = current.response
+        s3 = response.s3
+        jqready_append = s3.jquery_ready.append
+
+        #target_title = table.template_id.represent(r.record.template_id)
+
+        questions, stats = self._extract(r, **attr)
+
+        table = TABLE()
+        json_dumps = json.dumps
+        for question in questions:
+            table.append(TR(TH(question.name)))
+            if question.options:
+                # Graph
+                svg_id = "svg_%s" % question.id
+                table.append(TR(TD(TAG["SVG"](_id=svg_id))))
+                data = []
+                data_append = data.append
+                for opt in question.options:
+                    data_append({"o": opt[0],
+                                 "v": opt[1],
+                                 })
+                script = '''S3.dc_results('%s','%s')''' % \
+                    ("#%s" % svg_id, json_dumps(data, separators=SEPARATORS))
+                jqready_append(script)
+            else:
+                # Enumerate Answers
+                for answer in question.answers:
+                    table.append(TR(TD(answer)))
+
+        contacts = P()
+        cappend = contacts.append
+        _contacts = stats["contacts"]
+        for person_id in _contacts:
+            cappend(_contacts[person_id]["repr_str"])
+            cappend(BR())
+
+        item = DIV(H1(title),
+                   H3("%s: %s" % (T("Up To Date"), date_represent(r.utcnow))),
+                   P("%i %s (%i %s)" % (stats["total"], T("Participants"), stats["total_female"], T("Female")),
+                     BR(),
+                     "%i %s (%i %s)" % (stats["total_replied"], T("Replied"), stats["replied_female"], T("Female")),
+                     ),
+                   table,
+                   contacts,
+                   )
+
+        output = {"item": item,
+                  "title": title,
+                  }
+
+        appname = r.application
+        s3.stylesheets.append("S3/dc_results.css")
+        scripts_append = s3.scripts.append
+        if s3.debug:
+            scripts_append("/%s/static/scripts/d3/d3.js" % appname)
+            scripts_append("/%s/static/scripts/S3/s3.dc_results.js" % appname)
+        else:
+            scripts_append("/%s/static/scripts/d3/d3.min.js" % appname)
+            scripts_append("/%s/static/scripts/S3/s3.dc_results.min.js" % appname)
+        response.view = "simple.html"
+        return output
+
+    # -------------------------------------------------------------------------
+    def pdf(self, r, title, **attr):
+        """
+            PDF Representation
+            @ToDo: Finish this stub when-required
+                   (original is project_SummaryReport)
+        """
+
+        from s3.s3codecs.pdf import EdenDocTemplate, S3RL_PDF
+
+        T = current.T
+        table = r.table
+        date_represent = table.date.represent
+
+        target_title = table.template_id.represent(r.record.template_id)
+
+        report_title = s3_str(title)
+        filename = "%s_%s.pdf" % (report_title, s3_str(target_title))
+
+        # @ToDo
+        #questions, stats = self._extract(r, **attr)
+
+        # @ToDo
+        header = DIV()
+
+        body = DIV(H1(title),
+                   H3("%s: %s" % (T("Up To Date"), date_represent(r.utcnow))),
+                   table,
+                   )
+
+        footer = DIV("%s: %s" % (title, target_title))
+
+        doc = EdenDocTemplate(title=report_title)
+        printable_width = doc.printable_width
+        get_html_flowable = S3RL_PDF().get_html_flowable
+        header_flowable = get_html_flowable(header, printable_width)
+        body_flowable = get_html_flowable(body, printable_width)#, styles)
+        footer_flowable = get_html_flowable(footer, printable_width)
+
+        # Build the PDF
+        doc.build(header_flowable,
+                  body_flowable,
+                  footer_flowable,
+                  )
+
+        # Return the generated PDF
+        response = current.response
+        from gluon.contenttype import contenttype
+        response.headers["Content-Type"] = contenttype(".pdf")
+        disposition = "attachment; filename=\"%s\"" % filename
+        response.headers["Content-disposition"] = disposition
+
+        return doc.output.getvalue()
 
 # =============================================================================
 def dc_rheader(r, tabs=None):
@@ -745,6 +1643,23 @@ def dc_rheader(r, tabs=None):
                     )
 
             rheader_fields = (["name"],
+                              )
+
+        elif tablename == "dc_question":
+
+            tabs = ((T("Basic Details"), None),
+                    (T("Translations"), "question_l10n"),
+                    )
+
+            def options(record):
+                if record.options:
+                    return ", ".join(record.options)
+                else:
+                    return current.messages["NONE"]
+
+            rheader_fields = ([(T("Question"), "name")],
+                              [(T("Options"), options)],
+                              ["comments"],
                               )
 
         elif tablename == "dc_response":
@@ -828,7 +1743,7 @@ def dc_rheader(r, tabs=None):
                                          date_field,
                                          limitby=(0, 1)
                                          ).first()
-                
+
                 def event_name(record):
                     if event:
                         return event_id.represent(event.id)
@@ -862,8 +1777,9 @@ def dc_rheader(r, tabs=None):
                 RESPONSES = T("Surveys")
             else:
                 RESPONSES = T("Responses")
-        
+
             tabs = ((T("Basic Details"), None),
+                    (T("Report"), "results/"),
                     (RESPONSES, "response"),
                     )
 

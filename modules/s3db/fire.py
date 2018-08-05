@@ -2,7 +2,7 @@
 
 """ Sahana Eden Fire Models
 
-    @copyright: 2009-2017 (c) Sahana Software Foundation
+    @copyright: 2009-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -64,8 +64,9 @@ class S3FireModel(S3Model):
                            requires = IS_NOT_EMPTY(),
                            ),
                      # @ToDo: Currently unused - apply in layer_feature for now
-                     Field("style", "text",
-                           label=T("Style")),
+                     Field("mapstyle", "text",
+                           label=T("Style"),
+                           ),
                      s3_comments(),
                      *s3_meta_fields())
 
@@ -158,6 +159,10 @@ class S3FireStationModel(S3Model):
         T = current.T
         db = current.db
 
+        messages = current.messages
+        NONE = messages["NONE"]
+        OBSOLETE = messages.OBSOLETE
+
         location_id = self.gis_location_id
         organisation_id = self.org_organisation_id
 
@@ -225,8 +230,7 @@ class S3FireStationModel(S3Model):
                      Field("obsolete", "boolean",
                            default = False,
                            label = T("Obsolete"),
-                           represent = lambda opt: \
-                                       (opt and [T("Obsolete")] or [current.messages["NONE"]])[0],
+                           represent = lambda opt: OBSOLETE if opt else NONE,
                            readable = False,
                            writable = False,
                            ),

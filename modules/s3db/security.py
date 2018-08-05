@@ -2,7 +2,7 @@
 
 """ Sahana Eden Security Model
 
-    @copyright: 2012-2017 (c) Sahana Software Foundation
+    @copyright: 2012-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -457,6 +457,7 @@ class SecuritySeizedItemsModel(S3Model):
                               }
         tablename = "security_seized_item"
         define_table(tablename,
+                     self.super_link("doc_id", "doc_entity"),
                      # Owner
                      person_id(empty = False,
                                label = T("Owner"),
@@ -523,7 +524,7 @@ class SecuritySeizedItemsModel(S3Model):
                                         label = T("Search"),
                                        ),
                           S3OptionsFilter("item_type_id",
-                                          options = s3_get_filter_opts(
+                                          options = lambda: s3_get_filter_opts(
                                               "security_seized_item_type"),
                                           ),
                           S3OptionsFilter("status",
@@ -532,7 +533,7 @@ class SecuritySeizedItemsModel(S3Model):
                                           default = "DEP",
                                           ),
                           S3OptionsFilter("depository_id",
-                                          options = s3_get_filter_opts(
+                                          options = lambda: s3_get_filter_opts(
                                               "security_seized_item_depository"),
                                           ),
                           S3DateFilter("date",
@@ -559,6 +560,7 @@ class SecuritySeizedItemsModel(S3Model):
                   list_fields = list_fields,
                   onaccept = self.seized_item_onaccept,
                   orderby = "%s.date desc" % tablename,
+                  super_entity = "doc_entity",
                   )
 
         # CRUD Strings

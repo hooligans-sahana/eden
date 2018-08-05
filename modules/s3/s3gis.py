@@ -5,7 +5,7 @@
     @requires: U{B{I{gluon}} <http://web2py.com>}
     @requires: U{B{I{shapely}} <http://trac.gispython.org/lab/wiki/Shapely>}
 
-    @copyright: (c) 2010-2015 Sahana Software Foundation
+    @copyright: (c) 2010-2018 Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -53,16 +53,16 @@ except:
 try:
     from lxml import etree # Needed to follow NetworkLinks
 except ImportError:
-    print >> sys.stderr, "ERROR: lxml module needed for XML handling"
+    sys.stderr.write("ERROR: lxml module needed for XML handling\n")
     raise
 
 KML_NAMESPACE = "http://earth.google.com/kml/2.2"
 
 from gluon import *
 # Here are dependencies listed for reference:
-#from gluon import current
+#from gluon import current, redirect
 #from gluon.html import *
-#from gluon.http import HTTP, redirect
+#from gluon.http import HTTP
 from gluon.fileutils import parse_version
 from gluon.languages import lazyT, regex_translate
 from gluon.settings import global_settings
@@ -73,7 +73,7 @@ from s3datetime import s3_format_datetime, s3_parse_datetime
 from s3fields import s3_all_meta_field_names
 from s3rest import S3Method
 from s3track import S3Trackable
-from s3utils import s3_include_ext, s3_str, s3_unicode
+from s3utils import s3_include_ext, s3_include_underscore, s3_str
 
 # Map WKT types to db types
 GEOM_TYPES = {"point": 1,
@@ -745,7 +745,7 @@ class GIS(object):
                         shape = wkt_loads(row.wkt)
                         ok = test.intersects(shape)
                         if ok:
-                            #print "Level: %s, id: %s" % (row.level, row.id)
+                            #sys.stderr.write("Level: %s, id: %s\n" % (row.level, row.id))
                             results[row.level] = row.id
         return results
 
@@ -2068,7 +2068,8 @@ class GIS(object):
         db = current.db
         settings = current.deployment_settings
 
-        if settings.gis.spatialdb and settings.database.db_type == "postgres":
+        if settings.get_gis_spatialdb() and \
+           settings.get_database_type() == "postgres":
             # Use PostGIS routine
             # The ST_DWithin function call will automatically include a bounding box comparison that will make use of any indexes that are available on the geometries.
             # @ToDo: Support optional Category (make this a generic filter?)
@@ -2076,26 +2077,24 @@ class GIS(object):
             import psycopg2
             import psycopg2.extras
 
-            dbname = settings.database.database
-            username = settings.database.username
-            password = settings.database.password
-            host = settings.database.host
-            port = settings.database.port or "5432"
-
             # Convert km to degrees (since we're using the_geom not the_geog)
             radius = math.degrees(float(radius) / RADIUS_EARTH)
 
-            connection = psycopg2.connect("dbname=%s user=%s password=%s host=%s port=%s" % (dbname, username, password, host, port))
+            dbstr = "dbname=%(database)s user=%(username)s " \
+                    "password=%(password)s host=%(host)s port=%(port)s" % \
+                    settings.db_params
+            connection = psycopg2.connect(dbstr)
+
             cursor = connection.cursor(cursor_factory=psycopg2.extras.DictCursor)
             info_string = "SELECT column_name, udt_name FROM information_schema.columns WHERE table_name = 'gis_location' or table_name = '%s';" % tablename
             cursor.execute(info_string)
             # @ToDo: Look at more optimal queries for just those fields we need
             if tablename:
                 # Lookup the resource
-                query_string = cursor.mogrify("SELECT * FROM gis_location, %s WHERE %s.location_id = gis_location.id and ST_DWithin (ST_GeomFromText ('POINT (%s %s)', 4326), the_geom, %s);" % (tablename, tablename, lat, lon, radius))
+                query_string = cursor.mogrify("SELECT * FROM gis_location, %s WHERE %s.location_id = gis_location.id and ST_DWithin (ST_GeomFromText ('POINT (%s %s)', 4326), the_geom, %s);" % (tablename, tablename, lon, lat, radius))
             else:
                 # Lookup the raw Locations
-                query_string = cursor.mogrify("SELECT * FROM gis_location WHERE ST_DWithin (ST_GeomFromText ('POINT (%s %s)', 4326), the_geom, %s);" % (lat, lon, radius))
+                query_string = cursor.mogrify("SELECT * FROM gis_location WHERE ST_DWithin (ST_GeomFromText ('POINT (%s %s)', 4326), the_geom, %s);" % (lon, lat, radius))
 
             cursor.execute(query_string)
             # @ToDo: Export Rows?
@@ -2550,8 +2549,7 @@ class GIS(object):
                             # FieldMethod
                             ftype = None
                         except KeyError:
-                            from s3utils import s3_debug
-                            s3_debug("SGIS", "Field %s doesn't exist in table %s" % (fname, tname))
+                            current.log.debug("SGIS: Field %s doesn't exist in table %s" % (fname, tname))
                             continue
                         attr_cols[fieldname] = (ftype, fname)
 
@@ -2570,7 +2568,7 @@ class GIS(object):
                                 if ftype == "integer":
                                     if isinstance(represent, lazyT):
                                         # Integer is just a lookup key
-                                        represent = s3_unicode(represent)
+                                        represent = s3_str(represent)
                                     else:
                                         # Attributes should be numbers not strings
                                         # (@ToDo: Add a JS i18n formatter for the tooltips)
@@ -2581,7 +2579,7 @@ class GIS(object):
                                     # (@ToDo: Add a JS i18n formatter for the tooltips)
                                     represent = row["_row"][fieldname]
                                 else:
-                                    represent = s3_unicode(represent)
+                                    represent = s3_str(represent)
                                 attribute[_attr[1]] = represent
                         attr[record_id] = attribute
 
@@ -2709,7 +2707,7 @@ class GIS(object):
                     alias, cfield = location_context.split(".", 1)
                     try:
                         component = resource.components[alias]
-                    except:
+                    except KeyError:
                         # Invalid alias
                         # Can't display this resource on the Map
                         return None
@@ -2719,8 +2717,6 @@ class GIS(object):
                             rfield.join[ctablename] & \
                             (ctable[cfield] == gtable.id)
                     #custom = True
-                    # Clear components again
-                    resource.components = Storage()
                 # @ToDo:
                 #elif "$" in location_context:
                 else:
@@ -3338,7 +3334,7 @@ page.render('%(filename)s', {format: 'jpeg', quality: '100'});''' % \
                     else:
                         name = db(table.id == id).select(table.name,
                                                          limitby=(0, 1)).first().name
-                        print >> sys.stderr, "No WKT: L0 %s %s" % (name, id)
+                        sys.stderr.write("No WKT: L0 %s %s\n" % (name, id))
                         continue
                 else:
                     id = row.id
@@ -3407,7 +3403,7 @@ page.render('%(filename)s', {format: 'jpeg', quality: '100'});''' % \
                         else:
                             name = db(table.id == id).select(table.name,
                                                              limitby=(0, 1)).first().name
-                            print >> sys.stderr, "No WKT: L1 %s %s" % (name, id)
+                            sys.stderr.write("No WKT: L1 %s %s\n" % (name, id))
                             continue
                     else:
                         id = row.id
@@ -3468,7 +3464,7 @@ page.render('%(filename)s', {format: 'jpeg', quality: '100'});''' % \
                             else:
                                 name = db(table.id == id).select(table.name,
                                                                  limitby=(0, 1)).first().name
-                                print >> sys.stderr, "No WKT: L2 %s %s" % (name, id)
+                                sys.stderr.write("No WKT: L2 %s %s\n" % (name, id))
                                 continue
                         else:
                             id = row.id
@@ -3532,7 +3528,7 @@ page.render('%(filename)s', {format: 'jpeg', quality: '100'});''' % \
                                 else:
                                     name = db(table.id == id).select(table.name,
                                                                      limitby=(0, 1)).first().name
-                                    print >> sys.stderr, "No WKT: L3 %s %s" % (name, id)
+                                    sys.stderr.write("No WKT: L3 %s %s\n" % (name, id))
                                     continue
                             else:
                                 id = row.id
@@ -3599,7 +3595,7 @@ page.render('%(filename)s', {format: 'jpeg', quality: '100'});''' % \
                                     else:
                                         name = db(table.id == id).select(table.name,
                                                                          limitby=(0, 1)).first().name
-                                        print >> sys.stderr, "No WKT: L4 %s %s" % (name, id)
+                                        sys.stderr.write("No WKT: L4 %s %s\n" % (name, id))
                                         continue
                                 else:
                                     id = row.id
@@ -5829,6 +5825,7 @@ page.render('%(filename)s', {format: 'jpeg', quality: '100'});''' % \
                         form_vars.wkt = shape.wkt
                 else:
                     # Assume WKT
+                    warning = None
                     from shapely.wkt import loads as wkt_loads
                     try:
                         shape = wkt_loads(wkt)
@@ -5841,11 +5838,21 @@ page.render('%(filename)s', {format: 'jpeg', quality: '100'});''' % \
                         except:
                             form.errors["wkt"] = current.messages.invalid_wkt
                             return
+                    else:
+                        if shape.wkt != form_vars.wkt: # If this is too heavy a check for some deployments, add a deployment_setting to disable the check & just do it silently
+                            # Use Shapely to clean up the defective WKT (e.g. trailing chars)
+                            warning = s3_str(current.T("Source WKT has been cleaned by Shapely"))
+                            form_vars.wkt = shape.wkt
 
                     if shape.has_z:
                         # Shapely export of WKT is 2D only
-                        form_vars.wkt = shape.wkt
-                        current.session.warning = current.T("Only 2D geometry stored as PostGIS cannot handle 3D geometries")
+                        if warning:
+                            warning = "%s, %s" % s3_str(current.T("Only 2D geometry stored as PostGIS cannot handle 3D geometries"))
+                        else:
+                            warning = s3_str(current.T("Only 2D geometry stored as PostGIS cannot handle 3D geometries"))
+
+                    if warning:
+                        current.session.warning = warning
 
                 gis_feature_type = shape.type
                 if gis_feature_type == "Point":
@@ -7121,22 +7128,11 @@ class MAP(DIV):
         if js_globals not in js_global:
             js_global_append(js_globals)
 
+        # Underscore for Popup Templates
+        s3_include_underscore()
+
         debug = s3.debug
         scripts = s3.scripts
-        if s3.cdn:
-            if debug:
-                script = \
-"//cdnjs.cloudflare.com/ajax/libs/underscore.js/1.6.0/underscore.js"
-            else:
-                script = \
-"//cdnjs.cloudflare.com/ajax/libs/underscore.js/1.6.0/underscore-min.js"
-        else:
-            if debug:
-                script = URL(c="static", f="scripts/underscore.js")
-            else:
-                script = URL(c="static", f="scripts/underscore-min.js")
-        if script not in scripts:
-            scripts.append(script)
 
         if self.opts.get("color_picker", False):
             if debug:
@@ -7187,7 +7183,7 @@ class MAP(DIV):
                 callback = '''null'''
         loader = \
 '''s3_gis_loadjs(%(debug)s,%(projection)s,%(callback)s,%(scripts)s)''' \
-            % dict(debug = "true" if s3.debug else "false",
+            % dict(debug = "true" if debug else "false",
                    projection = projection,
                    callback = callback,
                    scripts = self.scripts
@@ -7204,6 +7200,8 @@ def addFeatures(features):
     """
         Add Simple Features to the Draft layer
         - used by S3LocationSelectorWidget
+
+        @todo: obsolete?
     """
 
     simplify = GIS.simplify
@@ -7764,7 +7762,7 @@ class Layer(object):
             self.__dict__.update(record)
             del record
             if current.deployment_settings.get_L10n_translate_gis_layer():
-                self.safe_name = re.sub('[\\"]', "", s3_unicode(current.T(self.name)))
+                self.safe_name = re.sub('[\\"]', "", s3_str(current.T(self.name)))
             else:
                 self.safe_name = re.sub('[\\"]', "", self.name)
 
@@ -7788,13 +7786,13 @@ class Layer(object):
 
         def setup_folder(self, output):
             if self.dir:
-                output["dir"] = s3_unicode(current.T(self.dir))
+                output["dir"] = s3_str(current.T(self.dir))
 
         def setup_folder_and_visibility(self, output):
             if not self.visible:
                 output["visibility"] = False
             if self.dir:
-                output["dir"] = s3_unicode(current.T(self.dir))
+                output["dir"] = s3_str(current.T(self.dir))
 
         def setup_folder_visibility_and_opacity(self, output):
             if not self.visible:
@@ -7802,7 +7800,7 @@ class Layer(object):
             if self.opacity != 1:
                 output["opacity"] = "%.1f" % self.opacity
             if self.dir:
-                output["dir"] = s3_unicode(current.T(self.dir))
+                output["dir"] = s3_str(current.T(self.dir))
 
         # ---------------------------------------------------------------------
         @staticmethod
@@ -7933,7 +7931,7 @@ class LayerEmpty(Layer):
         sublayers = self.sublayers
         if sublayers:
             sublayer = sublayers[0]
-            name = s3_unicode(current.T(sublayer.name))
+            name = s3_str(current.T(sublayer.name))
             name_safe = re.sub("'", "", name)
             ldict = dict(name = name_safe,
                          id = sublayer.layer_id)
@@ -8277,7 +8275,8 @@ class LayerGoogle(Layer):
                     if script not in s3_scripts:
                         s3_scripts.append(script)
                 else:
-                    # v3 API (3.0 gives us the latest frozen version, currently 3.27)
+                    # v3 API (3.0 gives us the latest frozen version, currently 3.30)
+                    # Note that it does give a warning: "Google Maps API warning: RetiredVersion"
                     # https://developers.google.com/maps/documentation/javascript/versions
                     script = "//maps.google.com/maps/api/js?v=3.0&key=%s" % apikey
                     if script not in s3_scripts:
@@ -9243,7 +9242,7 @@ class S3Map(S3Method):
             prefix, name = tablename.split("_", 1)
             layer_id = lookup_layer(prefix, name)
 
-        url = URL(extension="geojson", args=None)
+        url = URL(extension="geojson", args=None, vars=r.get_vars)
 
         # @ToDo: Support maps with multiple layers (Dashboards)
         #_id = "search_results_%s" % widget_id

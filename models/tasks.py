@@ -1,13 +1,55 @@
 # -*- coding: utf-8 -*-
 
 # =============================================================================
-# Tasks to be callable async
+# Tasks to be callable async &/or on a Schedule
+# @ToDo: Rewrite a lot of these to use s3db_task or settings_task instead of
+#        having a lot of separate tasks defined here
 # =============================================================================
 
-tasks = {}
+has_module = settings.has_module
 
 # -----------------------------------------------------------------------------
-def maintenance(period="daily"):
+def dummy():
+    """
+        Dummy Task
+        - can be used to populate a table with a task_id
+    """
+    return
+
+# -----------------------------------------------------------------------------
+def s3db_task(function, user_id=None, **kwargs):
+    """
+        Generic Task
+        - can be used to call any s3db.function(**kwargs)
+        - saves having to create separate Tasks for many cases
+    """
+    if user_id:
+        # Authenticate
+        auth.s3_impersonate(user_id)
+    # Run the Task & return the result
+    result = s3db[function](**kwargs)
+    db.commit()
+    return result
+
+# -----------------------------------------------------------------------------
+def settings_task(taskname, user_id=None, **kwargs):
+    """
+        Generic Task
+        - can be used to call any settings.tasks.taskname(**kwargs)
+        - saves having to create separate Tasks for many cases
+    """
+    if user_id:
+        # Authenticate
+        auth.s3_impersonate(user_id)
+    task = settings.get_task(taskname)
+    if task:
+        # Run the Task & return the result
+        result = task(**kwargs)
+        db.commit()
+        return result
+
+# -----------------------------------------------------------------------------
+def maintenance(period = "daily"):
     """
         Run all maintenance tasks which should be done daily
         - these are read from the template
@@ -19,12 +61,10 @@ def maintenance(period="daily"):
     templates = settings.get_template()
     if templates != "default":
         # Try to import maintenance routine from template
-        template_location = settings.get_template_location()
         if not isinstance(templates, (tuple, list)):
             templates = (templates,)
         for template in templates[::-1]:
-            package = "applications.%s.%s.templates.%s" % \
-                      (appname, template_location, template)
+            package = "applications.%s.modules.templates.%s" % (appname, template)
             name = "maintenance"
             try:
                 maintenance = getattr(__import__(package, fromlist=[name]), name)
@@ -45,8 +85,49 @@ def maintenance(period="daily"):
 
     return result
 
-tasks["maintenance"] = maintenance
+# -----------------------------------------------------------------------------
+# GIS: always-enabled
+# -----------------------------------------------------------------------------
+def gis_download_kml(record_id, filename, session_id_name, session_id,
+                     user_id=None):
+    """
+        Download a KML file
+            - will normally be done Asynchronously if there is a worker alive
 
+        @param record_id: id of the record in db.gis_layer_kml
+        @param filename: name to save the file as
+        @param session_id_name: name of the session
+        @param session_id: id of the session
+        @param user_id: calling request's auth.user.id or None
+    """
+    if user_id:
+        # Authenticate
+        auth.s3_impersonate(user_id)
+    # Run the Task & return the result
+    result = gis.download_kml(record_id, filename, session_id_name, session_id)
+    db.commit()
+    return result
+
+# -----------------------------------------------------------------------------
+def gis_update_location_tree(feature, user_id=None):
+    """
+        Update the Location Tree for a feature
+            - will normally be done Asynchronously if there is a worker alive
+
+        @param feature: the feature (in JSON format)
+        @param user_id: calling request's auth.user.id or None
+    """
+    if user_id:
+        # Authenticate
+        auth.s3_impersonate(user_id)
+    # Run the Task & return the result
+    feature = json.loads(feature)
+    path = gis.update_location_tree(feature)
+    db.commit()
+    return path
+
+# -----------------------------------------------------------------------------
+# Org: always-enabled
 # -----------------------------------------------------------------------------
 def org_site_check(site_id, user_id=None):
     """ Check the Status for Sites """
@@ -61,10 +142,20 @@ def org_site_check(site_id, user_id=None):
         customise(site_id)
         db.commit()
 
-tasks["org_site_check"] = org_site_check
+# -----------------------------------------------------------------------------
+tasks = {"dummy": dummy,
+         "s3db_task": s3db_task,
+         "settings_task": settings_task,
+         "maintenance": maintenance,
+         "gis_download_kml": gis_download_kml,
+         "gis_update_location_tree": gis_update_location_tree,
+         "org_site_check": org_site_check,
+         }
 
 # -----------------------------------------------------------------------------
-if settings.has_module("cap"):
+# Optional Modules
+# -----------------------------------------------------------------------------
+if has_module("cap"):
 
     # -------------------------------------------------------------------------
     def cap_ftp_sync(user_id=None):
@@ -84,7 +175,7 @@ if settings.has_module("cap"):
     tasks["cap_ftp_sync"] = cap_ftp_sync
 
 # -----------------------------------------------------------------------------
-if settings.has_module("doc"):
+if has_module("doc"):
 
     # -----------------------------------------------------------------------------
     def document_create_index(document, user_id=None):
@@ -174,65 +265,7 @@ if settings.has_module("doc"):
     tasks["document_delete_index"] = document_delete_index
 
 # -----------------------------------------------------------------------------
-def gis_download_kml(record_id, filename, session_id_name, session_id,
-                     user_id=None):
-    """
-        Download a KML file
-            - will normally be done Asynchronously if there is a worker alive
-
-        @param record_id: id of the record in db.gis_layer_kml
-        @param filename: name to save the file as
-        @param session_id_name: name of the session
-        @param session_id: id of the session
-        @param user_id: calling request's auth.user.id or None
-    """
-    if user_id:
-        # Authenticate
-        auth.s3_impersonate(user_id)
-    # Run the Task & return the result
-    result = gis.download_kml(record_id, filename, session_id_name, session_id)
-    db.commit()
-    return result
-
-tasks["gis_download_kml"] = gis_download_kml
-
-# -----------------------------------------------------------------------------
-def gis_update_location_tree(feature, user_id=None):
-    """
-        Update the Location Tree for a feature
-            - will normally be done Asynchronously if there is a worker alive
-
-        @param feature: the feature (in JSON format)
-        @param user_id: calling request's auth.user.id or None
-    """
-    if user_id:
-        # Authenticate
-        auth.s3_impersonate(user_id)
-    # Run the Task & return the result
-    feature = json.loads(feature)
-    path = gis.update_location_tree(feature)
-    db.commit()
-    return path
-
-tasks["gis_update_location_tree"] = gis_update_location_tree
-
-# -----------------------------------------------------------------------------
-def org_facility_geojson(user_id=None):
-    """
-        Export GeoJSON[P] Of Facility data
-
-        @param user_id: calling request's auth.user.id or None
-    """
-    if user_id:
-        # Authenticate
-        auth.s3_impersonate(user_id)
-    # Run the Task & return the result
-    s3db.org_facility_geojson()
-
-tasks["org_facility_geojson"] = org_facility_geojson
-
-# -----------------------------------------------------------------------------
-if settings.has_module("msg"):
+if has_module("msg"):
 
     # -------------------------------------------------------------------------
     def msg_process_outbox(contact_method, user_id=None):
@@ -246,6 +279,7 @@ if settings.has_module("msg"):
         if user_id:
             # Authenticate
             auth.s3_impersonate(user_id)
+
         # Run the Task & return the result
         result = msg.process_outbox(contact_method)
         db.commit()
@@ -266,6 +300,7 @@ if settings.has_module("msg"):
         if user_id:
             # Authenticate
             auth.s3_impersonate(user_id)
+
         # Run the Task & return the result
         result = msg.twitter_search(search_id)
         db.commit()
@@ -285,6 +320,7 @@ if settings.has_module("msg"):
         if user_id:
             # Authenticate
             auth.s3_impersonate(user_id)
+
         # Run the Task & return the result
         result = msg.process_keygraph(search_id)
         db.commit()
@@ -299,6 +335,7 @@ if settings.has_module("msg"):
         """
         if user_id:
             auth.s3_impersonate(user_id)
+
         # Run the Task & return the result
         result = msg.poll(tablename, channel_id)
         db.commit()
@@ -313,6 +350,7 @@ if settings.has_module("msg"):
         """
         if user_id:
             auth.s3_impersonate(user_id)
+
         # Run the Task & return the result
         result = msg.parse(channel_id, function_name)
         db.commit()
@@ -340,8 +378,10 @@ if settings.has_module("msg"):
         """
         if user_id:
             auth.s3_impersonate(user_id)
-        notify = s3base.S3Notifications()
-        return notify.check_subscriptions()
+
+        result = s3base.S3Notifications().check_subscriptions()
+        db.commit()
+        return result
 
     tasks["notify_check_subscriptions"] = notify_check_subscriptions
 
@@ -351,18 +391,18 @@ if settings.has_module("msg"):
             Asynchronous task to notify a subscriber about resource
             updates. This task is created by notify_check_subscriptions.
 
-            @param subscription: JSON with the subscription data
-            @param now: lookup date (@todo: remove this)
+            @param resource_id: the pr_subscription_resource record ID
         """
         if user_id:
             auth.s3_impersonate(user_id)
+
         notify = s3base.S3Notifications
         return notify.notify(resource_id)
 
     tasks["notify_notify"] = notify_notify
 
 # -----------------------------------------------------------------------------
-if settings.has_module("req"):
+if has_module("req"):
 
     def req_add_from_template(req_id, user_id=None):
         """
@@ -371,6 +411,7 @@ if settings.has_module("req"):
         if user_id:
             # Authenticate
             auth.s3_impersonate(user_id)
+
         # Run the Task & return the result
         result = s3db.req_add_from_template(req_id)
         db.commit()
@@ -379,136 +420,64 @@ if settings.has_module("req"):
     tasks["req_add_from_template"] = req_add_from_template
 
 # -----------------------------------------------------------------------------
-if settings.has_module("setup"):
+if has_module("setup"):
 
-    def deploy(playbook, private_key, host=["127.0.0.1"], only_tags="all", user_id=None):
+    def setup_run_playbook(playbook,
+                           hosts = ["127.0.0.1"],
+                           tags = None,
+                           private_key = None,
+                           user_id = None,
+                           ):
+        """
+            Run an Ansible Playbook
+            - to Deploy a new Eden instance
+        """
+        if user_id:
+            # Authenticate
+            auth.s3_impersonate(user_id)
 
-        pb = s3db.setup_create_playbook(playbook, host, private_key, only_tags)
-        pb.run()
+        # Run the Task & return the result
+        result = s3db.setup_run_playbook(playbook, hosts, tags, private_key)
+        #db.commit()
+        return result
 
-        processed_hosts = sorted(pb.stats.processed.keys())
+    tasks["setup_run_playbook"] = setup_run_playbook
 
-        for h in processed_hosts:
-            t = pb.stats.summarize(h)
-            if t["failures"] > 0:
-                raise Exception("One of the tasks failed")
-            elif t["unreachable"] > 0:
-                raise Exception("Host unreachable")
+    # -------------------------------------------------------------------------
+    def setup_monitor_run_task(task_id, user_id=None):
+        """
+            Run a Monitoring Task
+        """
+        if user_id:
+            auth.s3_impersonate(user_id)
+        # Run the Task & return the result
+        result = s3db.setup_monitor_run_task(task_id)
+        db.commit()
+        return result
 
-    tasks["deploy"] = deploy
+    tasks["setup_monitor_run_task"] = setup_monitor_run_task
 
-    def setup_management(_type, instance_id, deployment_id, user_id=None):
-        import ansible.runner
-        s3db = current.s3db
-        db = current.db
+    # -------------------------------------------------------------------------
+    def setup_monitor_check_email_reply(run_id, user_id=None):
+        """
+            Check whether we have received a reply to an Email check
+        """
+        if user_id:
+            auth.s3_impersonate(user_id)
+        # Run the Task & return the result
+        result = s3db.setup_monitor_check_email_reply(run_id)
+        db.commit()
+        return result
 
-        # get all servers associated
-        stable = s3db.setup_server
-        servers = db(stable.deployment_id == deployment_id).select(stable.role,
-                                                                   stable.host_ip,
-                                                                   orderby=stable.role
-                                                                   )
+    tasks["setup_monitor_check_email_reply"] = setup_monitor_check_email_reply
 
-        # get deployment
 
-        dtable = s3db.setup_deployment
-        deployment = db(dtable.id == deployment_id).select(dtable.private_key,
-                                                           dtable.remote_user,
-                                                           limitby=(0, 1)).first()
-        private_key = os.path.join(current.request.folder, "uploads", deployment.private_key)
+# -----------------------------------------------------------------------------
+if has_module("stats"):
 
-        hosts = [server.host_ip for server in servers]
-        inventory = ansible.inventory.Inventory(hosts)
-
-        tasks = []
-        runner = ansible.runner.Runner
-
-        itable = s3db.setup_instance
-        instance = db(itable.id == instance_id).select(itable.type,
-                                                       limitby=(0, 1)).first()
-        instance_types = ["prod", "test", "demo"]
-
-        if _type == "clean":
-
-            host_ip = servers[0].host_ip
-
-            arguments = [dict(module_name = "service",
-                              module_args={"name": "uwsgi",
-                                           "status": "stop",
-                                           },
-                              remote_user=deployment.remote_user,
-                              private_key_file=private_key,
-                              pattern=host_ip,
-                              inventory=inventory,
-                              sudo=True
-                              ),
-                          dict(module_name = "command",
-                              module_args="clean %s" % instance_types[instance.type - 1],
-                              remote_user=deployment.remote_user,
-                              private_key_file=private_key,
-                              pattern=host_ip,
-                              inventory=inventory,
-                              sudo=True
-                              ),
-                          dict(module_name = "command",
-                              module_args="clean_eden %s" % instance_types[instance.type - 1],
-                              remote_user=deployment.remote_user,
-                              private_key_file=private_key,
-                              pattern=servers[0].host_ip,
-                              inventory=inventory,
-                              sudo=True
-                              ),
-                          dict(module_name = "service",
-                              module_args={"name": "uwsgi",
-                                           "status": "start",
-                                           },
-                              remote_user=deployment.remote_user,
-                              private_key_file=private_key,
-                              pattern=host_ip,
-                              inventory=inventory,
-                              sudo=True
-                              ),
-                          ]
-
-            if len(servers) > 1:
-                host_ip = servers[2].host_ip
-                arguments[0]["pattern"] = host_ip
-                arguments[2]["pattern"] = host_ip
-                arguments[3]["pattern"] = host_ip
-
-            for argument in arguments:
-                tasks.append(runner(**argument))
-
-            # run the tasks
-            for task in tasks:
-                response = task.run()
-                if response["dark"]:
-                    raise Exception("Error contacting the server")
-
-        elif _type == "eden":
-            argument = dict(module_name="command",
-                            module_args="pull %s" % [instance_types[instance.type - 1]],
-                            remote_user=deployment.remote_user,
-                            private_key_file=private_key,
-                            pattern=servers[0].host_ip,
-                            inventory=inventory,
-                            sudo=True
-                            )
-
-            if len(servers) > 1:
-                argument["pattern"] = servers[2].host_ip
-
-            task = runner(**argument)
-            response = task.run()
-            if response["dark"]:
-                raise Exception("Error contacting the server")
-
-    tasks["setup_management"] = setup_management
-
-# --------------------e--------------------------------------------------------
-if settings.has_module("stats"):
-
-    def stats_demographic_update_aggregates(records=None, user_id=None):
+    def stats_demographic_update_aggregates(records = None,
+                                            user_id = None,
+                                            ):
         """
             Update the stats_demographic_aggregate table for the given
             stats_demographic_data record(s)
@@ -520,6 +489,7 @@ if settings.has_module("stats"):
         if user_id:
             # Authenticate
             auth.s3_impersonate(user_id)
+
         # Run the Task & return the result
         result = s3db.stats_demographic_update_aggregates(records)
         db.commit()
@@ -533,7 +503,8 @@ if settings.has_module("stats"):
                                                     parameter_id,
                                                     start_date,
                                                     end_date,
-                                                    user_id=None):
+                                                    user_id = None,
+                                                    ):
         """
             Update the stats_demographic_aggregate table for the given location and parameter
             - called from within stats_demographic_update_aggregates
@@ -548,6 +519,7 @@ if settings.has_module("stats"):
         if user_id:
             # Authenticate
             auth.s3_impersonate(user_id)
+
         # Run the Task & return the result
         result = s3db.stats_demographic_update_location_aggregate(location_level,
                                                                   root_location_id,
@@ -560,8 +532,70 @@ if settings.has_module("stats"):
 
     tasks["stats_demographic_update_location_aggregate"] = stats_demographic_update_location_aggregate
 
+    # --------------------e----------------------------------------------------
+    # Disease: Depends on Stats
+    # --------------------e----------------------------------------------------
+    if has_module("disease"):
+
+        def disease_stats_update_aggregates(records = None,
+                                            all = False,
+                                            user_id = None,
+                                            ):
+            """
+                Update the disease_stats_aggregate table for the given
+                disease_stats_data record(s)
+
+                @param records: JSON of Rows of disease_stats_data records to
+                                update aggregates for
+                @param user_id: calling request's auth.user.id or None
+            """
+            if user_id:
+                # Authenticate
+                auth.s3_impersonate(user_id)
+
+            # Run the Task & return the result
+            result = s3db.disease_stats_update_aggregates(records, all)
+            db.commit()
+            return result
+
+        tasks["disease_stats_update_aggregates"] = disease_stats_update_aggregates
+
+        # ---------------------------------------------------------------------
+        def disease_stats_update_location_aggregates(location_id,
+                                                     children,
+                                                     parameter_id,
+                                                     dates,
+                                                     user_id = None,
+                                                     ):
+            """
+                Update the disease_stats_aggregate table for the given location and parameter
+                - called from within disease_stats_update_aggregates
+
+                @param location_id: location to aggregate at
+                @param children: locations to aggregate from
+                @param parameter_id: parameter to aggregate
+                @param dates: dates to aggregate for
+                @param user_id: calling request's auth.user.id or None
+            """
+            if user_id:
+                # Authenticate
+                auth.s3_impersonate(user_id)
+
+            # Run the Task & return the result
+            result = s3db.disease_stats_update_location_aggregates(location_id,
+                                                                   children,
+                                                                   parameter_id,
+                                                                   dates,
+                                                                   )
+            db.commit()
+            return result
+
+        tasks["disease_stats_update_location_aggregates"] = disease_stats_update_location_aggregates
+
+    # --------------------e----------------------------------------------------
+    # Vulnerability: Depends on Stats
     # -------------------------------------------------------------------------
-    if settings.has_module("vulnerability"):
+    if has_module("vulnerability"):
 
         def vulnerability_update_aggregates(records=None, user_id=None):
             """
@@ -574,6 +608,7 @@ if settings.has_module("stats"):
             if user_id:
                 # Authenticate
                 auth.s3_impersonate(user_id)
+
             # Run the Task & return the result
             result = s3db.vulnerability_update_aggregates(records)
             db.commit()
@@ -587,7 +622,8 @@ if settings.has_module("stats"):
                                                     parameter_id,
                                                     start_date,
                                                     end_date,
-                                                    user_id=None):
+                                                    user_id = None,
+                                                    ):
             """
                 Update the vulnerability_aggregate table for the given location and parameter
                 - called from within vulnerability_update_aggregates
@@ -602,6 +638,7 @@ if settings.has_module("stats"):
             if user_id:
                 # Authenticate
                 auth.s3_impersonate(user_id)
+
             # Run the Task & return the result
             result = s3db.vulnerability_update_location_aggregate(#location_level,
                                                                   root_location_id,
@@ -614,67 +651,16 @@ if settings.has_module("stats"):
 
         tasks["vulnerability_update_location_aggregate"] = vulnerability_update_location_aggregate
 
-# --------------------e--------------------------------------------------------
-if settings.has_module("disease"):
-
-    def disease_stats_update_aggregates(records=None, all=False, user_id=None):
-        """
-            Update the disease_stats_aggregate table for the given
-            disease_stats_data record(s)
-
-            @param records: JSON of Rows of disease_stats_data records to
-                            update aggregates for
-            @param user_id: calling request's auth.user.id or None
-        """
-        if user_id:
-            # Authenticate
-            auth.s3_impersonate(user_id)
-        # Run the Task & return the result
-        result = s3db.disease_stats_update_aggregates(records, all)
-        db.commit()
-        return result
-
-    tasks["disease_stats_update_aggregates"] = disease_stats_update_aggregates
-
-    # -------------------------------------------------------------------------
-    def disease_stats_update_location_aggregates(location_id,
-                                                 children,
-                                                 parameter_id,
-                                                 dates,
-                                                 user_id=None):
-        """
-            Update the disease_stats_aggregate table for the given location and parameter
-            - called from within disease_stats_update_aggregates
-
-            @param location_id: location to aggregate at
-            @param children: locations to aggregate from
-            @param parameter_id: parameter to aggregate
-            @param dates: dates to aggregate for
-            @param user_id: calling request's auth.user.id or None
-        """
-        if user_id:
-            # Authenticate
-            auth.s3_impersonate(user_id)
-        # Run the Task & return the result
-        result = s3db.disease_stats_update_location_aggregates(location_id,
-                                                               children,
-                                                               parameter_id,
-                                                               dates,
-                                                               )
-        db.commit()
-        return result
-
-    tasks["disease_stats_update_location_aggregates"] = disease_stats_update_location_aggregates
-
 # -----------------------------------------------------------------------------
-if settings.has_module("sync"):
+if has_module("sync"):
 
     def sync_synchronize(repository_id, user_id=None, manual=False):
         """
             Run all tasks for a repository, to be called from scheduler
         """
-
-        auth.s3_impersonate(user_id)
+        if user_id:
+            # Authenticate
+            auth.s3_impersonate(user_id)
 
         rtable = s3db.sync_repository
         query = (rtable.deleted != True) & \
@@ -715,7 +701,7 @@ current.s3task = s3task
 # Reusable field for scheduler task links
 scheduler_task_id = S3ReusableField("scheduler_task_id",
                                     "reference %s" % s3base.S3Task.TASK_TABLENAME,
-                                    ondelete="CASCADE")
+                                    ondelete = "CASCADE")
 s3.scheduler_task_id = scheduler_task_id
 
 # END =========================================================================

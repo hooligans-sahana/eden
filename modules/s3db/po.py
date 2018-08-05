@@ -2,7 +2,7 @@
 
 """ Sahana Eden Population Outreach Models
 
-    @copyright: 2015-2017 (c) Sahana Software Foundation
+    @copyright: 2015-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -37,6 +37,8 @@ __all__ = ("OutreachAreaModel",
 
 from ..s3 import *
 from s3layouts import S3PopupLink
+
+from gluon import IS_NOT_EMPTY, IS_INT_IN_RANGE
 
 # =============================================================================
 class OutreachAreaModel(S3Model):
@@ -698,19 +700,12 @@ class OutreachHouseholdModel(S3Model):
         # ---------------------------------------------------------------------
         # Social Information
         #
-        languages = dict(IS_ISO639_2_LANGUAGE_CODE.language_codes())
-
         tablename = "po_household_social"
         define_table(tablename,
                      household_id(),
-                     Field("language",
-                           label = T("Main Language"),
-                           represent = S3Represent(options=languages),
-                           requires = IS_EMPTY_OR(
-                                        IS_ISO639_2_LANGUAGE_CODE(select=None,
-                                                                  sort=True,
-                                                                  )),
-                           ),
+                     s3_language(label = T("Main Language"),
+                                 list_from_settings = False,
+                                 ),
                      Field("community", "text",
                            label = T("Community Connections"),
                            ),
@@ -987,7 +982,7 @@ class po_HouseholdRepresent(S3Represent):
                                                    )
 
     # -------------------------------------------------------------------------
-    def lookup_rows(self, key, values, fields=[]):
+    def lookup_rows(self, key, values, fields=None):
         """
             Custom rows lookup
 
@@ -1029,7 +1024,7 @@ class po_HouseholdRepresent(S3Represent):
         return self.location_represent(row.location_id)
 
 # =============================================================================
-def po_rheader(r, tabs=[]):
+def po_rheader(r, tabs=None):
 
     if r.representation != "html":
         # RHeaders only used in interactive views

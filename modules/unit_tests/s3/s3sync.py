@@ -12,6 +12,7 @@ from gluon import current
 from lxml import etree
 
 from unit_tests import run_suite
+from s3 import S3SyncDataArchive
 
 # =============================================================================
 class ExportMergeTests(unittest.TestCase):
@@ -196,7 +197,6 @@ class ImportMergeWithExistingRecords(unittest.TestCase):
         xmltree = etree.ElementTree(etree.fromstring(xmlstr))
         resource = current.s3db.resource("org_organisation")
         msg = resource.import_xml(xmltree)
-        #print msg
         self.assertEqual(resource.error, None)
 
         # Check the result
@@ -274,7 +274,6 @@ class ImportMergeWithExistingOriginal(unittest.TestCase):
         xmltree = etree.ElementTree(etree.fromstring(xmlstr))
         resource = current.s3db.resource("org_organisation")
         msg = resource.import_xml(xmltree)
-        #print msg
         self.assertEqual(resource.error, None)
 
         # Check the result: the duplicate should never be imported
@@ -351,7 +350,6 @@ class ImportMergeWithExistingDuplicate(unittest.TestCase):
         xmltree = etree.ElementTree(etree.fromstring(xmlstr))
         resource = current.s3db.resource("org_organisation")
         msg = resource.import_xml(xmltree)
-        #print msg
         self.assertEqual(resource.error, None)
 
         # Check the result: new record gets imported, duplicate merged into it
@@ -414,7 +412,6 @@ class ImportMergeWithoutExistingRecords(unittest.TestCase):
         xmltree = etree.ElementTree(etree.fromstring(xmlstr))
         resource = current.s3db.resource("org_organisation")
         msg = resource.import_xml(xmltree)
-        #print msg
         self.assertEqual(resource.error, None)
 
         # Check the result: only the final record gets imported
@@ -435,6 +432,36 @@ class ImportMergeWithoutExistingRecords(unittest.TestCase):
         current.db.rollback()
 
 # =============================================================================
+class DataArchiveTests(unittest.TestCase):
+    """ Tests for S3SyncDataArchive API """
+
+    def testArchive(self):
+        """ Test archiving of str objects"""
+
+        assertEqual = self.assertEqual
+
+        # Create a new archive
+        archive = S3SyncDataArchive()
+
+        # Add two XML strings to it
+        xmlstr1 = "<example>First Example</example>"
+        xmlstr2 = "<example>Second Example</example>"
+        archive.add("test1.xml", xmlstr1)
+        archive.add("test2.xml", xmlstr2)
+
+        # Close the archive
+        fileobj = archive.close()
+
+        # Open the archive
+        archive = S3SyncDataArchive(fileobj)
+
+        # Verify archive contents
+        extracted = archive.extract("test1.xml").read()
+        assertEqual(extracted, xmlstr1)
+        extracted = archive.extract("test2.xml").read()
+        assertEqual(extracted, xmlstr2)
+
+# =============================================================================
 if __name__ == "__main__":
 
     run_suite(
@@ -443,7 +470,8 @@ if __name__ == "__main__":
         ImportMergeWithExistingRecords,
         ImportMergeWithExistingOriginal,
         ImportMergeWithExistingDuplicate,
-        ImportMergeWithoutExistingRecords
-    )
+        ImportMergeWithoutExistingRecords,
+        DataArchiveTests,
+        )
 
 # END ========================================================================

@@ -2,7 +2,7 @@
 
 """ Sahana Eden Document Library
 
-    @copyright: 2011-2017 (c) Sahana Software Foundation
+    @copyright: 2011-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -28,7 +28,6 @@
 """
 
 __all__ = ("S3DocumentLibrary",
-           "S3DocSitRepModel",
            "S3CKEditorModel",
            "doc_image_represent",
            "doc_document_list_layout",
@@ -81,18 +80,20 @@ class S3DocumentLibrary(S3Model):
                                cr_shelter = T("Shelter"),
                                deploy_mission = T("Mission"),
                                dc_response = T(settings.get_dc_response_label()),
-                               doc_sitrep = T("Situation Report"),
+                               dvr_case = T("Case"),
                                dvr_case_activity = T("Case Activity"),
                                event_event = T("Event"),
                                event_incident = T("Incident"),
                                event_incident_report = T("Incident Report"),
+                               event_sitrep = T("Situation Report"),
                                fire_station = T("Fire Station"),
                                hms_hospital = T("Hospital"),
                                hrm_human_resource = T("Human Resource"),
+                               hrm_training_event_report = T("Training Event Report"),
                                inv_adj = T("Stock Adjustment"),
                                inv_warehouse = T("Warehouse"),
                                # @ToDo: Deprecate
-                               irs_ireport = T("Incident Report"),
+                               #irs_ireport = T("Incident Report"),
                                police_station = T("Police Station"),
                                pr_group = T("Team"),
                                project_project = T("Project"),
@@ -103,7 +104,10 @@ class S3DocumentLibrary(S3Model):
                                org_office = T("Office"),
                                org_facility = T("Facility"),
                                org_group = T("Organization Group"),
+                               req_need = T("Need"),
+                               req_need_response = T("Activity Group"),
                                req_req = T("Request"),
+                               security_seized_item = T("Seized Item"),
                                # @ToDo: Deprecate
                                #stats_people = T("People"),
                                stdm_tenure = T("Tenure"),
@@ -128,12 +132,13 @@ class S3DocumentLibrary(S3Model):
         tablename = "doc_document"
         define_table(tablename,
                      # Instance
-                     self.stats_source_superlink,
+                     self.stats_source_superlink(),
                      # Component not instance
                      super_link(doc_id, "doc_entity"),
                      # @ToDo: Remove since Site Instances are doc entities?
                      super_link("site_id", "org_site"),
                      Field("file", "upload",
+                           label = T("File"),
                            autodelete = True,
                            length = current.MAX_FILENAME_LENGTH,
                            represent = self.doc_file_represent,
@@ -261,6 +266,7 @@ class S3DocumentLibrary(S3Model):
                      super_link("site_id", "org_site"), # @ToDo: Remove since Site Instances are doc entities?
                      Field("file", "upload",
                            autodelete = True,
+                           label = T("File"),
                            length = current.MAX_FILENAME_LENGTH,
                            represent = doc_image_represent,
                            requires = IS_EMPTY_OR(
@@ -332,8 +338,8 @@ class S3DocumentLibrary(S3Model):
         # ---------------------------------------------------------------------
         # Pass model-global names to response.s3
         #
-        return dict(doc_document_id = document_id,
-                    )
+        return {"doc_document_id": document_id,
+                }
 
     # -------------------------------------------------------------------------
     def defaults(self):
@@ -342,23 +348,30 @@ class S3DocumentLibrary(S3Model):
         document_id = S3ReusableField("document_id", "integer",
                                       readable=False, writable=False)
 
-        return dict(doc_document_id = document_id,
-                    )
+        return {"doc_document_id": document_id,
+                }
 
     # -------------------------------------------------------------------------
     @staticmethod
-    def doc_file_represent(file):
-        """ File representation """
+    def doc_file_represent(filename):
+        """
+            File representation
 
-        if file:
+            @param filename: the stored file name (field value)
+
+            @return: a link to download the file
+        """
+
+        if filename:
             try:
-                # Read the filename from the file
-                filename = current.db.doc_document.file.retrieve(file)[0]
+                # Check whether file exists and extract the original
+                # file name from the stored file name
+                origname = current.db.doc_document.file.retrieve(filename)[0]
             except IOError:
                 return current.T("File not found")
             else:
-                return A(filename,
-                         _href=URL(c="default", f="download", args=[file]))
+                return A(origname,
+                         _href=URL(c="default", f="download", args=[filename]))
         else:
             return current.messages["NONE"]
 
@@ -369,10 +382,10 @@ class S3DocumentLibrary(S3Model):
 
         data = item.data
         query = None
-        file = data.get("file")
-        if file:
+        filename = data.get("file")
+        if filename:
             table = item.table
-            query = (table.file == file)
+            query = (table.file == filename)
         else:
             url = data.get("url")
             if url:
@@ -407,7 +420,8 @@ class S3DocumentLibrary(S3Model):
                 import base64
                 import uuid
                 metadata, encoded_file = encoded_file.split(",")
-                filename, datatype, enctype = metadata.split(";")
+                #filename, datatype, enctype = metadata.split(";")
+                filename = metadata.split(";", 1)[0]
                 f = Storage()
                 f.filename = uuid.uuid4().hex + filename
                 import cStringIO
@@ -416,37 +430,37 @@ class S3DocumentLibrary(S3Model):
                 if not form_vars.name:
                     form_vars.name = filename
 
+        if not hasattr(doc, "file"):
+            # Record update without new file upload => keep existing
+            record_id = current.request.post_vars.id
+            if record_id:
+                db = current.db
+                if document:
+                    tablename = "doc_document"
+                else:
+                    tablename = "doc_image"
+                table = db[tablename]
+                record = db(table.id == record_id).select(table.file,
+                                                          limitby = (0, 1),
+                                                          ).first()
+                if record:
+                    doc = record.file
+
         if not hasattr(doc, "file") and not doc and not form_vars.url:
             if document:
                 msg = current.T("Either file upload or document URL required.")
             else:
                 msg = current.T("Either file upload or image URL required.")
-            form.errors.file = msg
-            form.errors.url = msg
-
+            if "file" in form_vars:
+                form.errors.file = msg
+            if "url" in form_vars:
+                form.errors.url = msg
 
         if hasattr(doc, "file"):
             name = form_vars.name
             if not name:
-                # Use the filename
+                # Use filename as document/image title
                 form_vars.name = doc.filename
-        else:
-            id = current.request.post_vars.id
-            if id:
-                if document:
-                    tablename = "doc_document"
-                else:
-                    tablename = "doc_image"
-
-                db = current.db
-                table = db[tablename]
-                record = db(table.id == id).select(table.file,
-                                                   limitby=(0, 1)).first()
-                if record:
-                    name = form_vars.name
-                    if not name:
-                        # Use the filename
-                        form_vars.name = table.file.retrieve(record.file)[0]
 
         # Do a checksum on the file to see if it's a duplicate
         #import cgi
@@ -480,13 +494,14 @@ class S3DocumentLibrary(S3Model):
 
         table = current.db.doc_document
 
-        document = json.dumps(dict(filename=doc,
-                                   name=table.file.retrieve(doc)[0],
-                                   id=form_vars.id,
-                                   ))
+        document = json.dumps({"filename": doc,
+                               "name": table.file.retrieve(doc)[0],
+                               "id": form_vars.id,
+                               })
 
         current.s3task.async("document_create_index",
-                             args = [document])
+                             args = [document],
+                             )
 
     # -------------------------------------------------------------------------
     @staticmethod
@@ -500,12 +515,13 @@ class S3DocumentLibrary(S3Model):
         record = db(table.id == row.id).select(table.file,
                                                limitby=(0, 1)).first()
 
-        document = json.dumps(dict(filename=record.file,
-                                   id=row.id,
-                                   ))
+        document = json.dumps({"filename": record.file,
+                               "id": row.id,
+                               })
 
         current.s3task.async("document_delete_index",
-                             args = [document])
+                             args = [document],
+                             )
 
 # =============================================================================
 def doc_image_represent(filename):
@@ -565,21 +581,21 @@ def doc_document_list_layout(list_id, item_id, resource, rfields, record):
 
     raw = record._row
     title = record["doc_document.name"]
-    file = raw["doc_document.file"] or ""
+    filename = raw["doc_document.file"] or ""
     url = raw["doc_document.url"] or ""
-    date = record["doc_document.date"]
     comments = raw["doc_document.comments"] or ""
 
-    if file:
+    if filename:
         try:
-            doc_name = current.s3db.doc_document.file.retrieve(file)[0]
+            # Check whether file exists and extract the original
+            # file name from the stored file name
+            origname = current.s3db.doc_document.file.retrieve(filename)[0]
         except (IOError, TypeError):
-            doc_name = current.messages["NONE"]
-        doc_url = URL(c="default", f="download",
-                      args=[file])
+            origname = current.messages["NONE"]
+        doc_url = URL(c="default", f="download", args=[filename])
         body = P(ICON("attachment"),
                  " ",
-                 SPAN(A(doc_name,
+                 SPAN(A(origname,
                         _href=doc_url,
                         )
                       ),
@@ -676,158 +692,6 @@ class doc_DocumentRepresent(S3Represent):
         return v
 
 # =============================================================================
-class S3DocSitRepModel(S3Model):
-    """
-        Situation Reports
-    """
-
-    names = ("doc_sitrep",
-             "doc_sitrep_id",
-             )
-
-    def model(self):
-
-        T = current.T
-
-        # ---------------------------------------------------------------------
-        # Situation Reports
-        # - can be aggregated by OU
-        #
-        tablename = "doc_sitrep"
-        self.define_table(tablename,
-                          self.super_link("doc_id", "doc_entity"),
-                          Field("name", length=128,
-                               label = T("Name"),
-                               requires = IS_LENGTH(128),
-                               ),
-                          Field("description", "text",
-                                label = T("Description"),
-                                represent = lambda body: XML(body),
-                                widget = s3_richtext_widget,
-                                ),
-                          self.org_organisation_id(),
-                          self.gis_location_id(
-                            widget = S3LocationSelector(show_map = False),
-                            ),
-                          s3_date(default = "now",
-                                  ),
-                          s3_comments(),
-                          *s3_meta_fields())
-
-        # CRUD strings
-        current.response.s3.crud_strings[tablename] = Storage(
-                label_create = T("Add Situation Report"),
-                title_display = T("Situation Report Details"),
-                title_list = T("Situation Reports"),
-                title_update = T("Edit Situation Report"),
-                title_upload = T("Import Situation Reports"),
-                label_list_button = T("List Situation Reports"),
-                label_delete_button = T("Delete Situation Report"),
-                msg_record_created = T("Situation Report added"),
-                msg_record_modified = T("Situation Report updated"),
-                msg_record_deleted = T("Situation Report deleted"),
-                msg_list_empty = T("No Situation Reports currently registered"))
-
-        crud_form = S3SQLCustomForm("name",
-                                    "description",
-                                    "organisation_id",
-                                    "location_id",
-                                    "date",
-                                    S3SQLInlineComponent(
-                                        "document",
-                                        name = "document",
-                                        label = T("Attachments"),
-                                        fields = [("", "file")],
-                                    ),
-                                    "comments",
-                                    )
-
-        if current.deployment_settings.get_org_branches():
-            org_filter = S3HierarchyFilter("organisation_id",
-                                           leafonly = False,
-                                           )
-        else:
-            org_filter = S3OptionsFilter("organisation_id",
-                                         #filter = True,
-                                         #header = "",
-                                         )
-
-        filter_widgets = [org_filter,
-                          S3LocationFilter(),
-                          S3DateFilter("date"),
-                          ]
-
-        self.configure(tablename,
-                       crud_form = crud_form,
-                       filter_widgets = filter_widgets,
-                       list_fields = ["date",
-                                      "event_sitrep.incident_id",
-                                      "location_id$L1",
-                                      "location_id$L2",
-                                      "location_id$L3",
-                                      "organisation_id",
-                                      "name",
-                                      (T("Attachments"), "document.file"),
-                                      "comments",
-                                      ],
-                       super_entity = "doc_entity",
-                       )
-
-        # Components
-        self.add_components(tablename,
-                            event_event = {"link": "event_sitrep",
-                                           "joinby": "sitrep_id",
-                                           "key": "event_id",
-                                           #"actuate": "replace",
-                                           },
-                            event_sitrep = {"name": "event_sitrep",
-                                            "joinby": "sitrep_id",
-                                            },
-                            event_incident = {"link": "event_sitrep",
-                                              "joinby": "sitrep_id",
-                                              "key": "incident_id",
-                                              "actuate": "hide",
-                                              "multiple": "False",
-                                              #"autocomplete": "name",
-                                              "autodelete": False,
-                                              },
-                            )
-
-        represent = S3Represent(lookup=tablename)
-
-        sitrep_id = S3ReusableField("sitrep_id", "reference %s" % tablename,
-                                    label = T("Situation Report"),
-                                    ondelete = "RESTRICT",
-                                    represent = represent,
-                                    requires = IS_EMPTY_OR(
-                                                IS_ONE_OF(current.db, "doc_sitrep.id",
-                                                          represent,
-                                                          orderby="doc_sitrep.name",
-                                                          sort=True)),
-                                    sortby = "name",
-                                    )
-
-        # ---------------------------------------------------------------------
-        # Pass names back to global scope (s3.*)
-        #
-        return dict(doc_sitrep_id = sitrep_id,
-                    )
-
-    # -------------------------------------------------------------------------
-    @staticmethod
-    def defaults():
-        """
-            Return safe defaults in case the model has been deactivated.
-        """
-
-        dummy = S3ReusableField("dummy_id", "integer",
-                                readable = False,
-                                writable = False)
-
-        return dict(doc_sitrep_id = lambda **attr: dummy("sitrep_id"),
-                    )
-
-# =============================================================================
 class S3CKEditorModel(S3Model):
     """
         Storage for Images used by CKEditor
@@ -864,8 +728,8 @@ class S3CKEditorModel(S3Model):
         # ---------------------------------------------------------------------
         # Pass names back to global scope (s3.*)
         #
-        return dict(doc_filetype = self.doc_filetype,
-                    )
+        return {"doc_filetype": self.doc_filetype,
+                }
 
     # -------------------------------------------------------------------------
     @staticmethod

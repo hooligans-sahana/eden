@@ -2,7 +2,7 @@
 
 """ S3 Data Views
 
-    @copyright: 2009-2017 (c) Sahana Software Foundation
+    @copyright: 2009-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -425,7 +425,6 @@ class S3DataTable(object):
         """
             Calculate the export formats that can be added to the table
 
-            @param id: the unique dataTable ID
             @param rfields: optional list of field selectors for exports
             @param permalink: search result URL
             @param base_url: the base URL of the datatable (without
@@ -505,12 +504,14 @@ class S3DataTable(object):
 
         # Append the permalink (if any)
         if permalink is not None:
-            link = A(settings.get_ui_label_permalink(),
-                     _href=permalink,
-                     _class="permalink")
-            export_options.append(link)
-            if len(icons):
-                export_options.append(" | ")
+            label = settings.get_ui_label_permalink()
+            if label:
+                link = A(T(label),
+                         _href=permalink,
+                         _class="permalink")
+                export_options.append(link)
+                if len(icons):
+                    export_options.append(" | ")
 
         # Append the icons
         export_options.append(icons)

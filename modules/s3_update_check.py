@@ -6,10 +6,11 @@ import sys
 try:
     from gluon import current
 except ImportError:
-    print >> sys.stderr, """
+    sys.stderr.write("""
 The installed version of Web2py is too old -- it does not define current.
 Please upgrade Web2py to a more recent version.
-"""
+""")
+    raise
 
 # Version of 000_config.py
 # Increment this if the user should update their running instance
@@ -48,14 +49,13 @@ def update_check(settings):
     optional_dep = parse_requirements({}, or_path)
 
     templates = settings.get_template()
-    location = settings.get_template_location()
     if not isinstance(templates, (tuple, list)):
         templates = (templates,)
     template_dep = {}
     template_optional_dep = {}
     for template in templates:
-        tr_path = os.path.join(app_path, location, "templates", template, "requirements.txt")
-        tor_path = os.path.join(app_path, location, "templates", template, "optional_requirements.txt")
+        tr_path = os.path.join(app_path, "modules", "templates", template, "requirements.txt")
+        tor_path = os.path.join(app_path, "modules", "templates", template, "optional_requirements.txt")
         parse_requirements(template_dep, tr_path)
         parse_requirements(template_optional_dep, tor_path)
 

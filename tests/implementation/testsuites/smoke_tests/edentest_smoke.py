@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
 
+SKIP_PROTOCOLS = ("javascript",
+                  "ftp",
+                  )
+
 class edentest_smoke(object):
     """ Smoke Test, visit every link it can find and report on the outcome """
 
@@ -13,7 +17,14 @@ class edentest_smoke(object):
         if len(url) == 0:
             return 1
 
+        if url.find("/admin/user") != -1 and url.find("/disable") != -1:
+            # Bad idea to disable user accounts during smoke tests
+            return 1
+
         if not self.follow_external_links and url.find(self.base_url) == -1:
+            return 1
+
+        if any(url.startswith("%s:" % p) for p in SKIP_PROTOCOLS):
             return 1
 
         for ignore in self.do_not_follow:

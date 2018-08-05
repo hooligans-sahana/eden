@@ -4,7 +4,7 @@
 
     @requires: U{B{I{gluon}} <http://web2py.com>}
 
-    @copyright: (c) 2010-2015 Sahana Software Foundation
+    @copyright: (c) 2010-2018 Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -40,26 +40,31 @@ __all__ = ("AuthS3",
 import datetime
 import json
 #import re
+import time
 
 from collections import OrderedDict
 from uuid import uuid4
 
-from gluon import *
+#from gluon import *
+from gluon import current, redirect, CRYPT, DAL, HTTP, SQLFORM, URL, \
+                  A, BR, DIV, FORM, IMG, INPUT, LABEL, OPTGROUP, OPTION, \
+                  SELECT, SPAN, TABLE, TBODY, TD, TEXTAREA, TH, THEAD, TR, XML, \
+                  IS_EMAIL, IS_EMPTY_OR, IS_EXPR, IS_IN_DB, IS_IN_SET, \
+                  IS_LOWER, IS_NOT_EMPTY, IS_NOT_IN_DB
+
 from gluon.sqlhtml import OptionsWidget
 from gluon.storage import Storage
 from gluon.tools import Auth, callback, DEFAULT, replace_id
 from gluon.utils import web2py_uuid
 
-from s3dal import Row, Rows, Query, Table
+from s3dal import Row, Rows, Query, Table, Field, original_tablename
 from s3datetime import S3DateTime
 from s3error import S3PermissionError
-from s3fields import S3Represent, s3_uid, s3_timestamp, s3_deletion_status, s3_comments
+from s3fields import S3MetaFields, S3Represent, s3_comments
 from s3rest import S3Method, S3Request
 from s3track import S3Tracker
 from s3utils import s3_addrow, s3_get_extension, s3_mark_required, s3_str
-
-# DRY helper to get the original name of a Table (_tablename can be an alias)
-original_tablename = lambda table: table._ot if table._ot else table._tablename
+from s3validators import IS_ISO639_2_LANGUAGE_CODE
 
 # =============================================================================
 class AuthS3(Auth):
@@ -300,10 +305,13 @@ Thank you"""
                 Field("timestmp", "datetime",
                       default="",
                       readable=False, writable=False),
-                s3_comments(readable=False, writable=False)
+                s3_comments(readable=False, writable=False),
+                # Additional meta fields required for sync:
+                S3MetaFields.uuid(),
+                #S3MetaFields.mci(),
+                S3MetaFields.created_on(),
+                S3MetaFields.modified_on(),
                 ]
-            utable_fields += list(s3_uid())
-            utable_fields += list(s3_timestamp())
 
             userfield = settings.login_userfield
             if userfield != "email":
@@ -339,7 +347,10 @@ Thank you"""
                      Field("image", "upload",
                            length = current.MAX_FILENAME_LENGTH,
                            ),
-                     *(s3_uid()+s3_timestamp()))
+                     S3MetaFields.uuid(),
+                     S3MetaFields.created_on(),
+                     S3MetaFields.modified_on(),
+                     )
 
         # Group table (roles)
         gtable = settings.table_group
@@ -371,9 +382,15 @@ Thank you"""
                       label=messages.label_role),
                 Field("description", "text",
                       label=messages.label_description),
+                # Additional meta fields required for sync:
+                S3MetaFields.created_on(),
+                S3MetaFields.modified_on(),
+                S3MetaFields.deleted(),
+                #S3MetaFields.deleted_fk(),
+                #S3MetaFields.deleted_rb(),
                 migrate = migrate,
                 fake_migrate=fake_migrate,
-                *(s3_timestamp() + s3_deletion_status()))
+                )
             gtable = settings.table_group = db[gname]
 
         # Group membership table (user<->role)
@@ -393,7 +410,7 @@ Thank you"""
                 Field("pe_id", "integer"),
                 migrate = migrate,
                 fake_migrate=fake_migrate,
-                *(s3_uid() + s3_timestamp() + s3_deletion_status()))
+                *S3MetaFields.sync_meta_fields())
             settings.table_membership = db[settings.table_membership_name]
 
         # Define Eden permission table
@@ -452,7 +469,7 @@ Thank you"""
                       requires = IS_NOT_EMPTY()),
                 migrate = migrate,
                 fake_migrate=fake_migrate,
-                *(s3_uid() + s3_timestamp() + s3_deletion_status()))
+                *S3MetaFields.sync_meta_fields())
             settings.table_event = db[settings.table_event_name]
 
     # -------------------------------------------------------------------------
@@ -568,14 +585,15 @@ Thank you"""
                 buttons.append(register_link)
 
             # Lost-password action link
-            if lost_pw_link is None:
-                lost_pw_link = deployment_settings.get_auth_password_changes()
-            if lost_pw_link:
-                lost_pw_link = A(T("Lost Password"),
-                                 _href=URL(f="user", args="retrieve_password"),
-                                 _class="action-lnk",
-                                 )
-                buttons.append(lost_pw_link)
+            if deployment_settings.get_auth_password_retrieval():
+                if lost_pw_link is None:
+                    lost_pw_link = deployment_settings.get_auth_password_changes()
+                if lost_pw_link:
+                    lost_pw_link = A(T("Lost Password"),
+                                     _href=URL(f="user", args="retrieve_password"),
+                                     _class="action-lnk",
+                                     )
+                    buttons.append(lost_pw_link)
 
             # Add submit button
             #if buttons:
@@ -848,6 +866,92 @@ Thank you"""
         return form
 
     # -------------------------------------------------------------------------
+    def reset_password(self,
+                       next=DEFAULT,
+                       onvalidation=DEFAULT,
+                       onaccept=DEFAULT,
+                       log=DEFAULT,
+                       ):
+        """
+            Returns a form to reset the user password, overrides web2py's
+            version of the method to not swallow the _next var.
+        """
+
+        table_user = self.table_user()
+        request = current.request
+        session = current.session
+
+        messages = self.messages
+        settings = self.settings
+
+        if next is DEFAULT:
+            next = self.get_vars_next() or settings.reset_password_next
+
+        if settings.prevent_password_reset_attacks:
+            key = request.vars.key
+            if key:
+                session._reset_password_key = key
+                session._reset_password_next = next
+                redirect(self.url(args = "reset_password"))
+            else:
+                key = session._reset_password_key
+                next = session._reset_password_next
+        else:
+            key = request.vars.key
+
+        try:
+            t0 = int(key.split('-')[0])
+            if time.time() - t0 > 60 * 60 * 24:
+                raise Exception
+            user = table_user(reset_password_key=key)
+            if not user:
+                raise Exception
+        except Exception:
+            session.flash = messages.invalid_reset_password
+            redirect(next, client_side=settings.client_side)
+
+        key = user.registration_key
+        if key in ("pending", "disabled", "blocked") or (key or "").startswith("pending"):
+            session.flash = messages.registration_pending
+            redirect(next, client_side=settings.client_side)
+
+        if onvalidation is DEFAULT:
+            onvalidation = settings.reset_password_onvalidation
+        if onaccept is DEFAULT:
+            onaccept = settings.reset_password_onaccept
+
+        passfield = settings.password_field
+        form = SQLFORM.factory(
+            Field("new_password", "password",
+                  label = messages.new_password,
+                  requires = table_user[passfield].requires,
+                  ),
+            Field("new_password2", "password",
+                  label = messages.verify_password,
+                  requires = [IS_EXPR("value==%s" % repr(request.vars.new_password),
+                              messages.mismatched_password)
+                              ],
+                  ),
+            submit_button = messages.password_reset_button,
+            hidden = dict(_next=next),
+            formstyle = settings.formstyle,
+            separator = settings.label_separator
+            )
+        if form.accepts(request, session, onvalidation=onvalidation,
+                        hideerror=settings.hideerror):
+            user.update_record(
+                **{passfield: str(form.vars.new_password),
+                   "registration_key": "",
+                   "reset_password_key": "",
+                   })
+            session.flash = messages.password_changed
+            if settings.login_after_password_change:
+                self.login_user(user)
+            callback(onaccept, form)
+            redirect(next, client_side=settings.client_side)
+        return form
+
+    # -------------------------------------------------------------------------
     def request_reset_password(self,
                                next=DEFAULT,
                                onvalidation=DEFAULT,
@@ -866,18 +970,18 @@ Thank you"""
 
         messages = self.messages
         settings = self.settings
+        if not settings.mailer:
+            current.response.error = messages.function_disabled
+            return ""
+
         utable = settings.table_user
         request = current.request
-        response = current.response
         session = current.session
         captcha = settings.retrieve_password_captcha or \
                   (settings.retrieve_password_captcha != False and settings.captcha)
 
         if next is DEFAULT:
             next = self.get_vars_next() or settings.request_reset_password_next
-        if not settings.mailer:
-            response.error = messages.function_disabled
-            return ""
         if onvalidation is DEFAULT:
             onvalidation = settings.reset_password_onvalidation
         if onaccept is DEFAULT:
@@ -895,13 +999,13 @@ Thank you"""
                 IS_IN_DB(self.db, utable[userfield],
                          error_message=messages.invalid_username)]
         form = SQLFORM(utable,
-                       fields=[userfield],
-                       hidden=dict(_next=next),
-                       showid=settings.showid,
-                       submit_button=messages.password_reset_button,
-                       delete_label=messages.delete_label,
-                       formstyle=current.deployment_settings.get_ui_formstyle(),
-                       separator=settings.label_separator
+                       fields = [userfield],
+                       hidden = dict(_next=next),
+                       showid = settings.showid,
+                       submit_button = messages.password_reset_button,
+                       delete_label = messages.delete_label,
+                       formstyle = current.deployment_settings.get_ui_formstyle(),
+                       separator = settings.label_separator
                        )
         form.add_class("auth_reset_password")
         if captcha:
@@ -987,8 +1091,8 @@ Thank you"""
             userlat = float(position[0])
             userlon = float(position[1])
             accuracy = float(position[2]) / 1000 # Ensures accuracy is in km
-            closestpoint = 0;
-            closestdistance = 0;
+            closestpoint = 0
+            closestdistance = 0
             gis = current.gis
             # @ToDo: Filter to just Sites & Home Addresses?
             locations = gis.get_features_in_radius(userlat, userlon, accuracy)
@@ -1081,7 +1185,7 @@ Thank you"""
         if log == DEFAULT:
             log = messages.register_log
 
-        labels, required = s3_mark_required(utable)
+        labels = s3_mark_required(utable)[0]
 
         formstyle = deployment_settings.get_ui_formstyle()
         REGISTER = T("Register")
@@ -1332,10 +1436,9 @@ Thank you"""
         """
 
         mailer = self.settings.mailer
-        if not mailer:
+        if not mailer or not mailer.settings.server:
             return False
 
-        import time
         reset_password_key = str(int(time.time())) + '-' + web2py_uuid()
         reset_password_url = "%s/default/user/reset_password?key=%s" % \
                              (current.response.s3.base_url, reset_password_key)
@@ -1456,7 +1559,11 @@ Thank you"""
             utable.utc_offset.writable = True
 
         # Users should not be able to change their Org affiliation
+        # - also hide popup-link to create a new Org (makes
+        #   no sense here if the field is read-only anyway)
         utable.organisation_id.writable = False
+        utable.organisation_id.comment = None
+
         ## Only allowed to select Orgs that the user has update access to
         #utable.organisation_id.requires = \
         #    current.s3db.org_organisation_requires(updateable = True)
@@ -1471,7 +1578,7 @@ Thank you"""
             onaccept = settings.profile_onaccept
         if log == DEFAULT:
             log = messages.profile_log
-        labels, required = s3_mark_required(utable)
+        labels = s3_mark_required(utable)[0]
 
         # If we have an opt_in and some post_vars then update the opt_in value
         opt_in_to_email = deployment_settings.get_auth_opt_in_to_email()
@@ -1645,17 +1752,25 @@ Thank you"""
                           ]
 
         language = utable.language
-        language.label = T("Language")
-        language.comment = DIV(_class="tooltip",
-                               _title="%s|%s" % (T("Language"),
-                                                 T("The language you wish the site to be displayed in.")))
-        languages = current.deployment_settings.get_L10n_languages()
-        language.represent = lambda opt: \
-            languages.get(opt, cmessages.UNKNOWN_OPT)
-        # Default the profile language to the one currently active
-        language.default = T.accepted_language
-        if multiselect_widget:
-            language.widget = S3MultiSelectWidget(multiple=False)
+        languages = deployment_settings.get_L10n_languages()
+        if len(languages) > 1:
+            language.label = T("Language")
+            language.comment = DIV(_class="tooltip",
+                                   _title="%s|%s" % (T("Language"),
+                                                     T("The language you wish the site to be displayed in.")))
+            requires = IS_ISO639_2_LANGUAGE_CODE(sort = True,
+                                                 translate = True,
+                                                 zero = None,
+                                                 )
+            language.represent = requires.represent
+            language.requires = requires
+            # Default the profile language to the one currently active
+            language.default = T.accepted_language
+            if multiselect_widget:
+                language.widget = S3MultiSelectWidget(multiple=False)
+        else:
+            language.default = languages.keys()[0]
+            language.readable = language.writable = False
 
         utc_offset = utable.utc_offset
         utc_offset.label = messages.label_utc_offset
@@ -1673,48 +1788,59 @@ Thank you"""
         #utable.reset_password_key.label = messages.label_registration_key
 
         # Organisation
-        if self.s3_has_role("ADMIN"):
+        is_admin = self.s3_has_role("ADMIN")
+        if is_admin:
             show_org = deployment_settings.get_auth_admin_sees_organisation()
         else:
             show_org = deployment_settings.get_auth_registration_requests_organisation()
+
         if show_org:
-            if pe_ids:
+            if pe_ids and not is_admin:
                 # Filter orgs to just those belonging to the Org Admin's Org
-                # & Descendants (or realms for which they are Org Admin)
+                # & Descendants (or realms for which they are Org Admin):
                 filterby = "pe_id"
                 filter_opts = pe_ids
+                # If the current user can only register users for certain orgs,
+                # then they must not leave this field empty:
+                org_required = True
             else:
                 filterby = None
                 filter_opts = None
+                org_required = deployment_settings.get_auth_registration_organisation_required()
+
             organisation_id = utable.organisation_id
             organisation_id.label = messages.label_organisation_id
             organisation_id.readable = organisation_id.writable = True
-            organisation_id.default = deployment_settings.get_auth_registration_organisation_id_default()
+            organisation_id.default = deployment_settings.get_auth_registration_organisation_default()
             org_represent = s3db.org_organisation_represent
             organisation_id.represent = org_represent
+
             requires = IS_ONE_OF(db, "org_organisation.id",
                                  org_represent,
-                                 filterby=filterby,
-                                 filter_opts=filter_opts,
-                                 orderby="org_organisation.name",
-                                 sort=True)
-            if deployment_settings.get_auth_registration_organisation_required():
+                                 filterby = filterby,
+                                 filter_opts = filter_opts,
+                                 orderby = "org_organisation.name",
+                                 sort = True,
+                                 )
+
+            if org_required:
                 organisation_id.requires = requires
             else:
                 organisation_id.requires = IS_EMPTY_OR(requires)
 
-            from s3layouts import S3PopupLink
-            org_crud_strings = s3db.crud_strings["org_organisation"]
-            organisation_id.comment = S3PopupLink(c = "org",
-                                                  f = "organisation",
-                                                  label = org_crud_strings.label_create,
-                                                  title = org_crud_strings.title_list,
-                                                  )
-            #from s3widgets import S3OrganisationAutocompleteWidget
-            #organisation_id.widget = S3OrganisationAutocompleteWidget()
-            #organisation_id.comment = DIV(_class="tooltip",
-            #                              _title="%s|%s" % (T("Organization"),
-            #                                                cmessages.AUTOCOMPLETE_HELP))
+            if deployment_settings.get_auth_registration_organisation_link_create():
+                from s3layouts import S3PopupLink
+                org_crud_strings = s3db.crud_strings["org_organisation"]
+                organisation_id.comment = S3PopupLink(c = "org",
+                                                      f = "organisation",
+                                                      label = org_crud_strings.label_create,
+                                                      title = org_crud_strings.title_list,
+                                                      )
+                #from s3widgets import S3OrganisationAutocompleteWidget
+                #organisation_id.widget = S3OrganisationAutocompleteWidget()
+                #organisation_id.comment = DIV(_class="tooltip",
+                #                              _title="%s|%s" % (T("Organization"),
+                #                                                cmessages.AUTOCOMPLETE_HELP))
             if multiselect_widget:
                 organisation_id.widget = S3MultiSelectWidget(multiple=False)
 
@@ -1795,18 +1921,20 @@ $.filterOptionsS3({
                 else:
                     field.requires = IS_EMPTY_OR(requires)
 
-        if "profile" in request.args:
-            return
+        # Link User to Organisation (as staff, volunteer, or member)
+        if any(m in request.args for m in ("profile", "user_profile")):
+            # Irrelevant in personal profile
+            link_user_to_opts = False
+        else:
+            link_user_to_opts = deployment_settings.get_auth_registration_link_user_to()
 
-        # Link User to
-        link_user_to_opts = deployment_settings.get_auth_registration_link_user_to()
         if link_user_to_opts:
             link_user_to = utable.link_user_to
             link_user_to_default = deployment_settings.get_auth_registration_link_user_to_default()
             req_vars = request.vars
-            for type in ["staff", "volunteer", "member"]:
-                if "link_user_to_%s" % type in req_vars:
-                    link_user_to_default.append(type)
+            for hrtype in ["staff", "volunteer", "member"]:
+                if "link_user_to_%s" % hrtype in req_vars:
+                    link_user_to_default.append(hrtype)
             if link_user_to_default:
                 link_user_to.default = link_user_to_default
             else:
@@ -1842,7 +1970,7 @@ $.filterOptionsS3({
         otable = s3db.org_organisation
         btable = s3db.org_organisation_branch
 
-        resource, tree = data
+        tree = data[1]
 
         ORG_ADMIN = not self.s3_has_role("ADMIN")
         TRANSLATE = current.deployment_settings.get_L10n_translate_org_organisation()
@@ -1961,7 +2089,7 @@ $.filterOptionsS3({
                     # Don't check again
                     continue
 
-                if pe_tablename == "org_organisation":
+                if pe_tablename == "org_organisation" and pe_field == "name":
                     # This is a non-integer, so must be 1st or only phase
                     (record_id, pe_id) = org_lookup(pe_value)
                 else:
@@ -2321,25 +2449,25 @@ $.filterOptionsS3({
             T.force(language)
             if message == "approve_user":
                 subjects[language] = \
-                    T("%(system_name)s - New User Registration Approval Pending") % \
-                            {"system_name": system_name}
-                messages[language] = auth_messages.approve_user % \
+                    s3_str(T("%(system_name)s - New User Registration Approval Pending") % \
+                            {"system_name": system_name})
+                messages[language] = s3_str(auth_messages.approve_user % \
                             dict(system_name = system_name,
                                  first_name = first_name,
                                  last_name = last_name,
                                  email = email,
                                  url = "%(base_url)s/admin/user/%(id)s" % \
                                     dict(base_url=base_url,
-                                         id=user_id))
+                                         id=user_id)))
             elif message == "new_user":
                 subjects[language] = \
-                    T("%(system_name)s - New User Registered") % \
-                            {"system_name": system_name}
+                    s3_str(T("%(system_name)s - New User Registered") % \
+                            {"system_name": system_name})
                 messages[language] = \
-                    auth_messages.new_user % dict(system_name = system_name,
+                    s3_str(auth_messages.new_user % dict(system_name = system_name,
                                                   first_name = first_name,
                                                   last_name = last_name,
-                                                  email = email)
+                                                  email = email))
 
         # Restore language for UI
         T.force(session.s3.language)
@@ -2521,15 +2649,13 @@ $.filterOptionsS3({
         if link_user_to:
             if "staff" in link_user_to:
                 # Add Staff Record
-                human_resource_id = self.s3_link_to_human_resource(user, person_id,
-                                                                   hr_type=1)
+                self.s3_link_to_human_resource(user, person_id, hr_type=1)
             if "volunteer" in link_user_to:
                 # Add Volunteer Record
-                human_resource_id = self.s3_link_to_human_resource(user, person_id,
-                                                                   hr_type=2)
+                self.s3_link_to_human_resource(user, person_id, hr_type=2)
             if "member" in link_user_to:
                 # Add Member Record
-                member_id = self.s3_link_to_member(user, person_id)
+                self.s3_link_to_member(user, person_id)
 
     # -------------------------------------------------------------------------
     @staticmethod
@@ -2880,7 +3006,7 @@ $.filterOptionsS3({
         user_id = user.id
 
         # Lookup the organisation_id for the domain of this email address
-        approver, organisation_id = self.s3_approver(user)
+        organisation_id = self.s3_approver(user)[1]
         if organisation_id:
             user.organisation_id = organisation_id
         else:
@@ -3847,7 +3973,7 @@ $.filterOptionsS3({
             self.s3_set_roles()
 
     # -------------------------------------------------------------------------
-    def s3_get_roles(self, user_id, for_pe=[]):
+    def s3_get_roles(self, user_id, for_pe=DEFAULT):
         """
             Lookup all roles which have been assigned to user for an entity
 
@@ -3864,7 +3990,7 @@ $.filterOptionsS3({
         if isinstance(for_pe, (list, tuple)):
             if len(for_pe):
                 query &= (mtable.pe_id.belongs(for_pe))
-        else:
+        elif for_pe is not DEFAULT:
             query &= (mtable.pe_id == for_pe)
         rows = current.db(query).select(mtable.group_id)
         return list(set([row.group_id for row in rows]))
@@ -3937,7 +4063,84 @@ $.filterOptionsS3({
         return False
 
     # -------------------------------------------------------------------------
-    def s3_group_members(self, group_id, for_pe=[]):
+    def s3_has_roles(self, roles, for_pe=None, all=False):
+        """
+            Check whether the currently logged-in user has at least one
+            out of a set of roles (or all of them, with all=True)
+
+            @param roles: list|tuple|set of role IDs or UIDs
+            @param for_pe: check for this particular realm, possible values:
+                               None - for any entity
+                               0 - site-wide
+                               X - for entity X
+            @param all: check whether the user has all of the roles
+        """
+
+        # Override
+        if self.override or not roles:
+            return True
+
+        # Get the realms
+        session_s3 = current.session.s3
+        if not session_s3:
+            return False
+        realms = None
+        if self.user:
+            realms = self.user.realms
+        elif session_s3.roles:
+            realms = Storage([(r, None) for r in session_s3.roles])
+        if not realms:
+            return False
+
+        # Administrators have all roles (no need to check)
+        system_roles = self.get_system_roles()
+        if system_roles.ADMIN in realms:
+            return True
+
+        # Resolve any role UIDs
+        if not isinstance(roles, (tuple, list, set)):
+            roles = [roles]
+
+        check = set()
+        resolve = set()
+        for role in roles:
+            if isinstance(role, basestring):
+                resolve.add(role)
+            else:
+                check.add(role)
+
+        if resolve:
+            gtable = self.settings.table_group
+            query = (gtable.uuid.belongs(resolve)) & \
+                    (gtable.deleted != True)
+            rows = current.db(query).select(gtable.id,
+                                            cache = (current.cache.ram, 600),
+                                            )
+            for row in rows:
+                check.add(row.id)
+
+        # Check each role
+        for role in check:
+
+            if role == system_roles.ANONYMOUS:
+                # All users have the anonymous role
+                has_role = True
+            elif role in realms:
+                realm = realms[role]
+                has_role = realm is None or for_pe is None or for_pe in realm
+            else:
+                has_role = False
+
+            if has_role:
+                if not all:
+                    return True
+            elif all:
+                return False
+
+        return bool(all)
+
+    # -------------------------------------------------------------------------
+    def s3_group_members(self, group_id, for_pe=DEFAULT):
         """
             Get a list of members of a group
 
@@ -3953,7 +4156,7 @@ $.filterOptionsS3({
                 (mtable.group_id == group_id)
         if for_pe is None:
             query &= (mtable.pe_id == None)
-        elif for_pe:
+        elif for_pe is not DEFAULT:
             query &= (mtable.pe_id == for_pe)
         members = current.db(query).select(mtable.user_id)
         return [m.user_id for m in members]
@@ -4701,42 +4904,51 @@ $.filterOptionsS3({
             record_id = record[pkey]
         else:
             record_id = record
-        data = Storage()
-        for key in fields:
-            if key in ownership_fields:
-                data[key] = fields[key]
-        if data:
-            s3db = current.s3db
-            db = current.db
 
-            # Update record
-            q = (table._id == record_id)
-            success = db(q).update(**data)
+        data = dict((key, fields[key]) for key in fields
+                                       if key in ownership_fields)
+        if not data:
+            return
+
+        db = current.db
+
+        # Update record
+        q = (table._id == record_id)
+        success = db(q).update(**data)
+
+        if success and update and REALM in data:
 
             # Update realm-components
             # Only goes down 1 level: doesn't do components of components
-            if success and update and REALM in data:
-                rc = s3db.get_config(table, "realm_components", ())
-                resource = s3db.resource(table, components=rc)
-                realm = {REALM:data[REALM]}
-                for component in resource.components.values():
+            s3db = current.s3db
+            realm_components = s3db.get_config(table, "realm_components")
+
+            if realm_components:
+                resource = s3db.resource(table,
+                                         components = realm_components,
+                                         )
+                components = resource.components
+                realm = {REALM: data[REALM]}
+                for alias in realm_components:
+                    component = components.get(alias)
+                    if not component:
+                        continue
                     ctable = component.table
                     if REALM not in ctable.fields:
                         continue
                     query = component.get_join() & q
                     rows = db(query).select(ctable._id)
-                    ids = list(set([row[ctable._id] for row in rows]))
+                    ids = set(row[ctable._id] for row in rows)
                     if ids:
-                        if ctable._ot:
+                        ctablename = component.tablename
+                        if ctable._tablename != ctablename:
                             # Component with table alias => switch to
                             # original table for update:
-                            ctable = db[ctable._ot]
+                            ctable = db[ctablename]
                         db(ctable._id.belongs(ids)).update(**realm)
 
-            # Update super-entity
-            self.update_shared_fields(table, record, **data)
-        else:
-            return None
+        # Update super-entity
+        self.update_shared_fields(table, record, **data)
 
     # -------------------------------------------------------------------------
     def s3_set_record_owner(self,
@@ -5481,7 +5693,7 @@ class S3Permission(object):
                                   default=False),
                             migrate=migrate,
                             fake_migrate=fake_migrate,
-                            *(s3_uid()+s3_timestamp()+s3_deletion_status()))
+                            *S3MetaFields.sync_meta_fields())
             self.table = db[self.tablename]
 
     # -------------------------------------------------------------------------
@@ -6085,6 +6297,13 @@ class S3Permission(object):
             @param record: the record or record ID (None for any record)
         """
 
+        # Auth override, system roles and login
+        auth = self.auth
+        if auth.override:
+            #_debug("==> auth.override")
+            #_debug("*** GRANTED ***")
+            return True
+
         # Multiple methods?
         if isinstance(method, (list, tuple)):
             for m in method:
@@ -6105,12 +6324,6 @@ class S3Permission(object):
         #       record,
         #       )
 
-        # Auth override, system roles and login
-        auth = self.auth
-        if auth.override:
-            #_debug("==> auth.override")
-            #_debug("*** GRANTED ***")
-            return True
         sr = auth.get_system_roles()
         logged_in = auth.s3_logged_in()
         self.check_settings()
@@ -6132,6 +6345,10 @@ class S3Permission(object):
             #_debug("==> user is ADMIN")
             #_debug("*** GRANTED ***")
             return True
+
+        # Fall back to current request
+        c = c or self.controller
+        f = f or self.function
 
         if not self.use_cacls:
             #_debug("==> simple authorization")
@@ -6160,10 +6377,6 @@ class S3Permission(object):
             owners = []
             is_owner = True
             entity = None
-
-        # Fall back to current request
-        c = c or self.controller
-        f = f or self.function
 
         permission_cache = self.permission_cache
         if permission_cache is None:
@@ -6488,8 +6701,8 @@ class S3Permission(object):
                        p=None,
                        t=None,
                        a=None,
-                       args=[],
-                       vars={},
+                       args=None,
+                       vars=None,
                        anchor="",
                        extension=None,
                        env=None):
@@ -6508,6 +6721,11 @@ class S3Permission(object):
             @param extension: the request format extension
             @param env: the environment
         """
+
+        if args is None:
+            args = []
+        if vars is None:
+            vars = {}
 
         if c != "static":
             # Hide disabled modules
@@ -6568,7 +6786,7 @@ class S3Permission(object):
                         c=None,
                         f=None,
                         t=None,
-                        entity=[]):
+                        entity=None):
         """
             Find all applicable ACLs for the specified situation for
             the specified realms and delegations
@@ -6764,12 +6982,15 @@ class S3Permission(object):
                     # @todo: optimize
                     for e in drealm:
                         if e in acls:
-                            for t in ("c", "f", "t"):
-                                if t in acls[e]:
-                                    if t in dacls:
-                                        dacls[t] = most_restrictive(dacls[t], acls[e][t])
+                            for acltype in ("c", "f", "t"):
+                                if acltype in acls[e]:
+                                    if acltype in dacls:
+                                        dacls[acltype] = most_restrictive(
+                                                            dacls[acltype],
+                                                            acls[e][acltype],
+                                                            )
                                     else:
-                                        dacls[t] = acls[e][t]
+                                        dacls[acltype] = acls[e][acltype]
                         acls[e] = dacls
 
         acl = acls.get(ANY, {})
@@ -6789,13 +7010,19 @@ class S3Permission(object):
         if "t" in acl:
             default_table_acl = acl["t"]
         elif table_restricted:
-            default_table_acl = default_page_acl
+            default_table_acl = default_page_acl if page_restricted else NONE
         else:
-            default_table_acl = ALL
+            default_table_acl = default_page_acl if page_restricted else ALL
 
-        # Fall back to default page acl
-        if not acls and not (t and self.use_tacls):
-            acls[ANY] = {"c": default_page_acl}
+        # No ACLs inevitably causes a "no applicable ACLs" permission failure,
+        # so for unrestricted pages or tables, we must create a default ACL
+        # here in order to have the default apply:
+        if not acls:
+            if t and self.use_tacls:
+                if not table_restricted:
+                    acls[ANY] = {"t": default_table_acl}
+            elif not page_restricted:
+                acls[ANY] = {"c": default_page_acl}
 
         # Order by precedence
         s3db = current.s3db
@@ -6849,7 +7076,8 @@ class S3Permission(object):
                 result[key] = acl
 
         #for pe in result:
-        #    print "ACL for PE %s: %04X %04X" % (pe, result[pe][0], result[pe][1])
+        #    sys.stderr.write("ACL for PE %s: %04X %04X\n" %
+        #                        (pe, result[pe][0], result[pe][1]))
 
         return result
 
@@ -6865,15 +7093,17 @@ class S3Permission(object):
             @param f: function name
         """
 
-        modules = current.deployment_settings.modules
 
         page = "%s/%s" % (c, f)
         if page in self.unrestricted_pages:
-            return False
-        elif c not in modules or \
-             c in modules and not modules[c].restricted:
-            return False
-        return True
+            restricted = False
+        elif c != "default" or f not in ("tables", "table"):
+            modules = current.deployment_settings.modules
+            restricted = c in modules and modules[c].restricted
+        else:
+            restricted = True
+
+        return restricted
 
     # -------------------------------------------------------------------------
     def table_restricted(self, t=None):
@@ -7298,9 +7528,9 @@ class S3Audit(object):
                     fieldname, new_value = v.split(":", 1)
                     old_value = old_values.get(fieldname, None)
                     if new_value != old_value:
-                        type = table[fieldname].type
-                        if type == "integer" or \
-                           type.startswith("reference"):
+                        ftype = table[fieldname].type
+                        if ftype == "integer" or \
+                           ftype.startswith("reference"):
                             if new_value:
                                 new_value = int(new_value)
                             if new_value == old_value:
@@ -9148,6 +9378,10 @@ class S3EntityRoleManager(S3Method):
 class S3OrgRoleManager(S3EntityRoleManager):
 
     def __init__(self, *args, **kwargs):
+        """
+            Constructor
+        """
+
         super(S3OrgRoleManager, self).__init__(*args, **kwargs)
 
         # dictionary {id: name, ...} of user accounts
@@ -9174,9 +9408,15 @@ class S3OrgRoleManager(S3EntityRoleManager):
             @return: dictionary containing the ID and name of the entity
         """
 
-        entity = dict(id=int(self.request.record.pe_id))
-        entity["name"] = current.s3db.pr_get_entities(pe_ids=[entity["id"]],
-                                                      types=self.ENTITY_TYPES)[entity["id"]]
+        entity_id = int(self.request.record.pe_id)
+
+        entity = {"id": entity_id,
+                  "name": current.s3db.pr_get_entities(
+                                          pe_ids = [entity_id],
+                                          types = self.ENTITY_TYPES,
+                                          )[entity_id],
+                  }
+
         return entity
 
     # -------------------------------------------------------------------------
@@ -9204,7 +9444,7 @@ class S3OrgRoleManager(S3EntityRoleManager):
         return self.user
 
     # -------------------------------------------------------------------------
-    def get_assigned_roles(self):
+    def get_assigned_roles(self, entity_id=None, user_id=None):
         """
             Override to get assigned roles for this entity
 
@@ -9212,6 +9452,7 @@ class S3OrgRoleManager(S3EntityRoleManager):
         """
 
         assigned_roles = super(S3OrgRoleManager, self).get_assigned_roles
+
         return assigned_roles(entity_id=self.entity["id"])
 
     # -------------------------------------------------------------------------
@@ -9229,27 +9470,34 @@ class S3OrgRoleManager(S3EntityRoleManager):
 
         if not self.user:
             assigned_roles = self.assigned_roles
-            realm_users = Storage([(k, v)
-                                    for k, v in self.realm_users.items()
-                                    if k not in assigned_roles])
 
-            nonrealm_users = Storage([(k, v)
-                                       for k, v in self.objects.items()
-                                       if k not in assigned_roles and \
-                                          k not in self.realm_users])
+            realm_users = dict((k, v)
+                               for k, v in self.realm_users.items()
+                               if k not in assigned_roles)
+
+            other_users = dict((k, v)
+                               for k, v in self.objects.items()
+                               if k not in assigned_roles and \
+                                  k not in self.realm_users)
 
             options = [("", ""),
                        (T("Users in my Organizations"), realm_users),
-                       (T("Other Users"), nonrealm_users)]
+                       (T("Other Users"), other_users),
+                       ]
+
+            widget = lambda field, value: \
+                            S3GroupedOptionsWidget.widget(field,
+                                                          value,
+                                                          options=options,
+                                                          )
 
             object_field = Field("foreign_object",
-                                 T("User"),
-                                 requires=IS_IN_SET(self.objects),
-                                 widget=lambda field, value:
-                                     S3GroupedOptionsWidget.widget(field,
-                                                                 value,
-                                                                 options=options))
+                                 label = T("User"),
+                                 requires = IS_IN_SET(self.objects),
+                                 widget = widget,
+                                 )
             fields.insert(0, object_field)
+
         return fields
 
 # =============================================================================
@@ -9326,15 +9574,16 @@ class S3PersonRoleManager(S3EntityRoleManager):
         return self.entity
 
     # -------------------------------------------------------------------------
-    def get_assigned_roles(self):
+    def get_assigned_roles(self, entity_id=None, user_id=None):
         """
             @todo: description?
 
             @return: dictionary of assigned roles with entity pe_id as the keys
         """
 
-        user_id = self.user["id"]
-        return super(S3PersonRoleManager, self).get_assigned_roles(user_id=user_id)
+        assigned_roles = super(S3PersonRoleManager, self).get_assigned_roles
+
+        return assigned_roles(user_id=self.user["id"])
 
     # -------------------------------------------------------------------------
     def get_form_fields(self):
@@ -9364,13 +9613,17 @@ class S3PersonRoleManager(S3EntityRoleManager):
                                     if entity_id not in self.assigned_roles])
                 filtered_options.append((nice_name(entity_type), entities))
 
+            widget = lambda field, value: \
+                     S3GroupedOptionsWidget.widget(field,
+                                                   value,
+                                                   options=filtered_options,
+                                                   )
+
             object_field = Field("foreign_object",
-                                 current.T("Entity"),
-                                 requires=IS_IN_SET(self.objects),
-                                 widget=lambda field, value:
-                                     S3GroupedOptionsWidget.widget(field,
-                                                                   value,
-                                                                   options=filtered_options))
+                                 label = current.T("Entity"),
+                                 requires = IS_IN_SET(self.objects),
+                                 widget = widget,
+                                 )
             fields.insert(0, object_field)
 
         return fields

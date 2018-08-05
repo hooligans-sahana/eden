@@ -16,6 +16,7 @@ def config(settings):
 
     # Theme (folder to use for views/layout.html)
     settings.base.theme = "SAMBRO.MM"
+    settings.base.theme_base = "default"
 
     # Default Language
     settings.L10n.default_language = "my"
@@ -23,8 +24,9 @@ def config(settings):
     # L10n (Localization) settings
     languages = OrderedDict([
         ("en-US", "English"),
-        ("my", "မြန်မာစာ"),        # Burmese
+        ("my", "Burmese"),
     ])
+    settings.cap.languages = languages
     settings.L10n.languages = languages
 
     # Alert Hub Title

@@ -2,7 +2,7 @@
 
 """ S3 Framework Tables
 
-    @copyright: 2009-2017 (c) Sahana Software Foundation
+    @copyright: 2009-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -57,7 +57,7 @@ class S3HierarchyModel(S3Model):
                                 default = False,
                                 ),
                           Field("hierarchy", "json"),
-                          *s3_timestamp())
+                          *S3MetaFields.timestamps())
 
         # ---------------------------------------------------------------------
         # Return global names to s3.*
@@ -79,45 +79,42 @@ class S3DashboardModel(S3Model):
 
     def model(self):
 
-        define_table = self.define_table
-        configure = self.configure
-
         # ---------------------------------------------------------------------
         # Stored Dashboard Configuration
         #
         tablename = "s3_dashboard"
-        define_table(tablename,
-                     Field("controller", length = 64,
-                           requires = IS_NOT_EMPTY(),
-                           ),
-                     Field("function", length = 512,
-                           requires = IS_NOT_EMPTY(),
-                           ),
-                     Field("version", length = 40,
-                           readable = False,
-                           writable = False,
-                           ),
-                     Field("next_id", "integer",
-                           readable = False,
-                           writable = False,
-                           ),
-                     Field("layout",
-                           default = S3DashboardConfig.DEFAULT_LAYOUT,
-                           requires = IS_NOT_EMPTY(),
-                           ),
-                     Field("title",
-                           ),
-                     Field("widgets", "json",
-                           requires = IS_JSONS3(),
-                           ),
-                     Field("active", "boolean",
-                           default = True,
-                           ),
-                     *s3_meta_fields())
+        self.define_table(tablename,
+                          Field("controller", length = 64,
+                                requires = IS_NOT_EMPTY(),
+                                ),
+                          Field("function", length = 512,
+                                requires = IS_NOT_EMPTY(),
+                                ),
+                          Field("version", length = 40,
+                                readable = False,
+                                writable = False,
+                                ),
+                          Field("next_id", "integer",
+                                readable = False,
+                                writable = False,
+                                ),
+                          Field("layout",
+                                default = S3DashboardConfig.DEFAULT_LAYOUT,
+                                requires = IS_NOT_EMPTY(),
+                                ),
+                          Field("title",
+                                ),
+                          Field("widgets", "json",
+                                requires = IS_JSONS3(),
+                                ),
+                          Field("active", "boolean",
+                                default = True,
+                                ),
+                          *s3_meta_fields())
 
-        configure(tablename,
-                  onaccept = self.dashboard_onaccept,
-                  )
+        self.configure(tablename,
+                       onaccept = self.dashboard_onaccept,
+                       )
 
         # ---------------------------------------------------------------------
         # Link Dashboard Config <=> Person Entity
@@ -204,7 +201,6 @@ class S3DynamicTablesModel(S3Model):
                            # Set a random name as default, so this field
                            # can be hidden from the users (one-time default)
                            default = "%s_%s" % (DYNAMIC_PREFIX, self.random_name()),
-                           filter_in = self.s3_table_name_filter_in,
                            label = T("Table Name"),
                            represent = self.s3_table_name_represent(),
                            requires = [IS_NOT_EMPTY(),
@@ -234,7 +230,10 @@ class S3DynamicTablesModel(S3Model):
                                          ),
                            ),
                      #s3_comments(),
-                     *s3_meta_fields())
+                     *s3_meta_fields(),
+                     on_define = lambda table: \
+                                 [self.s3_table_set_before_write(table)]
+                     )
 
         # Components
         self.add_components(tablename,
@@ -416,25 +415,38 @@ class S3DynamicTablesModel(S3Model):
 
     # -------------------------------------------------------------------------
     @classmethod
-    def s3_table_name_filter_in(cls, name):
+    def s3_table_set_before_write(cls, table):
         """
-            Make sure default table names are used only once (even if
-            multiple records are written during the same request cycle,
-            e.g. schema imports)
+            Set functions to call before write
 
-            @param name: the name currently being written
+            @param table: the table (s3_table)
+        """
+
+        update_default = cls.s3_table_name_update_default
+
+        table._before_insert.append(update_default)
+        table._before_update.append(lambda s, data: update_default(data))
+
+    # -------------------------------------------------------------------------
+    @classmethod
+    def s3_table_name_update_default(cls, data):
+        """
+            Set a new default table name when the current default
+            is written (to prevent duplicates, i.e. single-use default)
+
+            @param data: the data currently being written
+
+            @returns: nothing (otherwise insert/update will not work)
         """
 
         table = current.s3db.s3_table
         field = table.name
 
-        if not name:
-            return field.default
-        elif name == field.default:
+        name = data.get("name")
+        if not name or name == field.default:
             # The name currently being written is the default,
             # => set a new default for subsequent writes
             field.default = "%s_%s" % (DYNAMIC_PREFIX, cls.random_name())
-        return name
 
     # -------------------------------------------------------------------------
     @staticmethod
@@ -624,11 +636,9 @@ def s3_table_rheader(r, tabs=None):
         # Resource headers only used in interactive views
         return None
 
-    record = r.record
-    resource = r.resource
-
     rheader = None
 
+    record = r.record
     if record:
 
         T = current.T
@@ -649,7 +659,7 @@ def s3_table_rheader(r, tabs=None):
                               ]
 
         rheader = S3ResourceHeader(rheader_fields, tabs)(r,
-                                                         table = resource.table,
+                                                         table = r.resource.table,
                                                          record = record,
                                                          )
 

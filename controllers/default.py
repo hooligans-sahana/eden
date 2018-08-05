@@ -20,8 +20,13 @@ def download():
     try:
         filename = request.args[0]
     except:
-        session.error("Need to specify the file to download!")
-        redirect(URL(f="index"))
+        # No legitimate interactive request comes here without a filename,
+        # so this hits mainly non-interactive clients, and those do not
+        # recognize an error condition from a HTTP 303 => better to raise
+        # a proper error than to redirect:
+        raise HTTP(400, "No file specified")
+        #session.error = T("Need to specify the file to download!")
+        #redirect(URL(f="index"))
 
     # Check Permissions
     tablename = filename.split(".", 1)[0]
@@ -57,7 +62,7 @@ def register_validation(form):
         if not regex.match(home):
             form.errors.home = T("Invalid phone number")
 
-    org = settings.get_auth_registration_organisation_id_default()
+    org = settings.get_auth_registration_organisation_default()
     if org:
         # Add to default organisation
         form_vars.organisation_id = org
@@ -83,24 +88,25 @@ def index():
                 page = pname
                 break
 
+    # Module name for custom controllers
+    name = "controllers"
+
     custom = None
     templates = settings.get_template()
+
     if page:
         # Go to a custom page,
         # - args[0] = name of the class in /modules/templates/<template>/controllers.py
         # - other args & vars passed through
-        template_location = settings.get_template_location()
         if not isinstance(templates, (tuple, list)):
             templates = (templates,)
         for template in templates[::-1]:
-            package = "applications.%s.%s.templates.%s" % \
-                        (appname, template_location, template)
-            name = "controllers"
+            package = "applications.%s.modules.templates.%s" % (appname, template)
             try:
                 custom = getattr(__import__(package, fromlist=[name]), name)
             except (ImportError, AttributeError):
                 # No Custom Page available, continue with the default
-                #page = "%s/templates/%s/controllers.py" % (location, template)
+                #page = "modules/templates/%s/controllers.py" % template
                 #current.log.warning("File not loadable",
                 #                    "%s, %s" % (page, sys.exc_info()[1]))
                 continue
@@ -116,15 +122,10 @@ def index():
 
     elif templates != "default":
         # Try a Custom Homepage
-        name = "controllers"
-        template_location = settings.get_template_location()
         if not isinstance(templates, (tuple, list)):
             templates = (templates,)
         for template in templates[::-1]:
-            package = "applications.%s.%s.templates.%s" % \
-                        (appname,
-                         template_location,
-                         template)
+            package = "applications.%s.modules.templates.%s" % (appname, template)
             try:
                 custom = getattr(__import__(package, fromlist=[name]), name)
             except (ImportError, AttributeError):
@@ -411,9 +412,9 @@ def organisation():
 
     resource = s3db.resource("org_organisation")
     totalrows = resource.count()
-    display_start = int(get_vars.displayStart) if get_vars.displayStart else 0
-    display_length = int(get_vars.pageLength) if get_vars.pageLength else 10
-    limit = 4 * display_length
+    display_start = int(get_vars.start) if get_vars.start else 0
+    display_length = int(get_vars.limit) if get_vars.limit else 10
+    limit = display_length
 
     list_fields = ["id", "name"]
     default_orderby = orderby = "org_organisation.name asc"
@@ -423,6 +424,8 @@ def organisation():
             orderby = default_orderby
         if query:
             resource.add_filter(query)
+    else:
+        limit = 4 * limit
 
     data = resource.select(list_fields,
                            start=display_start,
@@ -551,6 +554,10 @@ def user():
         auth_settings.actions_disabled = ("change_password",
                                           "retrieve_password",
                                           )
+    elif not settings.get_auth_password_retrieval():
+        # Block password retrieval
+        auth_settings.actions_disabled = ("retrieve_password",
+                                          )
 
     # Check for template-specific customisations
     customise = settings.customise_auth_user_controller
@@ -624,12 +631,11 @@ def user():
     if templates != "default":
         # Try a Custom View
         folder = request.folder
-        template_location = settings.get_template_location()
         if not isinstance(templates, (tuple, list)):
             templates = (templates,)
         for template in templates[::-1]:
             view = os.path.join(folder,
-                                template_location,
+                                "modules",
                                 "templates",
                                 template,
                                 "views",
@@ -644,12 +650,12 @@ def user():
                 else:
                     break
 
-    return dict(title = title,
-                form = form,
-                login_form = login_form,
-                register_form = register_form,
-                self_registration = self_registration,
-                )
+    return {"title": title,
+            "form": form,
+            "login_form": login_form,
+            "register_form": register_form,
+            "self_registration": self_registration,
+            }
 
 # -----------------------------------------------------------------------------
 def person():
@@ -762,38 +768,38 @@ def person():
 
                     # Create forms use this
                     # (update forms are in gis/config())
-                    fields = ["name",
-                              "pe_default",
-                              "default_location_id",
-                              "zoom",
-                              "lat",
-                              "lon",
-                              #"projection_id",
-                              #"symbology_id",
-                              #"wmsbrowser_url",
-                              #"wmsbrowser_name",
-                              ]
+                    crud_fields = ["name",
+                                   "pe_default",
+                                   "default_location_id",
+                                   "zoom",
+                                   "lat",
+                                   "lon",
+                                   #"projection_id",
+                                   #"symbology_id",
+                                   #"wmsbrowser_url",
+                                   #"wmsbrowser_name",
+                                   ]
                     osm_table = s3db.gis_layer_openstreetmap
                     openstreetmap = db(osm_table.deleted == False).select(osm_table.id,
                                                                           limitby=(0, 1))
                     if openstreetmap:
                         # OpenStreetMap config
                         s3db.add_components("gis_config",
-                                            auth_user_options={"joinby": "pe_id",
-                                                               "pkey": "pe_id",
-                                                               "multiple": False,
-                                                              },
+                                            auth_user_options = {"joinby": "pe_id",
+                                                                 "pkey": "pe_id",
+                                                                 "multiple": False,
+                                                                 },
                                            )
-                        fields += ["user_options.osm_oauth_consumer_key",
-                                   "user_options.osm_oauth_consumer_secret",
-                                   ]
-                    crud_form = s3base.S3SQLCustomForm(*fields)
+                        crud_fields += ["user_options.osm_oauth_consumer_key",
+                                        "user_options.osm_oauth_consumer_secret",
+                                        ]
+                    crud_form = s3base.S3SQLCustomForm(*crud_fields)
                     list_fields = ["name",
                                    "pe_default",
                                    ]
                     s3db.configure("gis_config",
-                                   crud_form=crud_form,
-                                   insertable=False,
+                                   crud_form = crud_form,
+                                   insertable = False,
                                    list_fields = list_fields,
                                    )
             else:
@@ -895,7 +901,7 @@ def person():
 
     setting = settings.get_pr_contacts_tabs()
     if setting:
-        contacts_tab = (T("Contacts"), "contacts")
+        contacts_tab = (settings.get_pr_contacts_tab_label(), "contacts")
     else:
         contacts_tab = None
 
@@ -1083,9 +1089,9 @@ def about():
        settings.get_security_version_info_requires_login() and \
        not auth.s3_logged_in():
 
-        return dict(details = "",
-                    item = item,
-                    )
+        return {"details": "",
+                "item": item,
+                }
 
     import platform
     import string
@@ -1246,11 +1252,9 @@ def about():
                   _class="table-container")
                   )
 
-    response.title = T("About")
-
-    return dict(details = details,
-                item = item,
-                )
+    return {"item": item,
+            "details": details,
+            }
 
 # -----------------------------------------------------------------------------
 def help():
@@ -1383,12 +1387,10 @@ def contact():
     templates = settings.get_template()
     if templates != "default":
         # Try a Custom Controller
-        location = settings.get_template_location()
         if not isinstance(templates, (tuple, list)):
             templates = (templates,)
         for template in templates[::-1]:
-            package = "applications.%s.%s.templates.%s" % \
-                        (appname, location, template)
+            package = "applications.%s.modules.templates.%s" % (appname, template)
             name = "controllers"
             try:
                 custom = getattr(__import__(package, fromlist=[name]), name)
@@ -1403,7 +1405,7 @@ def contact():
         # Try a Custom View
         for template in templates:
             view = os.path.join(request.folder,
-                                location,
+                                "modules",
                                 "templates",
                                 template,
                                 "views",
@@ -1521,13 +1523,12 @@ def _custom_view(filename):
     templates = settings.get_template()
     if templates != "default":
         folder = request.folder
-        template_location = settings.get_template_location()
         if not isinstance(templates, (tuple, list)):
             templates = (templates,)
         for template in templates[::-1]:
             # Try a Custom View
             view = os.path.join(folder,
-                                template_location,
+                                "modules",
                                 "templates",
                                 template,
                                 "views",

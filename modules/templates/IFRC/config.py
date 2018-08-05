@@ -22,8 +22,10 @@ def config(settings):
 
     # -------------------------------------------------------------------------
     # Pre-Populate
-    #settings.base.prepopulate += ("IFRC", "IFRC/Train", "IFRC/Demo")
-    settings.base.prepopulate += ("IFRC", "IFRC/Train")
+    settings.base.prepopulate += ("IFRC",)
+    settings.base.prepopulate_demo += ("IFRC/Train",
+                                       #"IFRC/Demo", # Takes a long time to import
+                                       )
 
     settings.base.system_name = T("Resource Management System")
     settings.base.system_name_short = T("RMS")
@@ -51,6 +53,8 @@ def config(settings):
                                                }
 
     settings.auth.record_approval = True
+    # System-generated Surveys need to be Approved/Rejected
+    settings.auth.record_approval_required_for = ("dc_target",)
 
     # @ToDo: Should we fallback to organisation_id if site_id is None?
     settings.auth.registration_roles = {"site_id": ["reader",
@@ -281,20 +285,25 @@ def config(settings):
     # -------------------------------------------------------------------------
     # L10n (Localization) settings
     settings.L10n.languages = OrderedDict([
-        ("ar", "العربية"),
+        ("ar", "Arabic"),
+        #("dv", "Divehi"), # Maldives
+        #("dz", "Dzongkha"), # Bhutan
         ("en-gb", "English"),
-        ("es", "Español"),
-        ("fr", "Français"),
-        ("km", "ភាសាខ្មែរ"),        # Khmer
-        ("mg", "Мalagasy"),
-        ("mn", "Монгол хэл"),  # Mongolian
-        ("my", "မြန်မာစာ"),        # Burmese
-        ("ne", "नेपाली"),          # Nepali
-        ("prs", "دری"),        # Dari
-        ("ps", "پښتو"),        # Pashto
-        #("th", "ภาษาไทย"),                           # Thai
-        ("vi", "Tiếng Việt"),  # Vietnamese
-        ("zh-cn", "中文 (简体)"),
+        ("es", "Spanish"),
+        ("fr", "French"),
+        ("id", "Indonesian"),
+        ("km", "Khmer"), # Cambodia
+        ("lo", "Lao"),
+        ("mg", "Мalagasy"), # Madagascar
+        ("mn", "Mongolian"),
+        ("ms", "Malaysian"),
+        ("my", "Burmese"),
+        ("ne", "Nepali"),
+        ("prs", "Dari"), # Afghan  Persian
+        ("ps", "Pashto"), # Afghanistan, Pakistan
+        ("th", "Thai"),
+        ("vi", "Vietnamese"),
+        ("zh-cn", "Chinese (Simplified)"), # Mainland
     ])
     # Default Language
     settings.L10n.default_language = "en-gb"
@@ -526,6 +535,11 @@ def config(settings):
     # Module Settings
 
     # -------------------------------------------------------------------------
+    # Data Collection
+    settings.dc.response_label = "Survey"
+    settings.dc.unique_question_names_per_template = True
+
+    # -------------------------------------------------------------------------
     # Organisation Management
     # Enable the use of Organisation Branches
     settings.org.branches = True
@@ -584,6 +598,7 @@ def config(settings):
     settings.pr.lookup_duplicates = True
 
     # RDRT
+    settings.hrm.job_title_deploy = True
     settings.deploy.hr_label = "Member"
     settings.deploy.team_label = "RDRT"
     # Responses only come in via Email
@@ -702,6 +717,13 @@ def config(settings):
                 restricted = False,
                 #module_type = None  # No Menu
             )),
+        ("setup", Storage(
+            name_nice = T("Setup"),
+            #description = "WebSetup",
+            restricted = True,
+            access = "|1|",     # Only Administrators can see this module in the default menu & access the controller
+             module_type = None  # No Menu
+        )),
         ("sync", Storage(
                 name_nice = T("Synchronization"),
                 #description = "Synchronization",
@@ -808,7 +830,15 @@ def config(settings):
                 restricted = True,
                 #module_type = None
             )),
+        # Old Surveys module
         ("survey", Storage(
+                name_nice = T("Assessments"),
+                #description = "Create, enter, and manage surveys.",
+                restricted = True,
+                #module_type = 5,
+            )),
+        # New Surveys module (currently just used by Bangkok CCST for Training Monitoring)
+        ("dc", Storage(
                 name_nice = T("Assessments"),
                 #description = "Create, enter, and manage surveys.",
                 restricted = True,
@@ -1031,6 +1061,21 @@ def config(settings):
             return {}
 
     # -------------------------------------------------------------------------
+    def user_org_root_default_filter(selector, tablename=None):
+        """
+            Default filter for organisation_id:
+            * Use the user's root organisation if logged-in and associated with
+              an organisation.
+        """
+
+        user_root_org_id = current.auth.root_org()
+        if user_root_org_id:
+            return user_root_org_id
+        else:
+            # no default
+            return {}
+
+    # -------------------------------------------------------------------------
     def user_org_and_children_default_filter(selector, tablename=None):
         """
             Default filter for organisation_id:
@@ -1145,8 +1190,11 @@ def config(settings):
     def mandatory_last_name(default):
         """ Whether the Last Name is Mandatory """
 
-        root_org = current.auth.root_org_name()
+        auth = current.auth
+        root_org = auth.root_org_name()
         if root_org in (ARCS, IRCS, CRMADA):
+            return False
+        elif auth.s3_has_roles(("EVENT_MONITOR", "EVENT_ORGANISER")):
             return False
         return True
 
@@ -1167,6 +1215,55 @@ def config(settings):
             return default
 
     settings.hrm.course_types = hrm_course_types
+
+    def hrm_event_course_mandatory(default):
+        """ Whether (Training) Event Courses are mandatory """
+
+        if current.auth.s3_has_roles(("EVENT_MONITOR", "EVENT_ORGANISER")):
+            return False
+        else:
+            # True
+            return default
+
+    settings.hrm.event_course_mandatory = hrm_event_course_mandatory
+
+    #def hrm_event_programme(default):
+    #    """ Whether (Training) Events link to Programmes """
+
+    #    if current.auth.s3_has_roles(("EVENT_MONITOR", "EVENT_ORGANISER", "EVENT_OFFICE_MANAGER")):
+    #        # Link to Programmes
+    #        return True
+    #    else:
+    #        # False
+    #        return default
+
+    #settings.hrm.event_programme = hrm_event_programme
+
+    def hrm_event_site(default):
+        """ Whether (Training) Events use a Site (or Location) """
+
+        auth = current.auth
+        if not auth.s3_has_role("ADMIN") and \
+           auth.s3_has_roles(("EVENT_MONITOR", "EVENT_ORGANISER")):
+            # Use a Location (e.g. Country or Country/L1)
+            return False
+        else:
+            # True: Use Site
+            return default
+
+    settings.hrm.event_site = hrm_event_site
+
+    def hrm_event_types(default):
+        """ Whether (Training) Events have multiple Types to choose from """
+
+        if current.auth.s3_has_roles(("EVENT_MONITOR", "EVENT_ORGANISER", "EVENT_OFFICE_MANAGER")):
+            # Use Event Types
+            return True
+        else:
+            # False: No
+            return default
+
+    settings.hrm.event_types = hrm_event_types
 
     def hrm_use_certificates(default):
         """ Whether to use Certificates """
@@ -1357,6 +1454,12 @@ def config(settings):
         root_org = current.auth.root_org_name()
         if root_org == NRCS:
             return "both"
+
+        elif current.auth.s3_has_roles(("EVENT_MONITOR", "EVENT_ORGANISER", "EVENT_OFFICE_MANAGER")):
+            # Use Status field
+            return None
+
+        # External
         return default
 
     settings.hrm.training_instructors = training_instructors
@@ -1463,9 +1566,9 @@ def config(settings):
                                         "group",
                                         label = T("Team"),
                                         fields = [("", "group_id")],
-                                        filterby = dict(field = "group_type",
-                                                        options = 3,
-                                                        ),
+                                        filterby = {"field": "group_type",
+                                                    "options": 3,
+                                                    },
                                         multiple = False,
                                         ),
                                     "comments",
@@ -1510,6 +1613,1259 @@ def config(settings):
         return attr
 
     settings.customise_auth_user_controller = customise_auth_user_controller
+
+    # -------------------------------------------------------------------------
+    def dc_rheader(r, tabs=None):
+        """
+            Custom rheader for Bangkok CCST
+        """
+
+        if r.representation != "html":
+            return None
+
+        from s3 import S3ResourceHeader, s3_rheader_resource
+
+        s3db = current.s3db
+        tablename, record = s3_rheader_resource(r)
+        if tablename != r.tablename:
+            resource = s3db.resource(tablename, id=record.id)
+        else:
+            resource = r.resource
+
+        rheader = None
+        rheader_fields = []
+
+        if record:
+
+            if tablename == "dc_template":
+
+                tabs = ((T("Basic Details"), None),
+                        (T("Sections"), "section"),
+                        (T("Questions"), "question"),
+                        )
+
+                rheader_fields = (["name"],
+                                  )
+
+            elif tablename == "dc_response":
+
+                auth = current.auth
+                if not auth.s3_has_role("ADMIN") and \
+                       auth.s3_has_roles(("EVENT_MONITOR", "EVENT_ORGANISER", "EVENT_OFFICE_MANAGER")):
+                    # MFP shouldn't see the Individual Answers
+                    tabs = []
+                else:
+                    tabs = (#(T("Basic Details"), None, {"native": 1}),
+                            (T("Answers"), "answer"),
+                            #(T("Attachments"), "document"),
+                            )
+
+                from gluon import A, URL
+
+                db = current.db
+
+                def contacts(record):
+                    ptable = s3db.pr_person
+                    ctable = s3db.pr_contact
+                    query = (ptable.id == record.person_id) & \
+                            (ptable.pe_id == ctable.pe_id) & \
+                            (ctable.deleted == False)
+                    data = db(query).select(ctable.value,
+                                            ctable.contact_method,
+                                            ctable.priority,
+                                            orderby = ~ctable.priority,
+                                            )
+                    if data:
+                        # Prioritise Phone then Email
+                        email = None
+                        other = None
+                        for contact in data:
+                            if contact.contact_method == "SMS":
+                                return contact.value
+                            elif contact.contact_method == "Email":
+                                if not email:
+                                    email = contact.value
+                            else:
+                                if not other:
+                                    other = contact.value
+                        return email or other
+                    else:
+                        # @ToDo: Provide an Edit button
+                        return A(T("Add"))
+
+                etable = s3db.hrm_training_event
+                ltable = s3db.hrm_event_target
+                ttable = s3db.dc_target
+                query = (ttable.id == record.target_id) & \
+                        (ltable.target_id == ttable.id) & \
+                        (ltable.training_event_id == etable.id)
+                training_event = db(query).select(ttable.date,
+                                                  etable.id,
+                                                  etable.name,
+                                                  etable.start_date,
+                                                  etable.location_id,
+                                                  limitby = (0, 1),
+                                                  ).first()
+
+                def event_name(record):
+                    try:
+                        return A(training_event["hrm_training_event"].name,
+                                 _href=URL(c="hrm", f="training_event", args=training_event["hrm_training_event"].id),
+                                 )
+                    except:
+                        return current.messages["NONE"]
+
+                def event_location(record):
+                    try:
+                        location_id = training_event["hrm_training_event"].location_id
+                    except:
+                        return current.messages["NONE"]
+                    return etable.location_id.represent(location_id)
+
+                def event_date(record):
+                    try:
+                        date = training_event["hrm_training_event"].start_date
+                    except:
+                        return current.messages["NONE"]
+                    return etable.start_date.represent(date)
+
+                def survey_date(record):
+                    try:
+                        date = training_event["dc_target"].date
+                    except:
+                        return current.messages["NONE"]
+                    return ttable.date.represent(date)
+
+                rheader_fields = [[(T("Event Name"), event_name)],
+                                  [(T("Event Location"), event_location)],
+                                  [(T("Event Date"), event_date)],
+                                  #["template_id"],
+                                  #["location_id"],
+                                  [(T("Survey Date"), survey_date)],
+                                  [(T("Response Date"), "date")],
+                                  ]
+                if current.auth.s3_has_roles(("EVENT_MONITOR", "EVENT_ORGANISER", "EVENT_OFFICE_MANAGER")):
+                    rheader_fields += [["person_id"],
+                                       [(T("Contact Details"), contacts)],
+                                       ]
+
+            elif tablename == "dc_target":
+
+                tabs = ((T("Basic Details"), None),
+                        (T("Report"), "results"),
+                        (T("Responses"), "response"),
+                        )
+
+                db = current.db
+
+                etable = s3db.hrm_training_event
+                ltable = s3db.hrm_event_target
+                query = (ltable.target_id == record.id) & \
+                        (ltable.training_event_id == etable.id)
+                training_event = db(query).select(etable.id,
+                                                  etable.name,
+                                                  etable.start_date,
+                                                  etable.location_id,
+                                                  limitby = (0, 1),
+                                                  ).first()
+
+                def event_name(record):
+                    try:
+                        return training_event.name
+                    except:
+                        return current.messages["NONE"]
+
+                def event_location(record):
+                    try:
+                        location_id = training_event.location_id
+                    except:
+                        return current.messages["NONE"]
+                    return etable.location_id.represent(location_id)
+
+                def event_date(record):
+                    try:
+                        date = training_event.start_date
+                    except:
+                        return current.messages["NONE"]
+                    return etable.start_date.represent(date)
+
+                rheader_fields = [[(T("Event Name"), event_name)],
+                                  [(T("Event Location"), event_location)],
+                                  [(T("Event Date"), event_date)],
+                                  #["template_id"],
+                                  #["location_id"],
+                                  [(T("Survey Date"), "date")],
+                                  [(T("Survey Template"), "template_id")],
+                                  ]
+
+            rheader = S3ResourceHeader(rheader_fields, tabs)(r,
+                                                             table = resource.table,
+                                                             record = record,
+                                                             )
+
+            if tablename == "dc_target":
+                if r.component_name == "response" and r.method == "create":
+                    # Simplified UI
+                    return None
+
+                from gluon import A, URL
+
+                try:
+                    training_event_id = training_event.id
+                except:
+                    pass
+                else:
+                    button = A(T("Notify Participants"),
+                               _href = URL(c = "hrm",
+                                           f = "training_event",
+                                           args = [training_event_id, "notify"]
+                                           ),
+                               _id = "notify_parts",
+                               _class = "action-btn"
+                               )
+                    script = "S3.confirmClick('#notify_parts', '%s')" % \
+                        T("Do you want to notify participants to complete survey?")
+                    current.response.s3.jquery_ready.append(script)
+                    rheader.insert(-1, button)
+
+            return rheader
+
+    # -------------------------------------------------------------------------
+    def dc_answer_onaccept(form):
+        """
+            Set the Date of the Response when the Answers are added
+        """
+
+        #record_id = form.vars.get("id")
+
+        # Retrieve the tablename set in prep
+        dtablename = current.response.s3.dc_dtablename
+        s3db = current.s3db
+        dtable = s3db[dtablename]
+        rtable = s3db.dc_response
+        query = (rtable.id == dtable.response_id)
+        response = current.db(query).select(rtable.id,
+                                            limitby = (0, 1)
+                                            ).first()
+
+        response.update_record(date = current.request.utcnow)
+
+    # -------------------------------------------------------------------------
+    def dc_target_check(target_id):
+        """
+            Check whether a Survey has been Approved/Rejected & notify OM if not
+
+            @param target_id: Target record_id
+        """
+
+        #from gluon import URL
+        from s3 import S3DateTime, s3_str
+
+        db = current.db
+        s3db = current.s3db
+
+        # Read Survey Record
+        ttable = s3db.dc_target
+        ltable = s3db.hrm_event_target
+        etable = s3db.hrm_training_event
+        query = (ttable.id == target_id)
+        left = etable.on((ttable.id == ltable.target_id) & \
+                         (etable.id == ltable.training_event_id))
+        survey = db(query).select(ttable.approved_by,
+                                  ttable.deleted,
+                                  etable.name,
+                                  etable.location_id,
+                                  etable.start_date,
+                                  left = left,
+                                  limitby = (0, 1)
+                                  ).first()
+
+        if not survey:
+            return
+
+        if survey["dc_target"].deleted:
+            # Presumably it was Rejected
+            return
+
+        if survey["dc_target"].approved_by:
+            # Survey was Approved
+            return
+
+        # List of recipients, grouped by language
+        # Recipients: OM
+        languages = {}
+
+        utable = db.auth_user
+        gtable = db.auth_group
+        mtable = db.auth_membership
+        ltable = s3db.pr_person_user
+        query = (utable.id == mtable.user_id) & \
+                (mtable.group_id == gtable.id) & \
+                (gtable.uuid == "EVENT_OFFICE_MANAGER") & \
+                (ltable.user_id == utable.id)
+        users = db(query).select(ltable.pe_id,
+                                 utable.language,
+                                 distinct = True,
+                                 )
+        for user in users:
+            language = user["auth_user.language"]
+            if language in languages:
+                languages[language].append(user["pr_person_user.pe_id"])
+            else:
+                languages[language] = [user["pr_person_user.pe_id"]]
+
+        # Build Message
+        event = survey["hrm_training_event"]
+        event_date = event.start_date
+        location_id = event.location_id
+        #url = "%s%s" % (settings.get_base_public_url(),
+        #                URL(c="dc", f="target", args=[target_id, "review"]),
+        #                )
+        subject_T = T("Post-Event Survey hasn't been Approved/Rejected")
+        message = "The post-Event Survey for %(event_name)s on %(date)s in %(location)s has not been Approved or Rejected" % \
+                    {"date": "%(date)s", # Localise per-language
+                     "event_name": event.name,
+                     "location": "%(location)s", # Localise per-language
+                     #"url": url,
+                     }
+        message_T = T(message)
+
+        # Send Localised Mail(s)
+        send_email = current.msg.send_by_pe_id
+        session_s3 = current.session.s3
+        date_represent = S3DateTime.date_represent # We want Dates not datetime which etable.start_date uses
+        location_represent = s3db.gis_LocationRepresent()
+        for language in languages:
+            T.force(language)
+            subject = s3_str(subject_T)
+            session_s3.language = language # for date_represent
+            message = s3_str(message_T) % {"date": date_represent(event_date),
+                                           "location": location_represent(location_id),
+                                           }
+            users = languages[language]
+            for pe_id in users:
+                send_email(pe_id,
+                           subject = subject,
+                           message = message,
+                           )
+
+        # NB No need to restore UI language as this is run as an async task w/o UI
+        return
+
+    settings.tasks.dc_target_check = dc_target_check
+
+    # -------------------------------------------------------------------------
+    def dc_target_report(target_id):
+        """
+            Notify EO & MFP that a Survey Report is ready
+
+            @param target_id: Target record_id
+        """
+
+        from gluon import URL
+        from s3 import S3DateTime, s3_str
+
+        db = current.db
+        s3db = current.s3db
+
+        # Read Survey Record
+        ttable = s3db.dc_target
+        ltable = s3db.hrm_event_target
+        etable = s3db.hrm_training_event
+        query = (ttable.id == target_id)
+        left = etable.on((ttable.id == ltable.target_id) & \
+                         (etable.id == ltable.training_event_id))
+        survey = db(query).select(ttable.approved_by,
+                                  ttable.deleted,
+                                  etable.created_by,
+                                  etable.name,
+                                  etable.location_id,
+                                  etable.start_date,
+                                  left = left,
+                                  limitby = (0, 1)
+                                  ).first()
+
+        if not survey:
+            return
+
+        if survey["dc_target"].deleted:
+            # Presumably it was Rejected
+            return
+
+        # List of recipients, grouped by language
+        # Recipients: EO, MFP
+        languages = {}
+
+        event = survey["hrm_training_event"]
+
+        utable = db.auth_user
+        gtable = db.auth_group
+        mtable = db.auth_membership
+        ltable = s3db.pr_person_user
+        query = ((utable.id == event.created_by) | \
+                 ((utable.id == mtable.user_id) & \
+                  (mtable.group_id == gtable.id) & \
+                  (gtable.uuid == "EVENT_MONITOR"))) & \
+                (ltable.user_id == utable.id)
+        users = db(query).select(ltable.pe_id,
+                                 utable.language,
+                                 distinct = True,
+                                 )
+        for user in users:
+            language = user["auth_user.language"]
+            if language in languages:
+                languages[language].append(user["pr_person_user.pe_id"])
+            else:
+                languages[language] = [user["pr_person_user.pe_id"]]
+
+        # Build Message
+        event_date = event.start_date
+        location_id = event.location_id
+        url = "%s%s" % (settings.get_base_public_url(),
+                        URL(c="dc", f="target", args=[target_id, "results"]),
+                        )
+        subject_T = T("Post-Event Survey Report is Ready")
+        message = "The Report on the post-Event Survey for %(event_name)s on %(date)s in %(location)s is Ready: %(url)s" % \
+                    {"date": "%(date)s", # Localise per-language
+                     "event_name": event.name,
+                     "location": "%(location)s", # Localise per-language
+                     "url": url,
+                     }
+        message_T = T(message)
+
+        # Send Localised Mail(s)
+        send_email = current.msg.send_by_pe_id
+        session_s3 = current.session.s3
+        date_represent = S3DateTime.date_represent # We want Dates not datetime which etable.start_date uses
+        location_represent = s3db.gis_LocationRepresent()
+        for language in languages:
+            T.force(language)
+            subject = s3_str(subject_T)
+            session_s3.language = language # for date_represent
+            message = s3_str(message_T) % {"date": date_represent(event_date),
+                                           "location": location_represent(location_id),
+                                           }
+            users = languages[language]
+            for pe_id in users:
+                send_email(pe_id,
+                           subject = subject,
+                           message = message,
+                           )
+
+        # NB No need to restore UI language as this is run as an async task w/o UI
+        return
+
+    settings.tasks.dc_target_report = dc_target_report
+
+    # -------------------------------------------------------------------------
+    def customise_dc_response_controller(**attr):
+        """
+            Only used by Bangkok CCST currently
+        """
+
+        s3 = current.response.s3
+
+        # Custom prep
+        standard_prep = s3.prep
+        def custom_prep(r):
+            # Call standard prep
+            if callable(standard_prep):
+                result = standard_prep(r)
+
+            # Need POST too to set Date properly
+            #if r.interactive:
+            if not current.auth.s3_has_roles(("EVENT_MONITOR", "EVENT_ORGANISER", "EVENT_OFFICE_MANAGER")):
+                # Simplify Interface
+                menu = current.menu
+                menu.breadcrumbs = None
+                menu.main = ""
+                menu.options = None
+                s3.crud_strings["dc_response"]["title_display"] = ""
+                if r.component_name == "answer":
+                    # CRUD Strings
+                    tablename = r.component.tablename
+                    s3.crud_strings[tablename].msg_record_created = T("Thank you for taking this survey and helping us to increase the quality of our trainings.")
+                    current.s3db.configure(tablename,
+                                           create_onaccept = dc_answer_onaccept,
+                                           )
+                    # Store tablename for onaccept
+                    s3.dc_dtablename = tablename
+                #elif r.method == "create":
+                #    target_id = r.get_vars.get("target_id")
+                #    if target_id:
+                #        s3db = current.s3db
+                #        table = s3db.dc_response
+                #        table.target_id.default = target_id
+                #        ttable = s3db.dc_target
+                #        target = current.db(ttable.id == target_id).select(ttable.template_id,
+                #                                                           limitby = (0, 1)
+                #                                                           ).first()
+                #        try:
+                #            table.template_id.default = target.template_id
+                #        except:
+                #            # Template not found?
+                #            pass
+                #        # Auto-submit form
+                #        script = '''$('form').submit()'''
+                #        s3.jquery_ready.append(script)
+                #    else:
+                #        # Block create
+                #        current.response.error = T("Survey not specified, please click on original link to take survey")
+                #        current.s3db.configure("dc_response",
+                #                               insertable = False,
+                #                               )
+            elif r.interactive:
+                # Filter out date is None (unfilled responses)
+                from s3 import FS
+                r.resource.add_filter(FS("date") != None)
+
+                current.s3db.configure("dc_response",
+                                       insertable = False,
+                                       list_fields = [(T("Event"), "target_id$training_event__link.training_event_id"),
+                                                      "date",
+                                                      "person_id",
+                                                      ],
+                                       )
+
+            return result
+        s3.prep = custom_prep
+
+        # Custom postp
+        standard_postp = s3.postp
+        def custom_postp(r, output):
+            # Call standard postp
+            if callable(standard_postp):
+                output = standard_postp(r, output)
+
+            if r.interactive and r.component_name == "answer":
+                script = '''$('#component').prepend('<div>%s<br>%s</div>')''' % \
+                    (T("The questionnaire is available in all SEA languages, please change the language to your need on the upper-right corner of your screen."),
+                     T("Do this before filling in the data."))
+                s3.jquery_ready.append(script)
+
+            return output
+        s3.postp = custom_postp
+
+        attr["rheader"] = dc_rheader
+
+        return attr
+
+    settings.customise_dc_response_controller = customise_dc_response_controller
+
+    # -------------------------------------------------------------------------
+    def customise_dc_response_resource(r, tablename):
+        """
+            Only used by Bangkok CCST currently
+        """
+
+        from s3 import S3DateTime
+
+        table = current.s3db.dc_response
+        table.location_id.readable = table.location_id.writable = False
+        table.organisation_id.readable = table.organisation_id.writable = False
+        table.comments.readable = table.comments.writable = False
+        table.date.represent = S3DateTime.date_represent # Just Date not datetime
+        table.date.writable = False
+        table.person_id.writable = False
+        table.person_id.comment = None
+
+        current.response.s3.crud_strings["dc_response"] = Storage(
+            label_create = T("Take Survey"),
+            title_display = T("Response Details"),
+            title_list = T("Responses"),
+            title_update = T("Edit Response"),
+            title_upload = T("Import Responses"),
+            label_list_button = T("List Responses"),
+            label_delete_button = T("Delete Response"),
+            msg_record_created = T("Response created"),
+            msg_record_modified = T("Response updated"),
+            msg_record_deleted = T("Response deleted"),
+            msg_list_empty = T("No Responses currently registered"))
+
+    settings.customise_dc_response_resource = customise_dc_response_resource
+
+    # -------------------------------------------------------------------------
+    def customise_dc_target_controller(**attr):
+        """
+            Only used by Bangkok CCST currently
+        """
+
+        s3 = current.response.s3
+
+        # Custom prep
+        standard_prep = s3.prep
+        def custom_prep(r):
+            # Call standard prep
+            if callable(standard_prep):
+                result = standard_prep(r)
+
+            if r.interactive and r.component_name == "response":
+
+                current.s3db.configure("dc_response",
+                                       insertable = False,
+                                       list_fields = ["person_id",
+                                                      (T("Date Responded"), "date"),
+                                                      ],
+                                       )
+
+            return result
+        s3.prep = custom_prep
+
+        # MFP should NOT be able to see individual responses
+        # Custom postp
+        #standard_postp = s3.postp
+        #def custom_postp(r, output):
+        #    # Call standard postp
+        #    if callable(standard_postp):
+        #        output = standard_postp(r, output)
+
+        #    if r.interactive and r.component_name == "response":
+        #        from gluon import URL
+        #        from s3 import S3CRUD
+        #        open_url = URL(f="respnse", args = ["[id]", "answer"])
+        #        S3CRUD.action_buttons(r, read_url=open_url, update_url=open_url)
+
+        #    return output
+        #s3.postp = custom_postp
+
+        attr["rheader"] = dc_rheader
+
+        return attr
+
+    settings.customise_dc_target_controller = customise_dc_target_controller
+
+    # -------------------------------------------------------------------------
+    def hrm_notify_participants(training_event_id, redirect=True):
+        """
+            * Notify Participants to fill out the Survey
+            - exclude Observers
+            * Update Date of Survey
+            * Schedule Task to send Report of results
+        """
+
+        import time
+        from gluon import URL
+        from gluon.utils import web2py_uuid
+        from s3 import s3_fullname, s3_str, S3DateTime
+
+        db = current.db
+        auth = current.auth
+        s3db = current.s3db
+
+        # Read the Event Details
+        etable = s3db.hrm_training_event
+        event = db(etable.id == training_event_id).select(etable.name,
+                                                          etable.start_date,
+                                                          etable.location_id,
+                                                          limitby=(0, 1),
+                                                          ).first()
+        event_name = event.name
+        event_date = event.start_date
+        event_location = event.location_id
+
+        # Find the Target (for URLs & to update Date)
+        dtable = s3db.dc_target
+        ltable = s3db.hrm_event_target
+        query = (ltable.training_event_id == training_event_id) & \
+                (ltable.target_id == dtable.id)
+        target = db(query).select(dtable.id,
+                                  dtable.template_id,
+                                  dtable.language,
+                                  limitby = (0, 1),
+                                  ).first()
+        target_id = target.id
+        template_id = target.template_id
+        default_language = target.language
+
+        # Update Survey Date
+        now = current.request.utcnow
+        target.update_record(date = now)
+
+        # Build list of people to notify
+        # - including their language
+        ptable = s3db.pr_person
+        ctable = s3db.pr_contact
+        htable = s3db.hrm_human_resource
+        ttable = s3db.hrm_training
+        utable = s3db.auth_user
+        ltable = s3db.pr_person_user
+        query = (ttable.training_event_id == training_event_id) & \
+                (ttable.role != 3) & \
+                (ttable.person_id == ptable.id) & \
+                (ttable.deleted == False)
+        left = [ltable.on(ltable.pe_id == ptable.pe_id),
+                utable.on(utable.id == ltable.user_id),
+                htable.on(htable.person_id == ptable.id),
+                ctable.on((ctable.pe_id == ptable.pe_id) & (ctable.contact_method=="EMAIL") & (ctable.deleted == False)),
+                ]
+        # Exclude participants that we have already notified
+        rtable = s3db.dc_response
+        nquery = (rtable.target_id == target_id) & \
+                 (rtable.template_id == template_id) & \
+                 (rtable.deleted == False)
+        notified = db(nquery).select(rtable.person_id)
+        exclude = [n.person_id for n in notified]
+        if exclude:
+            query &= (~ptable.id.belongs(exclude))
+        persons = db(query).select(ptable.id,
+                                   ptable.pe_id,
+                                   ptable.first_name,
+                                   ptable.middle_name,
+                                   ptable.last_name,
+                                   ptable.gender,
+                                   ctable.value,
+                                   htable.organisation_id,
+                                   htable.site_id,
+                                   utable.id,
+                                   utable.language,
+                                   left = left,
+                                   distinct = True,
+                                   )
+
+        # Build localised mail for each language
+        session = current.session
+        session_s3 = session.s3
+        ui_language = session_s3.language
+        subject = "Placeholder Subject"
+        line1 = "You are receiving this email as a participant of %(event_name)s held in %(location)s on %(date)s."
+        line2 = "We have 8 simple questions for you, this should not take more than 15mn of your time."
+        line3 = "The information collected through this questionnaire will be treated as confidential."
+        click = "Please click this link to complete the survey"
+        line4 = "Thank you for your participation."
+        translations = {}
+        languages = list(set([p["auth_user.language"] for p in persons]))
+        if default_language not in languages:
+            languages.append(default_language)
+        date_represent = S3DateTime.date_represent # We want Dates not datetime which etable.start_date uses
+        location_represent = s3db.gis_LocationRepresent()
+        for l in languages:
+            T.force(l)
+            session_s3.language = l # for date_represent
+            translations[l] = {"s": s3_str(T(subject)),
+                               1: s3_str(T(line1)),
+                               2: s3_str(T(line2)),
+                               3: s3_str(T(line3)),
+                               "c": s3_str(T(click)),
+                               4: s3_str(T(line4)),
+                               "l": location_represent(event_location),
+                               "d": date_represent(event_date),
+                               }
+
+        # Send localised email to each person
+        # @ToDo: Group by Language?
+        #db_type = settings.get_database_type()
+        #if db_type == "postgres":
+        #    try:
+        #        from psycopg2 import IntegrityError
+        #    except ImportError
+        #        from gluon.contrib.pg8000 import IntegrityError
+        #elif db_type == "sqlite":
+        #    from sqlite3 import IntegrityError
+        #else:
+        #    # MySQL
+        #    try:
+        #        from MySQLdb import IntegrityError
+        #    except ImportError:
+        #        from gluon.contrib.pymysql import IntegrityError
+        errors = {}
+        success = 0
+        response = current.response
+        s3 = response.s3
+        s3.bulk = True # Don't send a Welcome Message for new users as we send our own message instead
+        send_email = current.msg.send_by_pe_id
+        rtable.date.default = None # Set the date when we answer
+        rinsert = rtable.insert
+        uinsert = utable.insert
+        approve_user = auth.s3_approve_user
+        public_url = settings.get_base_public_url()
+        update_super = s3db.update_super
+        for p in persons:
+            person = p["pr_person"]
+            person_id = person.id
+            user_id = p.get("auth_user.id")
+            if user_id:
+                NEW_USER = False
+                lang = p.get("auth_user.language")
+                T.force(lang)
+            else:
+                # No User Account exists, so create one
+                NEW_USER = True
+                email = p.get("pr_contact.value")
+                if not email:
+                    # Cannot create User account for this person
+                    continue
+                first_name = person.first_name
+                last_name = person.last_name
+                # Check if there is already a User Account with this email
+                exists = db(utable.email == email).select(utable.id,
+                                                          limitby = (0, 1)
+                                                          ).first()
+                if exists:
+                    # Log error
+                    errors[person_id] = {#"error": "Cannot create User as there is already a User Account with this email address",
+                                         "first_name": first_name,
+                                         "last_name": last_name,
+                                         }
+                    # Continue to notify the rest of the participants
+                    continue
+
+                hr = p.get("hrm_human_resource")
+                reset_password_key = str(int(time.time())) + "-" + web2py_uuid() # format from auth.email_reset_password()
+                # Fallback language based on Target
+                lang = default_language
+                user = Storage(first_name = first_name,
+                               last_name = last_name,
+                               language = lang,
+                               email = email,
+                               organisation_id = hr.organisation_id,
+                               site_id = hr.site_id,
+                               reset_password_key = reset_password_key,
+                               )
+                # Commit, because we may need to revert
+                #db.commit()
+                #try:
+                user_id = uinsert(**user)
+                #except IntegrityError, e:
+                #    # So far this has always been: IntegrityError: duplicate key value violates unique constraint "auth_user_email_key"
+                #    db.rollback()
+                #    # Log error
+                #    errors.append({person_id: {"error": e,
+                #                               "first_name": first_name,
+                #                               "last_name": last_name,
+                #                               }})
+                #    # Continue to notify the rest of the participants
+                #    continue
+                user.id = user_id
+                approve_user(user)
+
+            # Create response (so that User only needs oacl UPDATE not uacl READ|CREATE
+            record = dict(target_id = target_id,
+                          template_id = template_id,
+                          person_id = person_id,
+                          owned_by_user = user_id,
+                          )
+            response_id = rinsert(**record)
+            record["id"] = response_id
+            update_super(rtable, record) # doc_entity
+
+            url = URL(c="dc", f="respnse",
+                      args = [response_id, "answer"],
+                      )
+            if NEW_USER:
+                url = "%s%s" % (public_url,
+                                URL(c="default", f="user",
+                                    args = ["reset_password"],
+                                    vars= {"key": reset_password_key,
+                                           "_next": url,
+                                           },
+                                    ),
+                                )
+            else:
+                url = "%s%s" % (public_url,
+                                url,
+                                )
+
+            if lang == "vi":
+                gender = person.gender
+                if gender == 3:
+                    # Male
+                    line1 = s3_str(T("Dear Brother %(person_name)s")) %  {#"person_title" : p.title,
+                                                                          "person_name" : s3_fullname(person),
+                                                                          }
+                elif gender == 2:
+                    # Female
+                    line1 = s3_str(T("Dear Sister %(person_name)s")) % {#"person_title":  p.title,
+                                                                        "person_name" : s3_fullname(person),
+                                                                        }
+                else:
+                    # Unknown, Trans, etc
+                    line1 = s3_str(T("Dear %(person_name)s")) % {#"person_title" : p.title,
+                                                                 "person_name" : s3_fullname(person),
+                                                                 }
+            else:
+                # @ToDo: Automate title in some cases?
+                line1 = s3_str(T("Dear %(person_name)s")) % {#"person_title": p.title,
+                                                             "person_name" : s3_fullname(person),
+                                                             }
+            translation = translations[lang]
+            message = "%s\n%s\n%s\n%s\n\n%s\n%s\n\n%s" % (line1,
+                                                          translation[1] % dict(event_name = event_name,
+                                                                                location = translation["l"],
+                                                                                date = translation["d"],
+                                                                                ),
+                                                          translation[2],
+                                                          translation[3],
+                                                          "%s:" % translation["c"],
+                                                          url,
+                                                          translation[4],
+                                                          )
+            send_email(person.pe_id,
+                       subject = translation["s"],
+                       message = message,
+                       )
+            success += 1
+
+        s3.bulk = False
+
+        # Restore language for UI
+        session_s3.language = ui_language
+        T.force(ui_language)
+
+        # Communicate success / errors
+        if errors:
+            from gluon import A
+            bad = ""
+            for e in errors:
+                error = errors[e]
+                new_error = A("%s %s" % (error["first_name"],
+                                         error["last_name"]),
+                              _href=URL(c="hrm", f="person", args=e))
+                if bad:
+                    bad = "%s, %s" % (bad, new_error)
+                else:
+                    bad = new_error
+            warning = "%s: %s" % (s3_str(T("%i Notifications sent, but these participants couldn't be notified as User Accounts already exist with these email addresses")) % success,
+                                  bad)
+            if redirect:
+                session.warning = warning
+            else:
+                response.warning = warning
+        elif success:
+            if redirect:
+                session.confirmation = s3_str(T("%i Notifications sent!")) % success
+            else:
+                response.confirmation = s3_str(T("%i Notifications sent!")) % success
+        else:
+            if redirect:
+                session.information = T("No Notifications needed sending!")
+            else:
+                response.information = T("No Notifications needed sending!")
+
+        if success:
+            # Schedule Report
+            import json
+            from dateutil.relativedelta import relativedelta
+            ttable = s3db.scheduler_task
+            task_name = "settings_task"
+
+            # 1 month reminder
+            start_time = now + relativedelta(months = 1)
+            args = ["dc_target_report"]
+            vars = {"target_id": target_id}
+            query = (ttable.task_name == task_name) & \
+                    (ttable.args == json.dumps(args)) & \
+                    (ttable.vars == json.dumps(vars))
+            exists = db(query).select(ttable.id,
+                                      ttable.start_time,
+                                      limitby = (0, 1)
+                                      ).first()
+            if exists:
+                if exists.start_time != start_time:
+                    exists.update_record(start_time = start_time)
+            else:
+                current.s3task.schedule_task(task_name,
+                                             args = args,
+                                             vars = vars,
+                                             start_time = start_time,
+                                             #period = 300,  # seconds
+                                             timeout = 300, # seconds
+                                             repeats = 1    # run once
+                                             )
+
+    # -------------------------------------------------------------------------
+    def hrm_training_event_survey(training_event_id, survey_type):
+        """
+            Notify Event Organiser (EO) that they should consider sending out a Survey
+
+            @param training_event_id: (Training) Event record_id
+            @param survey_type: Survey Type (3 month or 6 month currently)
+        """
+
+        try:
+            import arrow
+        except ImportError:
+            current.log.error("Arrow library needed for hrm_training_event_survey")
+            return
+
+        from gluon import URL
+        from s3 import s3_str
+
+        db = current.db
+        s3db = current.s3db
+
+        # Read Event Record
+        etable = s3db.hrm_training_event
+        event = db(etable.id == training_event_id).select(etable.name,
+                                                          etable.start_date,
+                                                          etable.end_date,
+                                                          etable.location_id,
+                                                          etable.created_by,
+                                                          limitby = (0, 1)
+                                                          ).first()
+
+        event_date = event.end_date or event.start_date # Use end_date where-available, otherwise use start_date
+        event_date = arrow.get(event_date)
+        location_id = event.location_id
+        EO = event.created_by
+
+        # Create Survey (unapproved)
+        # Default the template
+        ttable = s3db.dc_template
+        template = db(ttable.name == "Training Evaluation").select(ttable.id,
+                                                                   limitby = (0, 1)
+                                                                   ).first()
+        try:
+            template_id = template.id
+        except AttributeError:
+            current.log.error("Cannot find 'Training Evaluation' template so cannot run hrm_training_event_survey")
+            return
+
+        stable = s3db.dc_target
+        ltable = s3db.hrm_event_target
+        target_id = stable.insert(template_id = template_id,
+                                  date = None, # Gets set when notifications sent (onapprove here)
+                                  owned_by_user = EO,
+                                  )
+        ltable.insert(training_event_id = training_event_id,
+                      target_id = target_id,
+                      survey_type = survey_type,
+                      )
+
+        # Create Task to check if Survey has been Approved/Rejected
+        start_time = arrow.utcnow()
+        start_time = start_time.shift(months = 1)
+        current.s3task.schedule_task("settings_task",
+                                     args = ["dc_target_check"],
+                                     vars = {"target_id": target_id},
+                                     start_time = start_time.datetime,
+                                     #period = 300,  # seconds
+                                     timeout = 300, # seconds
+                                     repeats = 1    # run once
+                                     )
+
+        # List of recipients, grouped by language
+        # Recipients: EO (created_by) & MFP(s)
+        languages = {}
+
+        utable = db.auth_user
+        gtable = db.auth_group
+        mtable = db.auth_membership
+        ltable = s3db.pr_person_user
+        query = ((utable.id == EO) & \
+                 (ltable.user_id == utable.id)) | \
+                ((utable.id == mtable.user_id) & \
+                 (mtable.group_id == gtable.id) & \
+                 (gtable.uuid == "EVENT_MONITOR") & \
+                 (ltable.user_id == utable.id))
+        users = db(query).select(ltable.pe_id,
+                                 utable.language,
+                                 distinct = True,
+                                 )
+        for user in users:
+            language = user["auth_user.language"]
+            if language in languages:
+                languages[language].append(user["pr_person_user.pe_id"])
+            else:
+                languages[language] = [user["pr_person_user.pe_id"]]
+
+        # Build Message
+        url = "%s%s" % (settings.get_base_public_url(),
+                        URL(c="dc", f="target", args=[target_id, "review"]),
+                        )
+        subject_T = T("Consider sending a post-Event Survey")
+        message = "It is now %(date)s since the event %(event_name)s in %(location)s so you should consider creating a survey by visiting this link: %(url)s" % \
+                {"date": "%(date)s", # Localise per-language
+                 "event_name": event.name,
+                 "location": "%(location)s", # Localise per-language
+                 "url": url,
+                 }
+        message_T = T(message)
+
+        # Send Localised Mail(s)
+        send_email = current.msg.send_by_pe_id
+        location_represent = s3db.gis_LocationRepresent()
+        for language in languages:
+            T.force(language)
+            subject = s3_str(subject_T)
+            humanized_date = event_date.humanize(locale=language.replace("-", "_"))
+            message = s3_str(message_T) % {"date": humanized_date,
+                                           "location": location_represent(location_id),
+                                           }
+            users = languages[language]
+            for pe_id in users:
+                send_email(pe_id,
+                           subject = subject,
+                           message = message,
+                           )
+
+        # NB No need to restore UI language as this is run as an async task w/o UI
+        return
+
+    settings.tasks.hrm_training_event_survey = hrm_training_event_survey
+
+    # -------------------------------------------------------------------------
+    def hrm_training_dashboard_notify():
+        """
+            Notify Event Office Managers (OMs) & MFP that they should check
+            the Event Dashboard
+        """
+
+        from gluon import URL
+        from s3 import s3_str
+
+        db = current.db
+        s3db = current.s3db
+
+        # List of recipients, grouped by language
+        # Recipients: OMs & MFP(s)
+        languages = {}
+
+        utable = db.auth_user
+        gtable = db.auth_group
+        mtable = db.auth_membership
+        ltable = s3db.pr_person_user
+        query = (utable.id == mtable.user_id) & \
+                (mtable.group_id == gtable.id) & \
+                (gtable.uuid.belongs(("EVENT_MONITOR", "EVENT_OFFICE_MANAGER"))) & \
+                (ltable.user_id == utable.id)
+        users = db(query).select(ltable.pe_id,
+                                 utable.language,
+                                 distinct = True,
+                                 )
+        for user in users:
+            language = user["auth_user.language"]
+            if language in languages:
+                languages[language].append(user["pr_person_user.pe_id"])
+            else:
+                languages[language] = [user["pr_person_user.pe_id"]]
+
+        # Build Message
+        url = "%s%s" % (settings.get_base_public_url(),
+                        URL(c="hrm", f="training_event", vars={"dashboard": 1}),
+                        )
+        subject_T = T("Check the Event Dashboard")
+        message = "This is your monthly reminder to check the Event Dashboard by visiting this link: %(url)s" % {"url": url}
+        message_T = T(message)
+
+        # Send Localised Mail(s)
+        send_email = current.msg.send_by_pe_id
+        for language in languages:
+            T.force(language)
+            subject = s3_str(subject_T)
+            message = s3_str(message_T)
+            users = languages[language]
+            for pe_id in users:
+                send_email(pe_id,
+                           subject = subject,
+                           message = message,
+                           )
+
+        # NB No need to restore UI language as this is run as an async task w/o UI
+        return
+
+    settings.tasks.hrm_training_dashboard_notify = hrm_training_dashboard_notify
+
+    # -------------------------------------------------------------------------
+    def dc_target_onapprove(row):
+        """
+            Only used by Bangkok CCST currently
+
+            Send Notifications, inc:
+            * Update Survey Date
+            * Schedule Report
+
+            @ToDo: Don't do this automatically for auto-approved manual surveys?
+        """
+
+        target_id = row.id
+
+        ltable = current.s3db.hrm_event_target
+        training_event = current.db(ltable.target_id == target_id).select(ltable.training_event_id,
+                                                                          limitby = (0, 1),
+                                                                          ).first()
+
+        hrm_notify_participants(training_event.training_event_id, redirect=False)
+
+    # -------------------------------------------------------------------------
+    def customise_dc_target_resource(r, tablename):
+        """
+            Only used by Bangkok CCST currently
+        """
+
+        s3db = current.s3db
+        table = s3db.table(tablename)
+
+        current.response.s3.crud_strings[tablename] = Storage(
+            label_create = T("Create Survey"),
+            title_display = T("Survey Details"),
+            title_list = T("Surveys"),
+            title_update = T("Edit Survey"),
+            title_upload = T("Import Surveys"),
+            label_list_button = T("List Surveys"),
+            label_delete_button = T("Delete Survey"),
+            msg_record_created = T("Survey added"),
+            msg_record_modified = T("Survey updated"),
+            msg_record_deleted = T("Survey deleted"),
+            msg_list_empty = T("No Surveys currently registered"))
+
+        table.location_id.readable = table.location_id.writable = False
+        #table.comments.readable = table.comments.writable = False
+
+        # Expose the Language Option
+        f = table.language
+        f.readable = f.writable = True
+        f.label = T("Default Language")
+        f.requires.other._select = OrderedDict([("en-gb", "English"),
+                                                ("my", "Burmese"),
+                                                ("id", "Indonesian"),
+                                                ("km", "Khmer"),
+                                                ("lo", "Lao"),
+                                                ("ms", "Malaysian"),
+                                                ("th", "Thai"),
+                                                ])
+
+        # Default the template
+        ttable = s3db.dc_template
+        template = current.db(ttable.name == "Training Evaluation").select(ttable.id,
+                                                                           limitby = (0, 1)
+                                                                           ).first()
+        if template:
+            f = table.template_id
+            f.default = template.id
+            #f.readable = f.writable = False
+
+        if r.component:
+            crud_form = None
+            list_fields = None
+
+        else:
+            # Add (Training) Event to form & table
+            from s3 import S3SQLCustomForm
+
+            crud_form = S3SQLCustomForm("event_target.training_event_id",
+                                        "event_target.survey_type",
+                                        "template_id",
+                                        "language",
+                                        #"date",
+                                        "comments",
+                                        )
+
+            list_fields = [(T("Event"), "training_event__link.training_event_id"),
+                           (T("Type"), "training_event__link.survey_type"),
+                           "template_id",
+                           "date",
+                           "comments",
+                           ]
+
+        s3db.configure(tablename,
+                       crud_form = crud_form,
+                       list_fields = list_fields,
+                       onapprove = dc_target_onapprove,
+                       # Done in Global Setting
+                       #requires_approval = True,
+                       )
+
+    settings.customise_dc_target_resource = customise_dc_target_resource
 
     # -------------------------------------------------------------------------
     def _is_asia_pacific(region_id=False):
@@ -1640,7 +2996,6 @@ def config(settings):
                 _title="%s|%s" % (MEMBER,
                                   current.messages.AUTOCOMPLETE_HELP))
 
-        from s3 import IS_ONE_OF
         s3db = current.s3db
         atable = s3db.deploy_assignment
         atable.human_resource_id.label = MEMBER
@@ -1812,14 +3167,14 @@ def config(settings):
                        (T("Deploying NS"), "human_resource_id$organisation_id"),
                       ]
         report_options = Storage(
-            rows=report_axis,
-            cols=report_axis,
-            fact=report_fact,
-            defaults=Storage(rows="mission_id$location_id",
-                             cols="mission_id$event_type_id",
-                             fact="count(human_resource_id)",
-                             totals=True
-                             )
+            rows = report_axis,
+            cols = report_axis,
+            fact = report_fact,
+            defaults = Storage(rows="mission_id$location_id",
+                               cols="mission_id$event_type_id",
+                               fact="count(human_resource_id)",
+                               totals=True
+                               )
             )
 
         s3db.configure("deploy_assignment",
@@ -1845,7 +3200,6 @@ def config(settings):
         _customise_assignment_fields()
 
         # Restrict Location to just Countries
-        from s3 import S3Represent
         field = s3db.deploy_mission.location_id
         field.represent = S3Represent(lookup="gis_location", translate=True)
 
@@ -1897,7 +3251,7 @@ def config(settings):
                                    )
 
         # Restrict Location to just Countries
-        from s3 import S3Represent, S3MultiSelectWidget
+        from s3 import S3MultiSelectWidget
         COUNTRY = messages.COUNTRY
         field = table.location_id
         field.label = COUNTRY
@@ -2042,22 +3396,22 @@ def config(settings):
                                                 "document",
                                                 name = "file",
                                                 label = T("Files"),
-                                                fields = ["file", "comments"],
-                                                filterby = dict(field = "file",
-                                                                options = "",
-                                                                invert = True,
-                                                                )
+                                                fields = ("file", "comments"),
+                                                filterby = {"field": "file",
+                                                            "options": "",
+                                                            "invert": True,
+                                                            }
                                             ),
                                             # Links
                                             S3SQLInlineComponent(
                                                 "document",
                                                 name = "url",
                                                 label = T("Links"),
-                                                fields = ["url", "comments"],
-                                                filterby = dict(field = "url",
-                                                                options = None,
-                                                                invert = True,
-                                                                )
+                                                fields = ("url", "comments"),
+                                                filterby = {"field": "url",
+                                                            "options": None,
+                                                            "invert": True,
+                                                            }
                                             ),
                                             "comments",
                                             "date",
@@ -2306,8 +3660,6 @@ def config(settings):
     def rdrt_member_profile_header(r):
         """ Custom profile header to allow update of RDRT roster status """
 
-        import json
-
         record = r.record
         if not record:
             return ""
@@ -2350,7 +3702,7 @@ def config(settings):
                               _id = "rdrt-organisation",
                               _title = EDIT,
                               )
-            org_opts = ofield.requires.options()
+            #org_opts = ofield.requires.options()
             #org_opts = {key: value for (key, value) in org_opts}
             org_script = '''$.rdrtOrg('%(url)s','%(submit)s')''' % \
                 {"url": URL(c="deploy", f="human_resource",
@@ -2468,7 +3820,8 @@ def config(settings):
             @param row: the row
         """
 
-        items = [row["pr_contact_emergency.name"]]
+        name = row["pr_contact_emergency.name"] or current.messages["NONE"]
+        items = [name]
         relationship = row["pr_contact_emergency.relationship"]
         if relationship:
             items.append(" (%s)" % relationship)
@@ -2543,7 +3896,6 @@ def config(settings):
         root_org = current.auth.root_org_name()
         controller = r.controller
         if controller == "vol":
-            T = current.T
             if root_org == IRCS:
                 s3db = current.s3db
                 table = s3db.hrm_human_resource
@@ -2552,8 +3904,10 @@ def config(settings):
                     from s3 import s3_fullname
                     return s3_fullname(current.auth.s3_logged_in_person())
                 settings.hrm.vol_service_record_manager = vol_service_record_manager
-                from s3 import IS_ADD_PERSON_WIDGET2, S3SQLCustomForm, S3SQLInlineComponent
-                table.person_id.requires = IS_ADD_PERSON_WIDGET2(first_name_only = True)
+                from s3 import S3AddPersonWidget, S3SQLCustomForm, S3SQLInlineComponent
+                table.person_id.widget = S3AddPersonWidget(controller = "vol",
+                                                           first_name_only = True,
+                                                           )
                 table.code.label = T("Appointment Number")
                 phtable = s3db.hrm_programme_hours
                 phtable.date.label = T("Direct Date")
@@ -2563,8 +3917,7 @@ def config(settings):
                                             "person_id",
                                             S3SQLInlineComponent("home_address",
                                                                  label = T("Address"),
-                                                                 fields = [("", "location_id"),
-                                                                           ],
+                                                                 fields = [("", "location_id")],
                                                                  default = {"type": 1}, # Current Home Address
                                                                  link = False,
                                                                  multiple = False,
@@ -2574,20 +3927,20 @@ def config(settings):
                                             "code",
                                             S3SQLInlineComponent("programme_hours",
                                                                  label = T("Contract"),
-                                                                 fields = ["programme_id",
+                                                                 fields = ("programme_id",
                                                                            "date",
                                                                            (T("End Date"), "end_date"),
                                                                            "contract",
-                                                                           ],
+                                                                           ),
                                                                  link = False,
                                                                  multiple = False,
                                                                  ),
                                             S3SQLInlineComponent("education",
                                                                  label = T("Education"),
-                                                                 fields = [(T("Education Level"), "level_id"),
+                                                                 fields = ((T("Education Level"), "level_id"),
                                                                            "institute",
                                                                            "year",
-                                                                           ],
+                                                                           ),
                                                                  link = False,
                                                                  multiple = False,
                                                                  ),
@@ -2607,24 +3960,24 @@ def config(settings):
                 field.readable = field.writable = True
                 from gluon.validators import IS_EMPTY_OR, IS_IN_SET
                 field.requires = IS_EMPTY_OR(IS_IN_SET(types))
-                from s3 import S3Represent
                 field.represent = S3Represent(options=types)
 
         elif controller == "hrm":
             if root_org == IRCS:
-                T = current.T
                 s3db = current.s3db
                 table = s3db.hrm_human_resource
                 table.start_date.label = T("Appointment Date")
                 # All staff have open-ended contracts
                 table.end_date.readable = table.end_date.writable = False
-                from s3 import IS_ADD_PERSON_WIDGET2, S3SQLCustomForm, S3SQLInlineComponent
-                table.person_id.requires = IS_ADD_PERSON_WIDGET2(first_name_only = True)
+                from s3 import S3AddPersonWidget, S3SQLCustomForm, S3SQLInlineComponent
+                table.person_id.widget = S3AddPersonWidget(controller = "hrm",
+                                                           first_name_only = True,
+                                                           )
                 table.code.label = T("Appointment Number")
                 hrm_status_opts = s3db.hrm_status_opts
                 hrm_status_opts[3] = T("End Service")
                 table.status.represent = lambda opt: \
-                                         hrm_status_opts.get(opt, UNKNOWN_OPT),
+                                         hrm_status_opts.get(opt, current.messages.UNKNOWN_OPT),
                 from gluon.validators import IS_IN_SET
                 table.status.requires = IS_IN_SET(hrm_status_opts,
                                                   zero=None)
@@ -2639,10 +3992,10 @@ def config(settings):
                                "start_date",
                                "code",
                                S3SQLInlineComponent("contract",
-                                                    label=T("Contract"),
-                                                    fields=["name",
-                                                            "date"
-                                                            ],
+                                                    label = T("Contract"),
+                                                    fields = ("name",
+                                                              "date",
+                                                              ),
                                                     multiple=True,
                                                     ),
                                "comments",
@@ -2661,41 +4014,81 @@ def config(settings):
     # -------------------------------------------------------------------------
     def customise_hrm_human_resource_controller(**attr):
 
+        from s3 import FS
+
+        db = current.db
+        s3db = current.s3db
+        auth = current.auth
+        s3 = current.response.s3
+        request = current.request
+        controller = request.controller
+        # Enable scalability-optimized strategies
+        settings.base.bigtable = True
+
         tablename = "hrm_human_resource"
 
-        auth = current.auth
-        s3db = current.s3db
-
-        # Special cases for different NS
-        arcs = vnrc = False
+        # Special cases for different NS/roles
+        arcs = vnrc = EO = False
         root_org = auth.root_org_name()
 
-        controller = current.request.controller
-        if controller == "deploy":
-            # Default Filter
-            from s3 import s3_set_default_filter
-            s3_set_default_filter("~.organisation_id$region_id",
-                                  user_region_and_children_default_filter,
-                                  tablename = tablename)
+        if not auth.s3_has_role("ADMIN") and \
+           auth.s3_has_roles(("EVENT_MONITOR", "EVENT_ORGANISER", "EVENT_OFFICE_MANAGER")):
+            # Bangkok CCST
+            gtable = db.auth_group
+            mtable = db.auth_membership
 
-        elif root_org != CRMADA: # CRMADA have too many branches which causes issues
-            # Default Filter
-            from s3 import s3_set_default_filter
-            s3_set_default_filter("~.organisation_id",
-                                  user_org_and_children_default_filter,
-                                  tablename = tablename)
+            EO = request.get_vars.get("eo")
+            if EO:
+                # Filter People to just EOs/MFP(s)/OM(s)
+                ltable = s3db.pr_person_user
+                query = (gtable.uuid.belongs(("EVENT_MONITOR", "EVENT_ORGANISER", "EVENT_OFFICE_MANAGER"))) & \
+                        (mtable.group_id == gtable.id) & \
+                        (mtable.deleted == False) & \
+                        (mtable.user_id == ltable.user_id)
+                rows = db(query).select(ltable.pe_id)
+                pe_ids = [row.pe_id for row in rows]
+                filter = FS("person_id$pe_id").belongs(set(pe_ids))
+            else:
+                # Filter People to just those trained by this region
+                # @ToDo: Filter by Org too if more EVENT_* teams come onboard
+                query = (gtable.uuid.belongs(("EVENT_MONITOR", "EVENT_ORGANISER"))) & \
+                        (mtable.group_id == gtable.id) & \
+                        (mtable.deleted == False)
+                rows = db(query).select(mtable.user_id)
+                user_ids = [row.user_id for row in rows]
+                filter = FS("training.training_event_id$created_by").belongs(set(user_ids))
 
-        if root_org == VNRC:
-            vnrc = True
-            # @ToDo: Make this use the same lookup as in ns_only to check if user can see HRs from multiple NS
-            settings.org.regions = False
-            s3db.hrm_human_resource.site_id.represent = s3db.org_SiteRepresent(show_type = False)
-            #settings.org.site_label = "Office/Center"
+                # & those from this region's countries? No!
+                #ltable = s3db.org_organisation_organisation
+                #root_orgs = db(ltable.parent_id == auth.user.organisation_id).select(ltable.organisation_id)
+                #root_orgs = [o.organisation_id for o in root_orgs]
+                #filter |= FS("~.organisation_id$root_organisation").belongs(root_orgs)
 
-        elif root_org == ARCS:
-            arcs = True
+            s3.filter = filter
+        else:
+            if controller == "deploy":
+                # Default Filter
+                from s3 import s3_set_default_filter
+                s3_set_default_filter("~.organisation_id$region_id",
+                                      user_region_and_children_default_filter,
+                                      tablename = tablename)
 
-        s3 = current.response.s3
+            elif root_org != CRMADA: # CRMADA have too many branches which causes issues
+                # Default Filter
+                from s3 import s3_set_default_filter
+                s3_set_default_filter("~.organisation_id",
+                                      user_org_and_children_default_filter,
+                                      tablename = tablename)
+
+            if root_org == VNRC:
+                vnrc = True
+                # @ToDo: Make this use the same lookup as in ns_only to check if user can see HRs from multiple NS
+                settings.org.regions = False
+                s3db.hrm_human_resource.site_id.represent = s3db.org_SiteRepresent(show_type = False)
+                #settings.org.site_label = "Office/Center"
+
+            elif root_org == ARCS:
+                arcs = True
 
         # Custom prep
         standard_prep = s3.prep
@@ -2738,7 +4131,40 @@ def config(settings):
 
                 resource.configure(filter_widgets = filters)
 
-            if arcs:
+            if EO:
+                from s3 import s3_fieldmethod
+                ptable = s3db.pr_person
+                ltable = s3db.pr_person_user
+                gtable = db.auth_group
+                mtable = db.auth_membership
+                base_query = (ltable.pe_id == ptable.pe_id) & \
+                             (ltable.user_id == mtable.user_id) & \
+                             (mtable.group_id == gtable.id) & \
+                             (gtable.uuid.belongs(("EVENT_ORGANISER", "EVENT_MONITOR", "EVENT_OFFICE_MANAGER")))
+                def roles(row):
+                    query = base_query & \
+                            (ptable.id == row["hrm_human_resource.person_id"])
+                    user = db(query).select(gtable.uuid)
+                    names = []
+                    for u in user:
+                        if u.uuid == "EVENT_ORGANISER":
+                            names.append("EO")
+                        elif u.uuid == "EVENT_MONITOR":
+                            names.append("MFP")
+                        elif u.uuid == "EVENT_OFFICE_MANAGER":
+                            names.append("OM")
+                    names = ", ".join(names)
+                    return names
+                table.roles = s3_fieldmethod("roles", roles)
+
+                list_fields = ["person_id",
+                               (T("Roles"), "roles"),
+                               (T("Email"), "email.value"),
+                               (settings.get_ui_label_mobile_phone(), "phone.value")
+                               ]
+                resource.configure(list_fields = list_fields)
+
+            elif arcs:
                 # No Sector filter
                 pass
             elif vnrc:
@@ -2755,27 +4181,27 @@ def config(settings):
             if controller == "vol":
                 if arcs:
                     # ARCS have a custom Volunteer form
-                    from gluon import IS_EMPTY_OR
-                    #from s3 import IS_ADD_PERSON_WIDGET2, IS_ONE_OF, S3LocationSelector, S3SQLCustomForm, S3SQLInlineComponent
-                    from s3 import IS_ONE_OF, S3LocationSelector, S3Represent, S3SQLCustomForm, S3SQLInlineComponent
+                    #from gluon import IS_EMPTY_OR
+                    #from s3 import S3AddPersonWidget, IS_ONE_OF, S3LocationSelector, S3SQLCustomForm, S3SQLInlineComponent
+                    from s3 import IS_ONE_OF, S3LocationSelector, S3SQLCustomForm, S3SQLInlineComponent
 
                     # Go back to Create form after submission
                     current.session.s3.rapid_data_entry = True
-
-                    db = current.db
 
                     settings.pr.request_mobile_phone = False
                     settings.pr.request_email = False
                     #settings.pr.request_year_of_birth = True
                     settings.pr.separate_name_fields = 2
-                    #table.person_id.requires = IS_ADD_PERSON_WIDGET2(first_name_only = True)
+                    #table.person_id.widget = S3AddPersonWidget(controller = "vol",
+                    #                                           first_name_only = True,
+                    #                                           )
                     table.code.label = T("Volunteer ID")
                     ptable = s3db.pr_person
                     ptable.first_name.label = T("Name")
                     ptable.gender.label = T("Gender")
                     # Ensure that + appears at the beginning of the number
-                    # Done in Model
-                    #f = s3db.pr_phone_contact.value
+                    # Done in Model's controller prep
+                    #f = s3db.get_aliased(s3db.pr_contact, "pr_phone_contact").value
                     #f.represent = s3_phone_represent
                     #f.widget = S3PhoneWidget()
                     s3db.pr_address.location_id.widget = S3LocationSelector(show_address = T("Village"),
@@ -2837,9 +4263,8 @@ def config(settings):
                                                       "key": "pe_id",
                                                       "fkey": "pe_id",
                                                       "pkey": "person_id",
-                                                      "filterby": {
-                                                          "type": "2",
-                                                          },
+                                                      "filterby": {"type": "2",
+                                                                   },
                                                       },
                                         pr_education = ({"name": "current_education",
                                                          "link": "pr_person",
@@ -2847,9 +4272,8 @@ def config(settings):
                                                          "key": "id",
                                                          "fkey": "person_id",
                                                          "pkey": "person_id",
-                                                         "filterby": {
-                                                             "current": True,
-                                                             },
+                                                         "filterby": {"current": True,
+                                                                      },
                                                          "multiple": False,
                                                          },
                                                         {"name": "previous_education",
@@ -2858,9 +4282,8 @@ def config(settings):
                                                          "key": "id",
                                                          "fkey": "person_id",
                                                          "pkey": "person_id",
-                                                         "filterby": {
-                                                             "current": False,
-                                                             },
+                                                         "filterby": {"current": False,
+                                                                      },
                                                          "multiple": False,
                                                          },
                                                         ),
@@ -2870,31 +4293,24 @@ def config(settings):
                                                     "key": "pe_id",
                                                     "fkey": "pe_id",
                                                     "pkey": "person_id",
-                                                    "filterby": {
-                                                        "profile": True,
-                                                        },
+                                                    "filterby": {"profile": True,
+                                                                 },
                                                     "multiple": False,
                                                     },
                                         )
-
-                    # Attach component (we're past resource initialization)
-                    hook = s3db.get_component("hrm_human_resource", "vol_training")
-                    if hook:
-                        r.resource._attach("vol_training", hook)
 
                     crud_form = S3SQLCustomForm("organisation_id",
                                                 "code",
                                                 S3SQLInlineComponent("programme_hours",
                                                                      label = "",
-                                                                     fields = ["programme_id",
-                                                                               ],
+                                                                     fields = ["programme_id"],
                                                                      link = False,
                                                                      multiple = False,
                                                                      ),
                                                 "person_id",
                                                 S3SQLInlineComponent("perm_address",
                                                                      label = T("Address"),
-                                                                     fields = (("", "location_id"),),
+                                                                     fields = [("", "location_id")],
                                                                      filterby = {"field": "type",
                                                                                  "options": 2,
                                                                                  },
@@ -2904,8 +4320,7 @@ def config(settings):
                                                                      ),
                                                 S3SQLInlineComponent("current_education",
                                                                      label = T("School / University"),
-                                                                     fields = [("", "institute"),
-                                                                               ],
+                                                                     fields = [("", "institute")],
                                                                      filterby = {"field": "current",
                                                                                  "options": True,
                                                                                  },
@@ -2915,7 +4330,7 @@ def config(settings):
                                                                      ),
                                                 S3SQLInlineComponent("phone",
                                                                      label = T("Phone Number"),
-                                                                     fields = (("", "value"),),
+                                                                     fields = [("", "value")],
                                                                      filterby = {"field": "contact_method",
                                                                                  "options": "SMS",
                                                                                  },
@@ -2925,16 +4340,14 @@ def config(settings):
                                                                      ),
                                                 S3SQLInlineComponent("contact_emergency",
                                                                      label = T("Emergency Contact Number"),
-                                                                     fields = [("", "phone"),
-                                                                               ],
+                                                                     fields = [("", "phone")],
                                                                      link = False,
                                                                      update_link = False,
                                                                      multiple = False,
                                                                      ),
                                                 S3SQLInlineComponent("previous_education",
                                                                      label = T("Education Level"),
-                                                                     fields = [("", "level_id"),
-                                                                               ],
+                                                                     fields = [("", "level_id")],
                                                                      filterby = {"field": "current",
                                                                                  "options": False,
                                                                                  },
@@ -2956,7 +4369,7 @@ def config(settings):
                                                 (T("Remarks"), "comments"),
                                                 S3SQLInlineComponent("pr_image",
                                                                      label = T("Photo"),
-                                                                     fields = (("", "image"),),
+                                                                     fields = [("", "image")],
                                                                      filterby = {"field": "profile",
                                                                                  "options": True,
                                                                                  },
@@ -2971,7 +4384,7 @@ def config(settings):
                     filter_widgets = [S3TextFilter(["person_id$first_name",
                                                     "person_id$middle_name",
                                                     "person_id$last_name",
-                                                    "organisation_id",
+                                                    #"organisation_id",
                                                     ],
                                                    label = T("Search"),
                                                    ),
@@ -3138,10 +4551,6 @@ def config(settings):
             elif controller == "deploy":
                 # Custom settings for RDRT
 
-                from s3 import FS
-
-                db = current.db
-
                 if not is_admin:
                     organisation_id = auth.user.organisation_id
                     dotable = s3db.deploy_organisation
@@ -3184,10 +4593,8 @@ def config(settings):
                                                                          },
                                                             },
                                             )
-                        # Re-attach component (we're past resource initialization)
-                        hook = s3db.get_component("hrm_human_resource", "training")
-                        if hook:
-                            r.resource._attach("training", hook)
+                        # Reset the component (we're past resource initialization)
+                        r.resource.components.reset(("training",))
 
                 # Exclude None-values for training course pivot axis
                 s3db.configure(tablename,
@@ -3294,7 +4701,6 @@ def config(settings):
 
                 if r.method != "profile":
                     # Representation of emergency contacts (breaks the update_url construction in render_toolbox)
-                    from s3 import S3Represent
                     field = s3db.pr_contact_emergency.id
                     field.represent = S3Represent(lookup = "pr_contact_emergency",
                                                   fields = ("name", "relationship", "phone"),
@@ -3449,7 +4855,7 @@ def config(settings):
                 branches = False,
                 )
 
-        # Special cases for different NS
+        # Special cases for different NS/roles
         root_org = current.auth.root_org_name()
         if root_org in (CVTL, PMI, PRC):
             settings.hrm.vol_active_tooltip = "A volunteer is defined as active if they've participated in an average of 8 or more hours of Program work or Trainings per month in the last year"
@@ -3463,6 +4869,19 @@ def config(settings):
             # @ToDo
             # def vn_age_group(age):
             # settings.pr.age_group = vn_age_group
+        else:
+            auth = current.auth
+            if not auth.s3_has_role("ADMIN") and \
+               auth.s3_has_roles(("EVENT_MONITOR", "EVENT_ORGANISER", "EVENT_OFFICE_MANAGER")):
+                # Bangkok CCST
+                organisation_id = auth.user.organisation_id
+                # Filter Programmes to just those from this Org
+                from s3 import FS
+                current.response.s3.filter = \
+                    FS("~.organisation_id") == organisation_id
+
+                # Default to this Org, not to root_org
+                current.s3db.hrm_programme.organisation_id.default = organisation_id
 
         return attr
 
@@ -3496,116 +4915,161 @@ def config(settings):
     # -------------------------------------------------------------------------
     def customise_hrm_training_controller(**attr):
 
+        db = current.db
+        s3db = current.s3db
+
         tablename = "hrm_training"
 
-        # Default Filter
-        from s3 import s3_set_default_filter
-        s3_set_default_filter("~.person_id$human_resource.organisation_id",
-                              user_org_default_filter,
-                              tablename = tablename)
+        # Special cases for different NS/roles
+        auth = current.auth
+        if not auth.s3_has_role("ADMIN") and \
+           auth.s3_has_roles(("EVENT_MONITOR", "EVENT_ORGANISER", "EVENT_OFFICE_MANAGER")):
+            # Bangkok CCST
+            s3db.hrm_training.person_id.represent = s3db.pr_PersonRepresent(show_link=True)
+            from s3 import FS
+            # Filter People to just those conducted by the region
+            # @ToDo: Filter by Org too if more EVENT_* teams come onboard
+            gtable = db.auth_group
+            mtable = db.auth_membership
+            query = (gtable.uuid.belongs(("EVENT_MONITOR", "EVENT_ORGANISER"))) & \
+                    (mtable.group_id == gtable.id) & \
+                    (mtable.deleted == False)
+            rows = db(query).select(mtable.user_id)
+            user_ids = [row.user_id for row in rows]
+            filter = FS("~.training_event_id$created_by").belongs(set(user_ids))
 
-        # Special cases for different NS
-        root_org = current.auth.root_org_name()
-        if root_org == VNRC:
-            # Remove link to download Template
-            attr["csv_template"] = "hide"
+            # & from this region's countries? No!
+            #ltable = s3db.org_organisation_organisation
+            #root_orgs = db(ltable.parent_id == auth.user.organisation_id).select(ltable.organisation_id)
+            #root_orgs = [o.organisation_id for o in root_orgs]
+            #filter |= FS("~.person_id$human_resource.organisation_id$root_organisation").belongs(root_orgs)
 
-        if current.request.controller == "deploy" and _is_asia_pacific():
-            # Only interested in RDRT courses
+            current.response.s3.filter = filter
 
-            db = current.db
-            s3db = current.s3db
-            ttable = s3db.hrm_training
+            # Enable the Status field & label accordingly
+            f = s3db.hrm_training.role
+            f.readable = f.writable = True
+            f.label = T("Status")
 
-            otable = s3db.org_organisation
-            org = db(otable.name == AP_ZONE).select(otable.id,
-                                                    limitby=(0, 1),
-                                                    cache = s3db.cache,
-                                                    ).first()
-            try:
-                organisation_id = org.id
-            except:
-                current.log.error("Cannot find org %s - prepop not done?" % AP_ZONE)
-                organisation_id = None
-            else:
-                from s3 import FS, IS_ONE_OF
-                current.response.s3.filter = (FS("~.course_id$organisation_id") == organisation_id)
-                ctable = s3db.hrm_course
-                query = (ctable.organisation_id == organisation_id) & \
-                        (ctable.deleted == False)
-                courses = db(query).select(ctable.id,
-                                           ctable.name,
-                                           )
-                field = ttable.course_id
-                field.requires = IS_ONE_OF(db, "hrm_course.id",
-                                           field.represent,
-                                           filterby="id",
-                                           filter_opts=[c.id for c in courses],
-                                           )
-
-            # Grades 1-4
-            course_grade_opts = {1: "1: %s" % T("Unsatisfactory"),
-                                 2: "2: %s" % T("Partially achieved expectations"),
-                                 3: "3: %s" % T("Fully achieved expectations"),
-                                 4: "4: %s" % T("Exceeded expectations"),
-                                 }
-            field = ttable.grade
-            field.readable = field.writable = True
-            field.represent = None
-            from gluon import IS_EMPTY_OR, IS_IN_SET
-            field.requires = IS_EMPTY_OR(IS_IN_SET(course_grade_opts,
-                                                   zero=None))
-
-            # Upload Performance Appraisal
-            field = ttable.file
-            field.readable = field.writable = True
-            field.label = T("Performance Appraisal")
-
-            # Customise Filter Widgets
-            filter_widgets = s3db.get_config(tablename, "filter_widgets")
-            found = None
-            index = 0
-            for w in filter_widgets:
-                if w.field == "person_id$location_id":
-                    found = index
-                elif w.field == "grade":
-                    w.opts.options = dict((g, g) for g in course_grade_opts)
-                elif organisation_id and w.field == "course_id":
-                    w.opts.options = dict((c.id, T(c.name)) for c in courses)
-                elif w.field == "training_event_id$site_id":
-                    w.opts.label = T("Training Location")
-                    w.opts.represent = s3db.org_SiteRepresent(show_type = False)
-                index += 1
-            if found is not None:
-                filter_widgets.pop(found)
-
-            # Customise Report Options
-            report_fields = [(T("Training Event"), "training_event_id"),
-                             "person_id",
-                             "course_id",
-                             "grade",
-                             (T("National Society"), "person_id$human_resource.organisation_id"),
-                             (T("Region"), "person_id$human_resource.organisation_id$region_id"),
-                             (T("Training Location"), "training_event_id$site_id"),
-                             #(T("Month"), "month"),
-                             (T("Year"), "year"),
-                             ]
-
-            report_options = Storage(rows = report_fields,
-                                     cols = report_fields,
-                                     fact = report_fields,
-                                     methods = ["count", "list"],
-                                     defaults = Storage(
-                                        rows = "person_id$human_resource.organisation_id$region_id",
-                                        cols = "training.course_id",
-                                        fact = "count(training.person_id)",
-                                        totals = True,
-                                        )
-                                    )
+            list_fields = ["person_id",
+                           (settings.get_hrm_organisation_label(), "person_id$human_resource.organisation_id"),
+                           (T("Event"), "training_event_id"),
+                           "date",
+                           "role",
+                           ]
 
             s3db.configure(tablename,
-                           report_options = report_options,
+                           list_fields = list_fields,
                            )
+
+        else:
+            # Default Filter
+            from s3 import s3_set_default_filter
+            s3_set_default_filter("~.person_id$human_resource.organisation_id",
+                                  user_org_default_filter,
+                                  tablename = tablename)
+
+            root_org = auth.root_org_name()
+
+            if root_org == VNRC:
+                # Remove link to download Template
+                attr["csv_template"] = "hide"
+
+            elif current.request.controller == "deploy" and _is_asia_pacific():
+                # AP RDRT
+                # - only interested in RDRT courses
+
+                ttable = s3db.hrm_training
+
+                otable = s3db.org_organisation
+                org = db(otable.name == AP_ZONE).select(otable.id,
+                                                        limitby=(0, 1),
+                                                        cache = s3db.cache,
+                                                        ).first()
+                try:
+                    organisation_id = org.id
+                except:
+                    current.log.error("Cannot find org %s - prepop not done?" % AP_ZONE)
+                    organisation_id = None
+                else:
+                    from s3 import FS, IS_ONE_OF
+                    current.response.s3.filter = (FS("~.course_id$organisation_id") == organisation_id)
+                    ctable = s3db.hrm_course
+                    query = (ctable.organisation_id == organisation_id) & \
+                            (ctable.deleted == False)
+                    courses = db(query).select(ctable.id,
+                                               ctable.name,
+                                               )
+                    field = ttable.course_id
+                    field.requires = IS_ONE_OF(db, "hrm_course.id",
+                                               field.represent,
+                                               filterby="id",
+                                               filter_opts=[c.id for c in courses],
+                                               )
+
+                # Grades 1-4
+                course_grade_opts = {1: "1: %s" % T("Unsatisfactory"),
+                                     2: "2: %s" % T("Partially achieved expectations"),
+                                     3: "3: %s" % T("Fully achieved expectations"),
+                                     4: "4: %s" % T("Exceeded expectations"),
+                                     }
+                field = ttable.grade
+                field.readable = field.writable = True
+                field.represent = None
+                from gluon import IS_EMPTY_OR, IS_IN_SET
+                field.requires = IS_EMPTY_OR(IS_IN_SET(course_grade_opts,
+                                                       zero=None))
+
+                # Upload Performance Appraisal
+                field = ttable.file
+                field.readable = field.writable = True
+                field.label = T("Performance Appraisal")
+
+                # Customise Filter Widgets
+                filter_widgets = s3db.get_config(tablename, "filter_widgets")
+                found = None
+                index = 0
+                for w in filter_widgets:
+                    if w.field == "person_id$location_id":
+                        found = index
+                    elif w.field == "grade":
+                        w.opts.options = dict((g, g) for g in course_grade_opts)
+                    elif organisation_id and w.field == "course_id":
+                        w.opts.options = dict((c.id, T(c.name)) for c in courses)
+                    elif w.field == "training_event_id$site_id":
+                        w.opts.label = T("Training Location")
+                        w.opts.represent = s3db.org_SiteRepresent(show_type = False)
+                    index += 1
+                if found is not None:
+                    filter_widgets.pop(found)
+
+                # Customise Report Options
+                report_fields = [(T("Training Event"), "training_event_id"),
+                                 "person_id",
+                                 "course_id",
+                                 "grade",
+                                 (T("National Society"), "person_id$human_resource.organisation_id"),
+                                 (T("Region"), "person_id$human_resource.organisation_id$region_id"),
+                                 (T("Training Location"), "training_event_id$site_id"),
+                                 #(T("Month"), "month"),
+                                 (T("Year"), "year"),
+                                 ]
+
+                report_options = Storage(rows = report_fields,
+                                         cols = report_fields,
+                                         fact = report_fields,
+                                         methods = ["count", "list"],
+                                         defaults = Storage(
+                                            rows = "person_id$human_resource.organisation_id$region_id",
+                                            cols = "training.course_id",
+                                            fact = "count(training.person_id)",
+                                            totals = True,
+                                            )
+                                        )
+
+                s3db.configure(tablename,
+                               report_options = report_options,
+                               )
 
         return attr
 
@@ -3793,6 +5257,22 @@ def config(settings):
             deploy_status_update(organisation_id, person_id, membership)
 
     # -------------------------------------------------------------------------
+    def hrm_training_event_notify(r, **attr):
+        """
+            Notify Participants to fill out the Survey
+            - exclude Observers
+        """
+
+        from gluon import redirect, URL
+
+        training_event_id = r.id
+
+        hrm_notify_participants(training_event_id, redirect=True)
+
+        # Redirect to main event page
+        redirect(URL(args=[training_event_id]))
+
+    # -------------------------------------------------------------------------
     def customise_hrm_training_resource(r, tablename):
 
         # Add custom onaccept
@@ -3815,23 +5295,363 @@ def config(settings):
     # -------------------------------------------------------------------------
     def customise_hrm_training_event_controller(**attr):
 
-        # Special cases for different NS
+        s3db = current.s3db
+
+        # Special cases for different NS/roles
+        EVENTS = False
         root_org = current.auth.root_org_name()
-        if root_org == NRCS:
-            # Don't allow creating of Persons here
-            from gluon import DIV
-            T = current.T
-            current.s3db.hrm_training.person_id.comment = \
-                DIV(_class="tooltip",
-                    _title="%s|%s" % (T("Participant"),
-                                      T("Type the first few characters of one of the Participant's names.")))
-        elif root_org == VNRC:
+        if root_org == VNRC:
             # Remove link to download Template
             attr["csv_template"] = "hide"
+        else:
+            auth = current.auth
+
+            set_method = s3db.set_method
+            set_method("hrm", "training_event",
+                       method = "notify",
+                       action = hrm_training_event_notify)
+
+            if not auth.s3_has_role("ADMIN"):
+                if auth.s3_has_roles(("EVENT_MONITOR", "EVENT_ORGANISER", "EVENT_OFFICE_MANAGER")):
+                    # Bangkok CCST
+                    EVENTS = True
+
+                    from s3 import FS
+
+                    db = current.db
+
+                    organisation_id = auth.user.organisation_id
+
+                    # Filter Events to just those created by the regional staff
+                    # @ToDo: Filter by Org too if more EVENT_* teams come onboard
+                    gtable = db.auth_group
+                    mtable = db.auth_membership
+                    query = (gtable.uuid.belongs(("EVENT_MONITOR", "EVENT_ORGANISER"))) & \
+                            (mtable.group_id == gtable.id) & \
+                            (mtable.deleted == False)
+                    rows = db(query).select(mtable.user_id)
+                    user_ids = [row.user_id for row in rows]
+                    filter = FS("~.created_by").belongs(set(user_ids))
+
+                    # & those from this region's countries? No!
+                    #ltable = s3db.org_organisation_organisation
+                    #root_orgs = db(ltable.parent_id == auth.user.organisation_id).select(ltable.organisation_id)
+                    #root_orgs = [o.organisation_id for o in root_orgs]
+                    #filter |= FS("~.organisation_id$root_organisation").belongs(root_orgs)
+                    current.response.s3.filter = filter
+
+        # Custom prep
+        s3 = current.response.s3
+        standard_prep = s3.prep
+        def custom_prep(r):
+            # Call standard prep
+            if callable(standard_prep):
+                result = standard_prep(r)
+            else:
+                result = True
+
+            if root_org == NRCS and r.component_name == "participant":
+                # Don't allow creating of Persons here
+                from gluon import DIV
+                s3db.hrm_training.person_id.comment = \
+                    DIV(_class="tooltip",
+                        _title="%s|%s" % (T("Participant"),
+                                          T("Type the first few characters of one of the Participant's names.")))
+
+            elif EVENTS:
+                if not r.component:
+                    if r.get_vars.get("dashboard"):
+                        # Dashboard for Office Manager
+                        #from dateutil.relativedelta import relativedelta
+                        from s3 import S3DateTime, s3_auth_user_represent_name, s3_fieldmethod
+
+                        etable = s3db.hrm_training_event
+                        etable.created_by.represent = s3_auth_user_represent_name
+                        # Represent just with Date not Datetime
+                        date_represent = S3DateTime.date_represent
+                        etable.start_date.represent = date_represent
+                        etable.end_date.represent = date_represent
+
+                        # Virtual Fields for Dashboard
+                        ttable = s3db.dc_target
+                        ltable = s3db.hrm_event_target
+                        rtable = s3db.dc_response
+                        squery = (etable.id == ltable.training_event_id) & \
+                                 (ttable.id == ltable.target_id)
+                        rquery = squery & (rtable.target_id == ttable.id)
+
+                        def month3(row):
+                            query = squery & \
+                                    (ltable.survey_type == 3) & \
+                                    (etable.id == row["hrm_training_event.id"])
+                            target = db(query).select(ttable.deleted,
+                                                      ttable.approved_by,
+                                                      limitby = (0, 1)
+                                                      ).first()
+                            if not target:
+                                status = T("No Survey")
+                            elif target.deleted:
+                                status = T("Rejected")
+                            elif not target.approved_by:
+                                status = T("Ignored")
+                            else:
+                                status = T("Accepted")
+                            return status
+                        etable.month3 = s3_fieldmethod("month3", month3)
+
+                        def month12(row):
+                            query = squery & \
+                                    (ltable.survey_type == 12) & \
+                                    (etable.id == row["hrm_training_event.id"])
+                            target = db(query).select(ttable.deleted,
+                                                      ttable.approved_by,
+                                                      limitby = (0, 1)
+                                                      ).first()
+                            if not target:
+                                status = T("No Survey")
+                            elif target.deleted:
+                                status = T("Rejected")
+                            elif not target.approved_by:
+                                status = T("Ignored")
+                            else:
+                                status = T("Accepted")
+                            return status
+                        etable.month12 = s3_fieldmethod("month12", month12)
+
+                        def month3_resp(row):
+                            query = rquery & \
+                                    (ltable.survey_type == 3) & \
+                                    (etable.id == row["hrm_training_event.id"])
+                            responses = db(query).select(rtable.date)
+                            total = len(responses)
+                            responded = len([resp.date for resp in responses if resp.date is not None])
+                            response_rate = "%s / %s" % (responded, total)
+                            return response_rate
+                        etable.month3_resp = s3_fieldmethod("month3_resp", month3_resp)
+
+                        def month12_resp(row):
+                            query = rquery & \
+                                    (ltable.survey_type == 12) & \
+                                    (etable.id == row["hrm_training_event.id"])
+                            responses = db(query).select(rtable.date)
+                            total = len(responses)
+                            responded = len([resp.date for resp in responses if resp.date is not None])
+                            response_rate = "%s / %s" % (responded, total)
+                            return response_rate
+                        etable.month6_resp = s3_fieldmethod("month12_resp", month12_resp)
+
+                        list_fields = ["name",
+                                       ("EO", "created_by"),
+                                       "start_date",
+                                       "end_date",
+                                       (T("3 month survey"), "month3"),
+                                       (T("Respondents"), "month3_resp"),
+                                       (T("12 month survey"), "month12"),
+                                       (T("Respondents"), "month12_resp"),
+                                       ]
+
+                        s3db.configure("hrm_training_event",
+                                       extra_fields = ["deleted"],
+                                       listadd = False,
+                                       list_fields = list_fields,
+                                       )
+                    else:
+                        from gluon import IS_EMPTY_OR
+                        from s3 import IS_ONE_OF, S3SQLCustomForm, S3SQLInlineLink
+
+                        # Default Programme Org to this Branch, not root (for imports)
+                        s3db.hrm_programme.organisation_id.default = organisation_id
+
+                        # Enable the Status field & label accordingly
+                        f = s3db.hrm_training.role
+                        f.readable = f.writable = True
+                        f.label = T("Status")
+
+                        # Filter Programmes to this Org (not root)
+                        f = s3db.hrm_event_programme.programme_id
+                        f.requires = IS_EMPTY_OR(
+                                        IS_ONE_OF(db, "hrm_programme.id",
+                                                  f.represent,
+                                                  filterby="organisation_id",
+                                                  filter_opts=(organisation_id,),
+                                                  ))
+
+                        # Customise
+                        crud_form = S3SQLCustomForm("name",
+                                                    S3SQLInlineLink("strategy",
+                                                                    field = "strategy_id",
+                                                                    label = T("AoF/SFI"),
+                                                                    multiple = False,
+                                                                    ),
+                                                    S3SQLInlineLink("programme",
+                                                                    field = "programme_id",
+                                                                    label = T("Programme"),
+                                                                    multiple = False,
+                                                                    ),
+
+                                                    S3SQLInlineLink("project",
+                                                                    field = "project_id",
+                                                                    label = T("Project"),
+                                                                    multiple = False,
+                                                                    required = True,
+                                                                    ),
+
+                                                    "event_type_id",
+                                                    "location_id",
+                                                    "organisation_id",
+                                                    "start_date",
+                                                    "end_date",
+                                                    "comments",
+                                                    )
+
+                        list_fields = ["name",
+                                       (T("AoF/SFI"), "strategy__link.strategy_id"),
+                                       "programme__link.programme_id",
+                                       "project__link.project_id",
+                                       "event_type_id",
+                                       "location_id$L0",
+                                       "location_id$L1",
+                                       "location_id$L2",
+                                       "location_id$L3",
+                                       "organisation_id",
+                                       "start_date",
+                                       "end_date",
+                                       ]
+
+                        s3db.configure("hrm_training_event",
+                                       crud_form = crud_form,
+                                       list_fields = list_fields,
+                                       )
+
+                elif r.component_name == "participant":
+                    s3db.hrm_training.person_id.represent = s3db.pr_PersonRepresent(show_link=True)
+                    s3db.configure("hrm_training",
+                                   list_fields = ["person_id",
+                                                  (T("Job Title"), "job_title"),                    # Field.Method
+                                                  (settings.get_hrm_organisation_label(), "organisation"),  # Field.Method
+                                                  ],
+                                   )
+
+            return result
+        s3.prep = custom_prep
 
         return attr
 
     settings.customise_hrm_training_event_controller = customise_hrm_training_event_controller
+
+    # -------------------------------------------------------------------------
+    def hrm_training_event_onaccept(form):
+        """
+            Create a Scheduled Task to notify EO / MFP to run survey
+        """
+
+        form_vars = form.vars
+
+        try:
+            training_event_id = form_vars.id
+        except:
+            # Nothing we can do
+            return
+
+        db = current.db
+        s3db = current.s3db
+
+        start_date = form_vars.get("start_date")
+        end_date = form_vars.get("end_date")
+        if not start_date or not end_date:
+            # Read the record
+            etable = s3db.hrm_training_event
+            event = db(etable.id == training_event_id).select(etable.start_date,
+                                                              etable.end_date,
+                                                              limitby = (0, 1)
+                                                              ).first()
+            start_date = event.start_date
+            end_date = event.end_date
+
+        # Prefer end_date if-available, otherwise use start_date
+        end_date = end_date or start_date
+
+        if not end_date:
+            # No date defined, so exit
+            return
+
+        import json
+        json_dumps = json.dumps
+        from dateutil.relativedelta import relativedelta
+        ttable = s3db.scheduler_task
+        schedule_task = current.s3task.schedule_task
+        task_name = "settings_task"
+
+        # 3 month reminder
+        start_time = end_date + relativedelta(months = 3)
+        args = ["hrm_training_event_survey"]
+        vars = {"training_event_id": training_event_id,
+                "survey_type": 3,
+                }
+        query = (ttable.task_name == task_name) & \
+                (ttable.args == json_dumps(args)) & \
+                (ttable.vars == json_dumps(vars))
+        exists = db(query).select(ttable.id,
+                                  ttable.start_time,
+                                  limitby = (0, 1)
+                                  ).first()
+        if exists:
+            if exists.start_time != start_time:
+                exists.update_record(start_time = start_time)
+        else:
+            schedule_task(task_name,
+                          args = args,
+                          vars = vars,
+                          start_time = start_time,
+                          #period = 300,  # seconds
+                          timeout = 300, # seconds
+                          repeats = 1    # run once
+                          )
+
+        # 12 month reminder
+        start_time = end_date + relativedelta(months = 12)
+        vars = {"training_event_id": training_event_id,
+                "survey_type": 12,
+                }
+        query = (ttable.task_name == task_name) & \
+                (ttable.args == json_dumps(args)) & \
+                (ttable.vars == json_dumps(vars))
+        exists = db(query).select(ttable.id,
+                                  ttable.start_time,
+                                  limitby = (0, 1)
+                                  ).first()
+        if exists:
+            if exists.start_time != start_time:
+                exists.update_record(start_time = start_time)
+        else:
+            schedule_task(task_name,
+                          args = args,
+                          vars = vars,
+                          start_time = start_time,
+                          #period = 300,  # seconds
+                          timeout = 300, # seconds
+                          repeats = 1    # run once
+                          )
+
+    # -------------------------------------------------------------------------
+    def customise_hrm_training_event_resource(r, tablename):
+
+        # Add custom onaccept
+        s3db = current.s3db
+        default = s3db.get_config(tablename, "onaccept")
+        if not default:
+            onaccept = hrm_training_event_onaccept
+        elif not isinstance(default, list):
+            onaccept = [hrm_training_event_onaccept, default]
+        else:
+            onaccept = default
+            if all(cb != hrm_training_event_onaccept for cb in onaccept):
+                onaccept.append(hrm_training_event_onaccept)
+        s3db.configure(tablename,
+                       onaccept = onaccept,
+                       )
+
+    settings.customise_hrm_training_event_resource = customise_hrm_training_event_resource
 
     # -------------------------------------------------------------------------
     def customise_inv_home():
@@ -3917,8 +5737,6 @@ def config(settings):
             with just "paid"/"unpaid"/"exempted" as possible values
         """
 
-        T = current.T
-
         if hasattr(row, "member_membership"):
             row = row.member_membership
 
@@ -3984,8 +5802,8 @@ def config(settings):
             f.readable = f.writable = True
             mtable.comments.label = T("Remarks")
             # Ensure that + appears at the beginning of the number
-            # Done in Model
-            #f = s3db.pr_phone_contact.value
+            # Done in controllers/member.py
+            #f = s3db.get_aliased(s3db.pr_contact, "pr_phone_contact").value
             #f.represent = s3_phone_represent
             #f.widget = S3PhoneWidget()
             s3db.pr_address.location_id.widget = S3LocationSelector(show_address = T("Village"),
@@ -4036,9 +5854,8 @@ def config(settings):
                                                "key": "pe_id",
                                                "fkey": "pe_id",
                                                "pkey": "person_id",
-                                               "filterby": {
-                                                   "type": "2",
-                                                   },
+                                               "filterby": {"type": "2",
+                                                            },
                                                },
                                               {"name": "temp_address",
                                                "link": "pr_person",
@@ -4046,9 +5863,8 @@ def config(settings):
                                                "key": "pe_id",
                                                "fkey": "pe_id",
                                                "pkey": "person_id",
-                                               "filterby": {
-                                                   "type": "1",
-                                                   },
+                                               "filterby": {"type": "1",
+                                                            },
                                                },
                                               ),
                                 pr_contact = {"link": "pr_person",
@@ -4056,9 +5872,8 @@ def config(settings):
                                               "key": "pe_id",
                                               "fkey": "pe_id",
                                               "pkey": "person_id",
-                                              "filterby": {
-                                                  "contact_method": "SMS",
-                                                  },
+                                              "filterby": {"contact_method": "SMS",
+                                                           },
                                               },
                                 pr_contact_emergency = {"link": "pr_person",
                                                         "joinby": "id",
@@ -4078,9 +5893,8 @@ def config(settings):
                                                "key": "id",
                                                "fkey": "person_id",
                                                "pkey": "person_id",
-                                               "filterby": {
-                                                   "type": 2,
-                                                   },
+                                               "filterby": {"type": 2,
+                                                            },
                                                "multiple": False,
                                                },
                                 pr_image = {"link": "pr_person",
@@ -4088,9 +5902,8 @@ def config(settings):
                                             "key": "pe_id",
                                             "fkey": "pe_id",
                                             "pkey": "person_id",
-                                            "filterby": {
-                                                "profile": True,
-                                                },
+                                            "filterby": {"profile": True,
+                                                         },
                                             "multiple": False,
                                             },
                                 pr_person_details = {"link": "pr_person",
@@ -4112,7 +5925,7 @@ def config(settings):
                                         "person_id",
                                         S3SQLInlineComponent("perm_address",
                                                              label = T("Permanent Address"),
-                                                             fields = (("", "location_id"),),
+                                                             fields = [("", "location_id")],
                                                              filterby = {"field": "type",
                                                                          "options": 2,
                                                                          },
@@ -4122,7 +5935,7 @@ def config(settings):
                                                              ),
                                         S3SQLInlineComponent("temp_address",
                                                              label = T("Temporary Address"),
-                                                             fields = (("", "location_id"),),
+                                                             fields = [("", "location_id")],
                                                              filterby = {"field": "type",
                                                                          "options": 1,
                                                                          },
@@ -4132,21 +5945,21 @@ def config(settings):
                                                              ),
                                         S3SQLInlineComponent("person_details",
                                                              label = T("Place of Work"),
-                                                             fields = (("", "company"),),
+                                                             fields = [("", "company")],
                                                              link = False,
                                                              update_link = False,
                                                              multiple = False,
                                                              ),
                                         S3SQLInlineComponent("education",
                                                              label = T("Education Level"),
-                                                             fields = (("", "level_id"),),
+                                                             fields = [("", "level_id")],
                                                              link = False,
                                                              update_link = False,
                                                              multiple = False,
                                                              ),
                                         S3SQLInlineComponent("idcard",
                                                              label = T("ID Number"),
-                                                             fields = (("", "value"),),
+                                                             fields = [("", "value")],
                                                              filterby = {"field": "type",
                                                                          "options": 2,
                                                                          },
@@ -4156,14 +5969,14 @@ def config(settings):
                                                              ),
                                         S3SQLInlineComponent("physical_description",
                                                              label = T("Blood Group"),
-                                                             fields = (("", "blood_type"),),
+                                                             fields = [("", "blood_type")],
                                                              link = False,
                                                              update_link = False,
                                                              multiple = False,
                                                              ),
                                         S3SQLInlineComponent("phone",
                                                              label = T("Phone Number"),
-                                                             fields = (("", "value"),),
+                                                             fields = [("", "value")],
                                                              filterby = {"field": "contact_method",
                                                                          "options": "SMS",
                                                                          },
@@ -4173,7 +5986,7 @@ def config(settings):
                                                              ),
                                         S3SQLInlineComponent("contact_emergency",
                                                              label = T("Relatives Contact #"),
-                                                             fields = (("", "phone"),),
+                                                             fields = [("", "phone")],
                                                              link = False,
                                                              update_link = False,
                                                              multiple = False,
@@ -4198,7 +6011,7 @@ def config(settings):
                                         "comments",
                                         S3SQLInlineComponent("image",
                                                              label = T("Photo"),
-                                                             fields = (("", "image"),),
+                                                             fields = [("", "image")],
                                                              filterby = {"field": "profile",
                                                                          "options": True,
                                                                          },
@@ -4446,8 +6259,6 @@ def config(settings):
                         # Custom CRUD form
                         if r.interactive:
                             from s3 import S3SQLCustomForm, S3SQLInlineLink, S3SQLInlineComponent
-                            # Filter inline address for type "office address", also sets default
-                            OFFICE = {"field": "type", "options": 3}
                             crud_form = S3SQLCustomForm(
                                             "name",
                                             "acronym",
@@ -4459,7 +6270,10 @@ def config(settings):
                                             S3SQLInlineComponent("address",
                                                                  fields = [("", "location_id")],
                                                                  multiple = False,
-                                                                 filterby = (OFFICE,),
+                                                                 # Filter inline address for type "office address", also sets default
+                                                                 filterby = ({"field": "type",
+                                                                              "options": 3,
+                                                                              },),
                                                                  ),
                                             "phone",
                                             "website",
@@ -4590,7 +6404,6 @@ def config(settings):
     # -------------------------------------------------------------------------
     def customise_pr_person_availability_resource(r, tablename):
 
-        T = current.T
         s3db = current.s3db
 
         # Construct slot options
@@ -4710,7 +6523,6 @@ def config(settings):
 
             @ToDo: This should be based on the HRM record, not Person record
                    - could be active with Org1 but not with Org2
-            @ToDo: allow to be calculated differently per-Org
         """
 
         now = current.request.utcnow
@@ -4788,8 +6600,6 @@ def config(settings):
 
         from s3 import S3FixedOptionsWidget, S3SQLCustomForm
 
-        T = current.T
-
         ptewidget = S3FixedOptionsWidget(("Primary",
                                           "Intermediate",
                                           "Advanced",
@@ -4828,11 +6638,19 @@ def config(settings):
     # -------------------------------------------------------------------------
     def customise_pr_person_controller(**attr):
 
-        s3db = current.s3db
+        from s3 import FS
 
-        # Special cases for different NS
+        db = current.db
+        s3db = current.s3db
+        s3 = current.response.s3
+        request = current.request
+        # Enable scalability-optimized strategies
+        settings.base.bigtable = True
+
+        # Special cases for different NS / Roles
         arcs = crmada = ircs = vnrc = False
-        root_org = current.auth.root_org_name()
+        auth = current.auth
+        root_org = auth.root_org_name()
         if root_org == ARCS:
             arcs = True
             #settings.member.cv_tab = True
@@ -4875,45 +6693,38 @@ def config(settings):
             add_components("pr_person",
                            pr_identity = {"name": "idcard",
                                           "joinby": "person_id",
-                                          "filterby": {
-                                              "type": 2,
-                                              },
+                                          "filterby": {"type": 2,
+                                                       },
                                           "multiple": False,
                                           },
                            pr_person_tag = ({"name": "pte",
                                              "joinby": "person_id",
-                                             "filterby": {
-                                                 "tag": PTE_TAG,
-                                                 },
+                                             "filterby": {"tag": PTE_TAG,
+                                                          },
                                              "multiple": False,
-                                             "defaults": {
-                                                 "tag": PTE_TAG,
-                                                 },
+                                             "defaults": {"tag": PTE_TAG,
+                                                          },
                                              },
                                             {"name": "sme",
                                              "joinby": "person_id",
-                                             "filterby": {
-                                                 "tag": SME_TAG,
-                                                 },
+                                             "filterby": {"tag": SME_TAG,
+                                                          },
                                              "multiple": False,
-                                             "defaults": {
-                                                 "tag": SME_TAG,
-                                                 },
+                                             "defaults": {"tag": SME_TAG,
+                                                          },
                                              },
                                             ),
                            )
             add_components("hrm_human_resource",
                            hrm_insurance = ({"name": "social_insurance",
                                              "joinby": "human_resource_id",
-                                             "filterby": {
-                                                 "type": "SOCIAL",
-                                                 },
+                                             "filterby": {"type": "SOCIAL",
+                                                          },
                                              },
                                             {"name": "health_insurance",
                                              "joinby": "human_resource_id",
-                                             "filterby": {
-                                                 "type": "HEALTH",
-                                                 },
+                                             "filterby": {"type": "HEALTH",
+                                                          },
                                              }),
                            )
             # Remove 'Commune' level for Addresses
@@ -4925,16 +6736,41 @@ def config(settings):
             #    # Must be already removed
             #    pass
             settings.modules.pop("asset", None)
+        else:
+            if not auth.s3_has_role("ADMIN") and \
+               auth.s3_has_roles(("EVENT_MONITOR", "EVENT_ORGANISER", "EVENT_OFFICE_MANAGER")):
+                # Bangkok CCST
+                req_args = request.args
+                if len(req_args) == 1 and req_args[0] == "search_ac.json":
+                    # Unfiltered to allow adding as participants
+                    pass
+                else:
+                    # Filter People to just those trained by this region
+                    # @ToDo: Filter by Org too if more EVENT_* teams come onboard
+                    gtable = db.auth_group
+                    mtable = db.auth_membership
+                    query = (gtable.uuid.belongs(("EVENT_MONITOR", "EVENT_ORGANISER"))) & \
+                            (mtable.group_id == gtable.id) & \
+                            (mtable.deleted == False)
+                    rows = db(query).select(mtable.user_id)
+                    user_ids = [row.user_id for row in rows]
+                    filter = FS("training.training_event_id$created_by").belongs(set(user_ids))
 
-        if current.request.controller == "deploy":
+                    # & those from this region's countries? No!
+                    #ltable = s3db.org_organisation_organisation
+                    #root_orgs = db(ltable.parent_id == auth.user.organisation_id).select(ltable.organisation_id)
+                    #root_orgs = [o.organisation_id for o in root_orgs]
+                    #filter |= FS("~.organisation_id$root_organisation").belongs(root_orgs)
+
+                    s3.filter = filter
+
+        if request.controller == "deploy":
             # Replace default title in imports:
             attr["retitle"] = lambda r: {"title": T("Import Members")} \
                                 if r.method == "import" else None
             # Not working
             #if _is_asia_pacific():
             #    settings.L10n.mandatory_lastname = False
-
-        s3 = current.response.s3
 
         # Custom prep
         standard_prep = s3.prep
@@ -4964,20 +6800,26 @@ def config(settings):
                 field.readable = field.writable = False
                 _customise_job_title_field(atable.job_title_id)
 
-            elif component_name == "experience":
+            if component_name == "experience":
                 if ircs:
                     ctable = r.component.table
                     ctable.hours.readable = ctable.hours.writable = False
                     ctable.job_title_id.readable = ctable.job_title_id.writable = False
 
-            elif component_name == "physical_description":
+            elif component_name == "physical_description" or \
+                 method == "import":
                 from gluon import DIV
-                ctable = r.component.table
-                if crmada or ircs:
-                    ctable.ethnicity.readable = ctable.ethnicity.writable = False
+                ctable = s3db.pr_physical_description
                 ctable.medical_conditions.comment = DIV(_class="tooltip",
                                                         _title="%s|%s" % (T("Medical Conditions"),
                                                                           T("Chronic Illness, Disabilities, Mental/Psychological Condition etc.")))
+                # Add the less-specific blood types (as that's all the data currently available in some cases)
+                from gluon.validators import IS_EMPTY_OR, IS_IN_SET
+                blood_type_opts = ("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "A", "B", "AB", "O")
+                ctable.blood_type.requires = IS_EMPTY_OR(IS_IN_SET(blood_type_opts))
+
+                if crmada or ircs:
+                    ctable.ethnicity.readable = ctable.ethnicity.writable = False
 
             elif component_name == "identity":
                 if crmada:
@@ -5023,7 +6865,7 @@ def config(settings):
                     from gluon import IS_EMPTY_OR
                     from s3 import IS_ONE_OF
                     field.requires = IS_EMPTY_OR(
-                                        IS_ONE_OF(current.db, "pr_education_level.id",
+                                        IS_ONE_OF(db, "pr_education_level.id",
                                                   field.represent,
                                                   filterby = "name",
                                                   filter_opts = levels,
@@ -5065,10 +6907,9 @@ def config(settings):
                 # Changes common to both Members & Volunteers
                 from gluon import IS_EMPTY_OR
                 from s3 import IS_ONE_OF, S3SQLCustomForm, S3SQLInlineComponent, S3LocationSelector
-                db = current.db
                 # Ensure that + appears at the beginning of the number
-                # Done in Model
-                #f = s3db.pr_phone_contact.value
+                # Done in Model's controller prep
+                #f = s3db.get_aliased(s3db.pr_contact, "pr_phone_contact").value
                 #f.represent = s3_phone_represent
                 #f.widget = S3PhoneWidget()
                 s3db.pr_address.location_id.widget = S3LocationSelector(show_address = T("Village"),
@@ -5087,16 +6928,14 @@ def config(settings):
                                     pr_address = {"name": "perm_address",
                                                   "joinby": "pe_id",
                                                   "pkey": "pe_id",
-                                                  "filterby": {
-                                                      "type": 2,
-                                                      },
+                                                  "filterby": {"type": 2,
+                                                               },
                                                   "multiple": False,
                                                   },
                                     pr_education = {"name": "previous_education",
                                                     "joinby": "person_id",
-                                                    "filterby": {
-                                                        "current": False,
-                                                        },
+                                                    "filterby": {"current": False,
+                                                                 },
                                                     "multiple": False,
                                                     },
                                     )
@@ -5160,7 +6999,7 @@ def config(settings):
                                                 (T("Job"), "person_details.occupation"),
                                                 S3SQLInlineComponent("perm_address",
                                                                      label = T("Address"),
-                                                                     fields = (("", "location_id"),),
+                                                                     fields = [("", "location_id")],
                                                                      filterby = {"field": "type",
                                                                                  "options": 2,
                                                                                  },
@@ -5168,8 +7007,7 @@ def config(settings):
                                                                      ),
                                                 S3SQLInlineComponent("current_education",
                                                                      label = T("School / University"),
-                                                                     fields = [("", "institute"),
-                                                                               ],
+                                                                     fields = [("", "institute")],
                                                                      filterby = {"field": "current",
                                                                                  "options": True,
                                                                                  },
@@ -5177,7 +7015,7 @@ def config(settings):
                                                                      ),
                                                 S3SQLInlineComponent("phone",
                                                                      label = T("Phone Number"),
-                                                                     fields = (("", "value"),),
+                                                                     fields = [("", "value")],
                                                                      filterby = {"field": "contact_method",
                                                                                  "options": "SMS",
                                                                                  },
@@ -5185,14 +7023,12 @@ def config(settings):
                                                                      ),
                                                 S3SQLInlineComponent("contact_emergency",
                                                                      label = T("Emergency Contact Number"),
-                                                                     fields = [("", "phone"),
-                                                                               ],
+                                                                     fields = [("", "phone")],
                                                                      multiple = False,
                                                                      ),
                                                 S3SQLInlineComponent("previous_education",
                                                                      label = T("Education Level"),
-                                                                     fields = [("", "level_id"),
-                                                                               ],
+                                                                     fields = [("", "level_id")],
                                                                      filterby = {"field": "current",
                                                                                  "options": False,
                                                                                  },
@@ -5208,7 +7044,7 @@ def config(settings):
                                                                      ),
                                                 S3SQLInlineComponent("volunteer_details",
                                                                      label = T("Active"),
-                                                                     fields = (("", "active"),),
+                                                                     fields = [("", "active")],
                                                                      link = False,
                                                                      update_link = False,
                                                                      multiple = False,
@@ -5216,7 +7052,7 @@ def config(settings):
                                                 (T("Remarks"), "comments"),
                                                 S3SQLInlineComponent("image",
                                                                      label = T("Photo"),
-                                                                     fields = (("", "image"),),
+                                                                     fields = [("", "image")],
                                                                      filterby = {"field": "profile",
                                                                                  "options": True,
                                                                                  },
@@ -5228,8 +7064,8 @@ def config(settings):
                                    )
 
                 elif controller == "member":
-                    crud_strings["pr_person"] = crud_strings["member_membership"]
                     mtable = s3db.member_membership
+                    crud_strings["pr_person"] = crud_strings["member_membership"]
                     f = mtable.leaving_reason
                     f.readable = f.writable = True
                     f = mtable.restart_date
@@ -5254,11 +7090,7 @@ def config(settings):
                     #                       )
                     f = s3db.pr_person_details.grandfather_name
                     f.readable = f.writable = True
-                    components = r.resource.components
-                    for c in components:
-                        if c == "membership":
-                            components[c].multiple = False
-                            break
+
                     s3db.add_components("pr_person",
                                         #hrm_training = {"name": "member_training",
                                         #                "joinby": "person_id",
@@ -5273,7 +7105,14 @@ def config(settings):
                                                           },
                                                       "multiple": False,
                                                       },
+                                        # Make single, so fields can be embedded:
+                                        member_membership = {"joinby": "person_id",
+                                                             "multiple": False,
+                                                             },
                                         )
+                    # Reset the component (we're past resource initialization)
+                    r.resource.components.reset(("membership",))
+
                     crud_form = S3SQLCustomForm("membership.organisation_id",
                                                 "membership.code",
                                                 (T("Name"), "first_name"),
@@ -5284,7 +7123,7 @@ def config(settings):
                                                 (T("Gender"), "gender"),
                                                 S3SQLInlineComponent("perm_address",
                                                                      label = T("Permanent Address"),
-                                                                     fields = (("", "location_id"),),
+                                                                     fields = [("", "location_id")],
                                                                      filterby = {"field": "type",
                                                                                  "options": 2,
                                                                                  },
@@ -5292,7 +7131,7 @@ def config(settings):
                                                                      ),
                                                 S3SQLInlineComponent("temp_address",
                                                                      label = T("Temporary Address"),
-                                                                     fields = (("", "location_id"),),
+                                                                     fields = [("", "location_id")],
                                                                      filterby = {"field": "type",
                                                                                  "options": 1,
                                                                                  },
@@ -5301,8 +7140,7 @@ def config(settings):
                                                 (T("Place of Work"), "person_details.company"),
                                                 S3SQLInlineComponent("previous_education",
                                                                      label = T("Education Level"),
-                                                                     fields = [("", "level_id"),
-                                                                               ],
+                                                                     fields = [("", "level_id")],
                                                                      filterby = {"field": "current",
                                                                                  "options": False,
                                                                                  },
@@ -5310,7 +7148,7 @@ def config(settings):
                                                                      ),
                                                 S3SQLInlineComponent("identity",
                                                                      label = T("ID Number"),
-                                                                     fields = (("", "value"),),
+                                                                     fields = [("", "value")],
                                                                      filterby = {"field": "type",
                                                                                  "options": 2,
                                                                                  },
@@ -5318,12 +7156,12 @@ def config(settings):
                                                                      ),
                                                 S3SQLInlineComponent("physical_description",
                                                                      label = T("Blood Group"),
-                                                                     fields = (("", "blood_type"),),
+                                                                     fields = [("", "blood_type")],
                                                                      multiple = False,
                                                                      ),
                                                 S3SQLInlineComponent("phone",
                                                                      label = T("Phone Number"),
-                                                                     fields = (("", "value"),),
+                                                                     fields = [("", "value")],
                                                                      filterby = {"field": "contact_method",
                                                                                  "options": "SMS",
                                                                                  },
@@ -5331,7 +7169,7 @@ def config(settings):
                                                                      ),
                                                 S3SQLInlineComponent("contact_emergency",
                                                                      label = T("Relatives Contact #"),
-                                                                     fields = (("", "phone"),),
+                                                                     fields = [("", "phone")],
                                                                      multiple = False,
                                                                      ),
                                                 (T("Date of Recruitment"), "membership.start_date"),
@@ -5352,7 +7190,7 @@ def config(settings):
                                                 "membership.comments",
                                                 S3SQLInlineComponent("image",
                                                                      label = T("Photo"),
-                                                                     fields = (("", "image"),),
+                                                                     fields = [("", "image")],
                                                                      filterby = {"field": "profile",
                                                                                  "options": True,
                                                                                  },
@@ -5377,7 +7215,7 @@ def config(settings):
 
                     from gluon import IS_EMPTY_OR, IS_IN_SET
                     from s3 import IS_ONE_OF
-                    db = current.db
+
                     dtable = s3db.pr_person_details
 
                     # Context-dependent form fields
@@ -5420,7 +7258,7 @@ def config(settings):
                         from s3 import S3SQLInlineComponent
                         idcard_number = S3SQLInlineComponent("idcard",
                                                              label = T("ID Card Number"),
-                                                             fields = (("", "value"),),
+                                                             fields = [("", "value")],
                                                              default = {"type": 2,
                                                                         },
                                                              multiple = False,
@@ -5493,8 +7331,6 @@ def config(settings):
                     if method == "record" and controller == "hrm":
                         # Custom config for method handler
 
-                        from s3 import FS
-
                         # RC employment history
                         org_type_name = "organisation_id$organisation_organisation_type.organisation_type_id$name"
                         widget_filter = (FS(org_type_name) == "Red Cross / Red Crescent") & \
@@ -5565,29 +7401,29 @@ def config(settings):
                                        "department_id",
                                        "status",
                                        S3SQLInlineComponent("contract",
-                                                            label=T("Contract Details"),
-                                                            fields=["term",
-                                                                    (T("Hours Model"), "hours"),
-                                                                    ],
-                                                            multiple=False,
+                                                            label = T("Contract Details"),
+                                                            fields = ("term",
+                                                                      (T("Hours Model"), "hours"),
+                                                                      ),
+                                                            multiple = False,
                                                             ),
                                        S3SQLInlineComponent("social_insurance",
-                                                            label=T("Social Insurance"),
-                                                            name="social",
-                                                            fields=["insurance_number",
-                                                                    "insurer",
-                                                                    ],
-                                                            default={"type": "SOCIAL"},
-                                                            multiple=False,
+                                                            label = T("Social Insurance"),
+                                                            name = "social",
+                                                            fields = ("insurance_number",
+                                                                      "insurer",
+                                                                      ),
+                                                            default = {"type": "SOCIAL"},
+                                                            multiple = False,
                                                             ),
                                        S3SQLInlineComponent("health_insurance",
-                                                            label=T("Health Insurance"),
-                                                            name="health",
-                                                            fields=["insurance_number",
-                                                                    "provider",
-                                                                    ],
-                                                            default={"type": "HEALTH"},
-                                                            multiple=False,
+                                                            label = T("Health Insurance"),
+                                                            name = "health",
+                                                            fields = ("insurance_number",
+                                                                      "provider",
+                                                                      ),
+                                                            default = {"type": "HEALTH"},
+                                                            multiple = False,
                                                             ),
                                        "comments",
                                        ]
@@ -5632,14 +7468,6 @@ def config(settings):
                     hide_fields = set(hide_fields)
                     list_fields = (fs for fs in list_fields if fs not in hide_fields)
                     s3db.configure("pr_identity", list_fields = list_fields)
-
-                elif component_name == "physical_description" or \
-                     method == "import":
-                    # Add the less-specific blood types (as that's all the data currently available in some cases)
-                    field = s3db.pr_physical_description.blood_type
-                    from gluon.validators import IS_EMPTY_OR, IS_IN_SET
-                    blood_type_opts = ("A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "A", "B", "AB", "O")
-                    field.requires = IS_EMPTY_OR(IS_IN_SET(blood_type_opts))
 
                 elif method == "cv" or component_name == "experience":
                     table = s3db.hrm_experience
@@ -5697,8 +7525,8 @@ def config(settings):
                                                 "membership_paid",
                                                 "fee_exemption",
                                                 S3SQLInlineLink("programme",
-                                                                field="programme_id",
-                                                                label=PROGRAMMES,
+                                                                field = "programme_id",
+                                                                label = PROGRAMMES,
                                                                 ),
                                                 )
 
@@ -5780,7 +7608,7 @@ def config(settings):
             if script not in s3.scripts:
                 s3.scripts.append(script)
             if record and record.followup:
-                s3.jquery_ready.append('''$.showHouseholdComponents(true)''');
+                s3.jquery_ready.append('''$.showHouseholdComponents(true)''')
         return
 
     # -------------------------------------------------------------------------
@@ -5957,8 +7785,8 @@ def config(settings):
         # Default Filter
         from s3 import s3_set_default_filter
         s3_set_default_filter("~.organisation_id",
-                              user_org_default_filter,
-                              tablename = "project_project")
+                              user_org_root_default_filter,
+                              tablename = tablename)
 
         # Load standard model
         s3db = current.s3db
@@ -6028,10 +7856,10 @@ def config(settings):
                                           label = T("Budget"),
                                           #link = False,
                                           multiple = False,
-                                          fields = ["total_budget",
+                                          fields = ("total_budget",
                                                     "currency",
                                                     #"monitoring_frequency",
-                                                    ],
+                                                    ),
                                           )
             btable = s3db.budget_budget
             # Need to provide a name
@@ -6048,11 +7876,10 @@ def config(settings):
             HFA = "drr.hfa"
             budget = None
             objectives = "objectives"
-            outputs = S3SQLInlineComponent(
-                "output",
-                label = T("Outputs"),
-                fields = ["name", "status"],
-            )
+            outputs = S3SQLInlineComponent("output",
+                                           label = T("Outputs"),
+                                           fields = ("name", "status"),
+                                           )
 
         crud_form = S3SQLCustomForm(
             "organisation_id",
@@ -6320,40 +8147,61 @@ def config(settings):
     # -------------------------------------------------------------------------
     def customise_project_location_resource(r, tablename):
 
-        from s3 import S3LocationSelector, S3SQLCustomForm, S3SQLInlineComponentCheckbox
 
-        s3db = current.s3db
 
-        s3db.project_location.location_id.widget = \
-            S3LocationSelector(show_postcode = False,
-                               show_latlon = False,
-                               show_map = False,
-                               )
+        if r.interactive:
 
-        crud_form = S3SQLCustomForm(
-            "project_id",
-            "location_id",
-            # @ToDo: Grouped Checkboxes
-            S3SQLInlineComponentCheckbox(
-                "activity_type",
-                label = T("Activity Types"),
-                field = "activity_type_id",
-                cols = 3,
-                # Filter Activity Type by Sector
-                filter = {"linktable": "project_activity_type_sector",
-                          "lkey": "activity_type_id",
-                          "rkey": "sector_id",
-                          "lookuptable": "project_project",
-                          "lookupkey": "project_id",
-                          },
-                translate = True,
-                ),
-            "comments",
-            )
+            from s3 import S3LocationSelector, S3SQLCustomForm, S3SQLInlineLink
 
-        s3db.configure(tablename,
-                       crud_form = crud_form,
-                       )
+            s3db = current.s3db
+            s3db.project_location.location_id.widget = \
+                S3LocationSelector(show_postcode = False,
+                                   show_latlon = False,
+                                   show_map = False,
+                                   )
+
+            if r.tablename == "project_project" and r.id:
+                # On component tab
+                # => limit activity types by project sector
+                ltable = s3db.project_sector_project
+                query = (ltable.project_id == r.id) & \
+                        (ltable.deleted == False)
+                rows = current.db(query).select(ltable.sector_id)
+                sector_ids = set(row.sector_id for row in rows)
+                script = None
+            else:
+                # Primary form
+                # => start empty until project selected
+                sector_ids = set()
+                # => update selectable activity types by project sector
+                script = '''
+$.filterOptionsS3({
+ 'trigger':'project_id',
+ 'target':{'alias':'activity_type','name':'activity_type_id','inlineType':'link'},
+ 'lookupPrefix':'project',
+ 'lookupResource':'activity_type',
+ 'lookupKey':'activity_type_id:project_activity_type_sector.sector_id$project_sector_project.project_id',
+ 'showEmptyField':false,
+})'''
+
+            crud_form = S3SQLCustomForm(
+                "project_id",
+                "location_id",
+                S3SQLInlineLink(
+                    "activity_type",
+                    label = T("Activity Types"),
+                    field = "activity_type_id",
+                    cols = 3,
+                    filterby = "activity_type_sector.sector_id",
+                    options = sector_ids,
+                    script = script,
+                    ),
+                    "comments",
+                )
+
+            s3db.configure(tablename,
+                           crud_form = crud_form,
+                           )
 
     settings.customise_project_location_resource = customise_project_location_resource
 

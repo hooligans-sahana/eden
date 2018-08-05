@@ -2,7 +2,7 @@
 
 """ S3 TimePlot Reports Method
 
-    @copyright: 2013-2017 (c) Sahana Software Foundation
+    @copyright: 2013-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -53,8 +53,8 @@ from gluon.sqlhtml import OptionsWidget
 from s3datetime import s3_decode_iso_datetime, s3_utc
 from s3rest import S3Method
 from s3query import FS
-from s3report import S3ReportForm
-from s3utils import s3_flatlist
+from s3report import S3Report, S3ReportForm
+from s3utils import s3_flatlist, s3_represent_value, s3_unicode, S3MarkupStripper
 
 tp_datetime = lambda *t: datetime.datetime(tzinfo=dateutil.tz.tzutc(), *t)
 
@@ -334,7 +334,7 @@ class S3TimePlot(S3Method):
     # -------------------------------------------------------------------------
     def get_target(self, r):
         """
-            Identify the target resource, attach component if necessary
+            Identify the target resource
 
             @param r: the S3Request
         """
@@ -347,13 +347,9 @@ class S3TimePlot(S3Method):
 
         # Identify target component
         if alias and alias not in (resource.alias, "~"):
-            if alias not in resource.components:
-                # Try attach
-                hook = current.s3db.get_component(resource.tablename, alias)
-                if hook:
-                    resource._attach(alias, hook)
-            if alias in resource.components:
-                resource = resource.components[alias]
+            component = resource.components.get(alias)
+            if component:
+                resource = component
 
         return resource
 
@@ -506,22 +502,16 @@ class S3TimePlotForm(S3ReportForm):
                   }
 
         # D3/Timeplot scripts (injected so that they are available for summary)
+        S3Report.inject_d3()
         s3 = current.response.s3
         scripts = s3.scripts
         appname = current.request.application
         if s3.debug:
-            # @todo: support CDN
-            script = "/%s/static/scripts/d3/d3.js" % appname
-            if script not in scripts:
-                scripts.append(script)
-            script = "/%s/static/scripts/d3/nv.d3.js" % appname
-            if script not in scripts:
-                scripts.append(script)
             script = "/%s/static/scripts/S3/s3.ui.timeplot.js" % appname
             if script not in scripts:
                 scripts.append(script)
         else:
-            script = "/%s/static/scripts/S3/s3.timeplot.min.js" % appname
+            script = "/%s/static/scripts/S3/s3.ui.timeplot.min.js" % appname
             if script not in scripts:
                 scripts.append(script)
 
@@ -947,8 +937,10 @@ class S3TimeSeries(object):
                                     orderby=event_start.field,
                                     as_rows=True)
             # Remove the filter we just added
-            resource.rfilter.filters.pop()
-            resource.rfilter.query = None
+            rfilter = resource.rfilter
+            rfilter.filters.pop()
+            rfilter.query = None
+            rfilter.transformed = None
             if rows:
                 first_event = rows.first()[event_start.colname]
                 if isinstance(first_event, datetime.date):
@@ -966,8 +958,10 @@ class S3TimeSeries(object):
                                     orderby=event_end.field,
                                     as_rows=True)
             # Remove the filter we just added
-            resource.rfilter.filters.pop()
-            resource.rfilter.query = None
+            rfilter = resource.rfilter
+            rfilter.filters.pop()
+            rfilter.query = None
+            rfilter.transformed = None
             if rows:
                 last_event = rows.first()[event_end.colname]
                 if isinstance(last_event, datetime.date):
@@ -1093,8 +1087,10 @@ class S3TimeSeries(object):
         data = resource.select(fields)
 
         # Remove the filter we just added
-        resource.rfilter.filters.pop()
-        resource.rfilter.query = None
+        rfilter = resource.rfilter
+        rfilter.filters.pop()
+        rfilter.query = None
+        rfilter.transformed = None
 
         # Do we need to convert dates into datetimes?
         convert_start = True if event_start.ftype == "date" else False

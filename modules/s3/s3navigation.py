@@ -2,7 +2,7 @@
 
 """ S3 Navigation Module
 
-    @copyright: 2011-2017 (c) Sahana Software Foundation
+    @copyright: 2011-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -243,6 +243,7 @@ class S3NavigationItem(object):
         self.link = link                # Item shall be linked
         self.mandatory = mandatory      # Item is always active
         self.ltr = ltr                  # Item is always rendered LTR
+        self.authorized = None          # True|False after authorization
 
         # Role restriction
         self.restrict = restrict
@@ -288,13 +289,9 @@ class S3NavigationItem(object):
 
         # Try to find custom layout in theme
         application = current.request.application
-        settings = current.deployment_settings
-        theme = settings.get_theme()
-        theme_location = current.response.s3.theme_location
-        if theme_location:
-            theme_location = "%s." % theme_location[:-1]
-        package = "applications.%s.modules.templates.%s%s.layouts" % \
-                  (application, theme_location, theme)
+        theme = current.deployment_settings.get_theme_layouts().replace("/", ".")
+        package = "applications.%s.modules.templates.%s.layouts" % \
+                  (application, theme)
         try:
             override = getattr(__import__(package, fromlist=[name]), name)
         except ImportError:
@@ -382,7 +379,6 @@ class S3NavigationItem(object):
         c = self.get("controller")
         if c:
             return current.deployment_settings.has_module(c)
-        return True
 
         # Fall back to current.request
         if request is None:
@@ -431,16 +427,11 @@ class S3NavigationItem(object):
             by the renderer.
         """
 
-        has_role = current.auth.s3_has_role
-
         authorized = False
 
         restrict = self.restrict
         if restrict:
-            for role in restrict:
-                if has_role(role):
-                    authorized = True
-                    break
+            authorized = current.auth.s3_has_roles(restrict)
         else:
             authorized = True
 
@@ -721,9 +712,9 @@ class S3NavigationItem(object):
         # set for this item! (beware ambiguity then, though)
         if "viewing" in rvars:
             try:
-                tn, record_id = rvars["viewing"].split(".")
+                tn = rvars["viewing"].split(".", 1)[0]
                 controller, function = tn.split("_", 1)
-            except:
+            except (AttributeError, ValueError):
                 pass
 
         # Controller
@@ -736,7 +727,7 @@ class S3NavigationItem(object):
             mf = self.get("match_function")
             if function == f or function in mf:
                 level = 2
-            elif f == "index":
+            elif f == "index" or "index" in mf:
                 # "weak" match: homepage link matches any function
                 return 1
             elif f is not None:
@@ -1352,16 +1343,17 @@ def s3_rheader_resource(r):
 
     """
 
-    _vars = r.get_vars
+    get_vars = r.get_vars
 
-    if "viewing" in _vars:
+    if "viewing" in get_vars:
         try:
-            tablename, record_id = _vars.viewing.rsplit(".", 1)
-            db = current.db
-            record = db[tablename][record_id]
-        except:
+            tablename, record_id = get_vars.viewing.rsplit(".", 1)
+        except AttributeError:
             tablename = r.tablename
             record = r.record
+        else:
+            db = current.db
+            record = db[tablename][record_id]
     else:
         tablename = r.tablename
         record = r.record
@@ -1410,7 +1402,7 @@ class S3ComponentTabs(object):
         if r.resource.get_config("dynamic_components"):
             self.dynamic_tabs(r.resource.tablename)
 
-        tabs = tuple(t for t in self.tabs if t.active(r))
+        tabs = [t for t in self.tabs if t.active(r)]
 
         mtab = False
         if r.component is None:
@@ -1590,6 +1582,8 @@ class S3ComponentTab(object):
                         get_vars dict is optional.
         """
 
+        # @todo: use component hook label/plural as fallback for title
+        #        (see S3Model.add_components)
         title, component = tab[:2]
         if component and component.find("/") > 0:
             function, component = component.split("/", 1)
@@ -1611,10 +1605,10 @@ class S3ComponentTab(object):
             self.component = None
 
         if len(tab) > 2:
-            vars = self.vars = Storage(tab[2])
-            if "native" in vars:
-                self.native = True if vars["native"] else False
-                del vars["native"]
+            tab_vars = self.vars = Storage(tab[2])
+            if "native" in tab_vars:
+                self.native = True if tab_vars["native"] else False
+                del tab_vars["native"]
         else:
             self.vars = None
 
@@ -1635,11 +1629,12 @@ class S3ComponentTab(object):
         if "viewing" in get_vars:
             try:
                 tablename = get_vars["viewing"].split(".", 1)[0]
-            except:
+            except AttributeError:
                 pass
 
         resource = r.resource
         component = self.component
+        function = self.function
         if component:
             clist = get_components(resource.table, names=[component])
             is_component = False
@@ -1662,6 +1657,10 @@ class S3ComponentTab(object):
                 handler = r.get_handler(component)
             if handler is None:
                 return component in ("create", "read", "update", "delete")
+
+        elif function:
+            return current.auth.permission.has_permission("read", f=function)
+
         return True
 
     # -------------------------------------------------------------------------
@@ -1695,9 +1694,9 @@ class S3ComponentTab(object):
             @param r: the S3Request
         """
 
-        get_vars = r.get_vars
         if self.vars is None:
             return True
+        get_vars = r.get_vars
         for k, v in self.vars.iteritems():
             if v is None:
                 continue
@@ -1720,8 +1719,8 @@ class S3ScriptItem(S3NavigationItem):
             @param script: script to inject into jquery_ready when rendered
         """
 
+        super(S3ScriptItem, self).__init__(attributes)
         self.script = script
-        return super(S3ScriptItem, self).__init__(attributes)
 
     # -------------------------------------------------------------------------
     def xml(self):

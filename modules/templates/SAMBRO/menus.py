@@ -287,6 +287,18 @@ class S3OptionsMenu(default.S3OptionsMenu):
                     )
 
     # -------------------------------------------------------------------------
+    @staticmethod
+    def event():
+        """ Events """
+
+        return M(c="event")(
+                    M("Event Types", f="event_type")(
+                        M("Create", m="create"),
+                        M("Import", m="import")
+                    ),
+                )
+
+    # -------------------------------------------------------------------------
     @classmethod
     def settings_messaging(cls):
         """ Messaging settings menu items:
@@ -311,8 +323,8 @@ class S3OptionsMenu(default.S3OptionsMenu):
                 M("SMS SMTP Channels", c="msg", f="sms_smtp_channel"),
                 M("SMS WebAPI Channels", c="msg", f="sms_webapi_channel"),
             ),
-            M("Mobile Commons Channels", c="msg", f="mcommons_channel"),
-            M("Twilio Channels", c="msg", f="twilio_channel"),
+            #M("Mobile Commons Channels", c="msg", f="mcommons_channel"),
+            #M("Twilio Channels", c="msg", f="twilio_channel"),
             M("Twitter Channels", c="msg", f="twitter_channel"),
             M("Parsers", c="msg", f="parser"),
         ]

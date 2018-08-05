@@ -653,34 +653,56 @@ def location():
 # -----------------------------------------------------------------------------
 def ldata():
     """
-        Return JSON of location hierarchy suitable for use by S3LocationSelector
-        '/eden/gis/ldata/' + id
+        Return JSON of location hierarchy suitable for use by
+        S3LocationSelector:
+            GET '/eden/gis/ldata/' + id
+        If requesting data for a level after a missed level:
+            GET '/eden/gis/ldata/' + id + '/' + level
 
-        n = {id : {'n' : name,
-                   'l' : level,
-                   'f' : parent,
-                   'b' : [lon_min, lat_min, lon_max, lat_max]
-                   }}
+        Response JSON:
+        {id : {'n' : name,
+               'l' : level,
+               'f' : parent,
+               'b' : [lon_min, lat_min, lon_max, lat_max]
+               }
+         }
+
+        @ToDo: DRY with S3LocationSelector _locations()
     """
 
+    req_args = request.args
     try:
-        _id = request.args[0]
+        location_id = req_args[0]
     except:
         raise HTTP(400)
 
+    response.headers["Content-Type"] = "application/json"
+
+    if len(req_args) > 1:
+        output_level = int(req_args[1])
+    else:
+        output_level = None
+
     # Translate options using gis_location_name?
-    translate = settings.get_L10n_translate_gis_location()
-    if translate:
-        language = session.s3.language
-        if language == settings.get_L10n_default_language():
-            translate = False
+    language = session.s3.language
+    if language in ("en", "en-gb"):
+        translate = False
+    else:
+        translate = settings.get_L10n_translate_gis_location()
 
     table = s3db.gis_location
     query = (table.deleted == False) & \
-            (table.level != None) & \
             (table.end_date == None) & \
-            ((table.parent == _id) | \
-             (table.id == _id))
+            (table.level != None)
+    if output_level:
+        # We will be reading all descendants, which is inefficient, but otherwise we cannot support individual locations with missing levels
+        # Filter out results from the missing level as otherwise these show up like individual locations with missing levels
+        filter_level = output_level - 1
+        query &= (table.level != "L%s" % filter_level) & \
+                 ((table.path.like(location_id + "/%")) | \
+                  (table.path.like("%/" + location_id + "/%")))
+    else:
+        query &= (table.parent == location_id)
     fields = [table.id,
               table.name,
               table.level,
@@ -698,29 +720,39 @@ def ldata():
                          (ntable.location_id == table.id))
     else:
         left = None
-    locations = db(query).select(*fields,
-                                 left=left)
-    if translate:
-        try:
-            id_level = int(locations.as_dict(key="gis_location.id")[int(_id)]["gis_location"]["level"][1:])
-        except:
-            return ""
-    else:
-        try:
-            id_level = int(locations.as_dict()[int(_id)]["level"][1:])
-        except:
-            return ""
-    output_level = id_level + 1
+
+    locations = db((table.id == location_id) | query).select(*fields,
+                                                             left=left)
+
+    location_id = int(location_id)
+    if not output_level:
+        # Introspect it
+        if translate:
+            try:
+                id_level = int(locations.as_dict(key="gis_location.id")[location_id]["gis_location"]["level"][1:])
+            except:
+                return "{}"
+        else:
+            try:
+                id_level = int(locations.as_dict()[location_id]["level"][1:])
+            except:
+                return "{}"
+
+        output_level = id_level + 1
+
     search_level = "L%s" % output_level
+
     location_dict = {}
     if translate:
         for location in locations:
             l = location["gis_location"]
             if l.level == search_level:
                 this_level = output_level
-                f = int(l.parent)
+                # In case we're using a missing level, use the pseudo-parent
+                #f = int(l.parent)
+                f = location_id
             else:
-                # A Missing Level
+                # An individual location with a Missing Level
                 this_level = int(l.level[1:])
                 parent = l.parent
                 if parent:
@@ -729,27 +761,29 @@ def ldata():
                     f = None
             name = location["gis_location_name.name_l10n"] or l.name
             if l.lon_min is not None:
-                location_dict[int(l.id)] = dict(n=name,
-                                                l=this_level,
-                                                f=f,
-                                                b=[l.lon_min,
-                                                   l.lat_min,
-                                                   l.lon_max,
-                                                   l.lat_max
-                                                   ],
-                                                )
+                location_dict[int(l.id)] = {"n": name,
+                                            "l": this_level,
+                                            "f": f,
+                                            "b": [l.lon_min,
+                                                  l.lat_min,
+                                                  l.lon_max,
+                                                  l.lat_max
+                                                  ],
+                                            }
             else:
-                location_dict[int(l.id)] = dict(n=name,
-                                                l=this_level,
-                                                f=f,
-                                                )
+                location_dict[int(l.id)] = {"n": name,
+                                            "l": this_level,
+                                            "f": f,
+                                            }
     else:
         for l in locations:
             if l.level == search_level:
                 this_level = output_level
-                f = int(l.parent)
+                # In case we're using a missing level, use the pseudo-parent
+                #f = int(l.parent)
+                f = location_id
             else:
-                # A Missing Level
+                # An individual location with a Missing Level
                 this_level = int(l.level[1:])
                 parent = l.parent
                 if parent:
@@ -757,41 +791,43 @@ def ldata():
                 else:
                     f = None
             if l.lon_min is not None:
-                location_dict[int(l.id)] = dict(n=l.name,
-                                                l=this_level,
-                                                f=f,
-                                                b=[l.lon_min,
-                                                   l.lat_min,
-                                                   l.lon_max,
-                                                   l.lat_max
-                                                   ],
-                                                )
+                location_dict[int(l.id)] = {"n": l.name,
+                                            "l": this_level,
+                                            "f": f,
+                                            "b": [l.lon_min,
+                                                  l.lat_min,
+                                                  l.lon_max,
+                                                  l.lat_max
+                                                  ],
+                                            }
             else:
-                location_dict[int(l.id)] = dict(n=l.name,
-                                                l=this_level,
-                                                f=f,
-                                                )
+                location_dict[int(l.id)] = {"n": l.name,
+                                            "l": this_level,
+                                            "f": f,
+                                            }
 
-    script = '''n=%s\n''' % json.dumps(location_dict, separators=SEPARATORS)
-    response.headers["Content-Type"] = "application/json"
-    return script
+    return json.dumps(location_dict, separators=SEPARATORS)
 
 # -----------------------------------------------------------------------------
 def hdata():
     """
-        Return JSON of hierarchy labels suitable for use by S3LocationSelector
-        '/eden/gis/hdata/' + l0_id
+        Return JSON of hierarchy labels suitable for use by
+        S3LocationSelector:
+            GET '/eden/gis/hdata/' + l0_id
 
-        n = {l0_id : {1 : l1_name,
-                      2 : l2_name,
-                      etc,
-                      }}
+        Response JSON:
+            {1 : l1_name,
+             2 : l2_name,
+             etc,
+             }
     """
 
     try:
-        _id = request.args[0]
+        location_id = request.args[0]
     except:
         raise HTTP(400)
+
+    response.headers["Content-Type"] = "application/json"
 
     # @ToDo: Translate options using gis_hierarchy_name?
     #translate = settings.get_L10n_translate_gis_location()
@@ -802,25 +838,21 @@ def hdata():
 
     table = s3db.gis_hierarchy
     query = (table.deleted == False) & \
-            (table.location_id == _id)
+            (table.location_id == location_id)
     row = db(query).select(table.L1,
                            table.L2,
                            table.L3,
                            table.L4,
                            table.L5,
-                           limitby=(0, 1)
+                           limitby = (0, 1),
                            ).first()
-    if not row:
-        return '''var n'''
-
     hdict = {}
-    for l in ["L1", "L2", "L3", "L4", "L5"]:
-        if row[l]:
-            hdict[int(l[1:])] = row[l]
+    if row:
+        for l in ["L1", "L2", "L3", "L4", "L5"]:
+            if row[l]:
+                hdict[int(l[1:])] = row[l]
 
-    script = '''n=%s\n''' % json.dumps(hdict, separators=SEPARATORS)
-    response.headers["Content-Type"] = "application/json"
-    return script
+    return json.dumps(hdict, separators=SEPARATORS)
 
 # -----------------------------------------------------------------------------
 def s3_gis_location_parents(r, **attr):
@@ -1082,8 +1114,8 @@ def config():
                                     "default_location_id",
                                     ]
                     s3db.configure("gis_config",
-                                   subheadings = {T("Map Settings"): "zoom",
-                                                  T("Form Settings"): "default_location_id",
+                                   subheadings = {"zoom": T("Map Settings"),
+                                                  "default_location_id": T("Form Settings"),
                                                   },
                                    )
                 else:

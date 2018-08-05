@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# vim: ai ts=4 sts=4 et sw=4 encoding=utf-8
 
 """ Messaging API
 
@@ -9,7 +8,7 @@
     Messages get sent to the Outbox (& Log)
     From there, the Scheduler tasks collect them & send them
 
-    @copyright: 2009-2017 (c) Sahana Software Foundation
+    @copyright: 2009-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -42,11 +41,11 @@ __all__ = ("S3Msg",
 import base64
 import datetime
 import json
+import os
 import re
 import string
 import urllib
 import urllib2
-import os
 
 try:
     from cStringIO import StringIO    # Faster, where available
@@ -57,13 +56,13 @@ try:
     from lxml import etree
 except ImportError:
     import sys
-    print >> sys.stderr, "ERROR: lxml module needed for XML handling"
+    sys.stderr.write("ERROR: lxml module needed for XML handling\n")
     raise
 
 from gluon import current, redirect
 from gluon.html import *
 
-from s3codec import S3Codec
+#from s3codec import S3Codec
 from s3crud import S3CRUD
 from s3datetime import s3_decode_iso_datetime
 from s3forms import S3SQLDefaultForm
@@ -80,7 +79,7 @@ TWITTER_MAX_CHARS = 140
 TWITTER_HAS_NEXT_SUFFIX = u' \u2026'
 TWITTER_HAS_PREV_PREFIX = u'\u2026 '
 
-SENDER = re.compile("(.*)\s*\<(.+@.+)\>\s*")
+SENDER = re.compile(r"(.*)\s*\<(.+@.+)\>\s*")
 
 # =============================================================================
 class S3Msg(object):
@@ -143,6 +142,7 @@ class S3Msg(object):
         self.MSG_CONTACT_OPTS = {"EMAIL":   T("Email"),
                                  "SMS":     MOBILE,
                                  "TWITTER": T("Twitter"),
+                                 "FACEBOOK": T("Facebook"),
                                  #"XMPP":   "XMPP",
                                  }
 
@@ -198,7 +198,6 @@ class S3Msg(object):
         """
 
         # Deal with missing word separation (thanks Ingmar Hupp)
-        import re
         header = re.sub(r"(=\?.*\?=)(?!$)", r"\1 ", header)
 
         # Decode header
@@ -373,7 +372,8 @@ class S3Msg(object):
                       contact_method = "EMAIL",
                       document_ids = None,
                       from_address = None,
-                      system_generated = False):
+                      system_generated = False,
+                      **data):
         """
             Send a single message to a Person Entity (or list thereof)
 
@@ -432,7 +432,7 @@ class S3Msg(object):
             message_id = record["message_id"]
         else:
             # @ToDo
-            raise
+            raise NotImplementedError
 
         # Place the Message in the main OutBox
         table = s3db.msg_outbox
@@ -461,6 +461,11 @@ class S3Msg(object):
         # Process OutBox async
         current.s3task.async("msg_process_outbox",
                              args = [contact_method])
+
+        # Perform post process after message sending
+        postp = current.deployment_settings.get_msg_send_postprocess()
+        if postp:
+            postp(message_id, **data)
 
         return message_id
 
@@ -638,7 +643,7 @@ class S3Msg(object):
             left.append(mailbox.on(mailbox.message_id == outbox.message_id))
         else:
             # @ToDo
-            raise
+            raise NotImplementedError
 
         rows = db(query).select(*fields,
                                 left=left,
@@ -651,12 +656,20 @@ class S3Msg(object):
         ptable = s3db.pr_person
         gtable = s3db.pr_group
         mtable = db.pr_group_membership
+        ftable = s3db.pr_forum
+        fmtable = db.pr_forum_membership
 
         # Left joins for multi-recipient lookups
         gleft = [mtable.on((mtable.group_id == gtable.id) & \
                            (mtable.person_id != None) & \
                            (mtable.deleted != True)),
                  ptable.on((ptable.id == mtable.person_id) & \
+                           (ptable.deleted != True))
+                 ]
+        fleft = [fmtable.on((fmtable.forum_id == ftable.id) & \
+                           (fmtable.person_id != None) & \
+                           (fmtable.deleted != True)),
+                 ptable.on((ptable.id == fmtable.person_id) & \
                            (ptable.deleted != True))
                  ]
 
@@ -765,6 +778,21 @@ class S3Msg(object):
                 # Re-queue the message for each member in the group
                 gquery = (gtable.pe_id == pe_id)
                 recipients = db(gquery).select(ptable.pe_id, left=gleft)
+                pe_ids = set(r.pe_id for r in recipients)
+                pe_ids.discard(None)
+                if pe_ids:
+                    for pe_id in pe_ids:
+                        outbox.insert(message_id=message_id,
+                                      pe_id=pe_id,
+                                      contact_method=contact_method,
+                                      system_generated=True)
+                    chainrun = True
+                status = True
+
+            elif entity_type == "pr_forum":
+                # Re-queue the message for each member in the group
+                fquery = (ftable.pe_id == pe_id)
+                recipients = db(fquery).select(ptable.pe_id, left=fleft)
                 pe_ids = set(r.pe_id for r in recipients)
                 pe_ids.discard(None)
                 if pe_ids:
@@ -1309,11 +1337,11 @@ class S3Msg(object):
         """
 
         return self.send_by_pe_id(pe_id,
-                                  message,
-                                  "SMS",
-                                  from_address,
-                                  system_generated,
-                                  subject=""
+                                  subject = "",
+                                  message = message,
+                                  contact_method = "SMS",
+                                  from_address = from_address,
+                                  system_generated = system_generated,
                                   )
 
     # -------------------------------------------------------------------------
@@ -1415,7 +1443,7 @@ class S3Msg(object):
             return None
 
     # -------------------------------------------------------------------------
-    def send_tweet(self, text="", recipient=None):
+    def send_tweet(self, text="", recipient=None, **data):
         """
             Function to tweet.
             If a recipient is specified then we send via direct message if the recipient follows us.
@@ -1443,6 +1471,8 @@ class S3Msg(object):
         table = s3db.msg_twitter
         otable = s3db.msg_outbox
 
+        message_id = None
+
         def log_tweet(tweet, recipient, from_address):
             # Log in msg_twitter
             _id = table.insert(body=tweet,
@@ -1460,6 +1490,7 @@ class S3Msg(object):
                           status = 2,
                           contact_method = "TWITTER",
                           )
+            return message_id
 
         if recipient:
             recipient = self._sanitise_twitter_account(recipient)
@@ -1477,7 +1508,7 @@ class S3Msg(object):
                         # See http://groups.google.com/group/tweepy/msg/790fcab8bc6affb5
                         if twitter_api.send_direct_message(screen_name=recipient,
                                                            text=c):
-                            log_tweet(c, recipient, from_address)
+                            message_id = log_tweet(c, recipient, from_address)
 
                     except tweepy.TweepError:
                         current.log.error("Unable to Tweet DM")
@@ -1491,7 +1522,7 @@ class S3Msg(object):
                     except tweepy.TweepError:
                         current.log.error("Unable to Tweet @mention")
                     else:
-                        log_tweet(c, recipient, from_address)
+                        message_id = log_tweet(c, recipient, from_address)
         else:
             chunks = self._break_to_chunks(text)
             for c in chunks:
@@ -1500,33 +1531,39 @@ class S3Msg(object):
                 except tweepy.TweepError:
                     current.log.error("Unable to Tweet")
                 else:
-                    log_tweet(c, recipient, from_address)
+                    message_id = log_tweet(c, recipient, from_address)
+
+        # Perform post process after message sending
+        if message_id:
+            postp = current.deployment_settings.get_msg_send_postprocess()
+            if postp:
+                postp(message_id, **data)
 
         return True
 
     #------------------------------------------------------------------------------
-    def post_to_facebook(self, text="", channel_id=None):
+    def post_to_facebook(self, text="", channel_id=None, recipient=None, **data):
         """
             Posts a message on Facebook
 
             https://developers.facebook.com/docs/graph-api
-
-            @ToDo: Log messages in msg_facebook
         """
 
-        table = current.s3db.msg_facebook_channel
+        db = current.db
+        s3db = current.s3db
+        table = s3db.msg_facebook_channel
         if not channel_id:
             # Try the 1st enabled one in the DB
             query = (table.enabled == True)
         else:
             query = (table.channel_id == channel_id)
 
-        c = current.db(query).select(table.app_id,
-                                     table.app_secret,
-                                     table.page_id,
-                                     table.page_access_token,
-                                     limitby=(0, 1)
-                                     ).first()
+        c = db(query).select(table.app_id,
+                             table.app_secret,
+                             table.page_id,
+                             table.page_access_token,
+                             limitby=(0, 1)
+                             ).first()
 
         import facebook
 
@@ -1539,6 +1576,30 @@ class S3Msg(object):
             current.log.error("S3MSG: %s" % message)
             return
 
+        table = s3db.msg_facebook
+        otable = s3db.msg_outbox
+
+        message_id = None
+
+        def log_facebook(post, recipient, from_address):
+            # Log in msg_facebook
+            _id = table.insert(body=post,
+                               from_address=from_address,
+                               )
+            record = db(table.id == _id).select(table.id,
+                                                limitby=(0, 1)
+                                                ).first()
+            s3db.update_super(table, record)
+            message_id = record.message_id
+
+            # Log in msg_outbox
+            otable.insert(message_id = message_id,
+                          address = recipient,
+                          status = 2,
+                          contact_method = "FACEBOOK",
+                          )
+            return message_id
+
         graph = facebook.GraphAPI(app_access_token)
 
         page_id = c.page_id
@@ -1546,7 +1607,17 @@ class S3Msg(object):
             graph = facebook.GraphAPI(c.page_access_token)
             graph.put_object(page_id, "feed", message=text)
         else:
-            graph.put_object(user_id, "feed", message=text)
+            # FIXME user_id does not exist:
+            #graph.put_object(user_id, "feed", message=text)
+            raise NotImplementedError
+
+        message_id = log_facebook(text, recipient, channel_id)
+
+        # Perform post process after message sending
+        if message_id:
+            postp = current.deployment_settings.get_msg_send_postprocess()
+            if postp:
+                postp(message_id, **data)
 
     # -------------------------------------------------------------------------
     def poll(self, tablename, channel_id):
@@ -2025,12 +2096,12 @@ class S3Msg(object):
                                  request_headers=request_headers,
                                  response_headers=response_headers,
                                  )
-
         if d.bozo:
             # Something doesn't seem right
             S3Msg.update_channel_status(channel_id,
-                                        status=d.bozo_exception.message,
-                                        period=(300, 3600))
+                                        status = "ERROR: %s" % d.bozo_exception.message,
+                                        period = (300, 3600),
+                                        )
             return
 
         # Update ETag/Last-polled
@@ -2325,7 +2396,7 @@ class S3Msg(object):
                 old_status = old_status.status
                 try:
                     old_status = int(old_status)
-                except:
+                except (ValueError, TypeError):
                     new_status = status
                 else:
                     new_status = old_status + int(status[1:])
@@ -2398,12 +2469,12 @@ class S3Msg(object):
                                                          limitby=(0, 1)).first()
 
         tso = TwitterSearch.TwitterSearchOrder()
-        tso.setKeywords(search_query.keywords.split(" "))
-        tso.setLanguage(search_query.lang)
+        tso.set_keywords(search_query.keywords.split(" "))
+        tso.set_language(search_query.lang)
         # @ToDo Handle more than 100 results per page
         # This may have to be changed upstream
-        tso.setCount(int(search_query.count))
-        tso.setIncludeEntities(search_query.include_entities)
+        tso.set_count(int(search_query.count))
+        tso.set_include_entities(search_query.include_entities)
 
         try:
             ts = TwitterSearch.TwitterSearch(
@@ -2423,7 +2494,7 @@ class S3Msg(object):
         rtable.location_id.requires = None
         update_super = s3db.update_super
 
-        for tweet in ts.searchTweetsIterable(tso):
+        for tweet in ts.search_tweets_iterable(tso):
             user = tweet["user"]["screen_name"]
             body = tweet["text"]
             tweet_id = tweet["id_str"]
@@ -2459,7 +2530,6 @@ class S3Msg(object):
         """ Process results of twitter search with KeyGraph."""
 
         import subprocess
-        import os
         import tempfile
 
         db = current.db
@@ -2497,14 +2567,12 @@ class S3Msg(object):
             with their definitions.
         """
 
-        import re
-
         tagdef = S3Msg.tagdef
         tweet = tweet.lower()
-        tweet = re.sub('((www\.[\s]+)|(https?://[^\s]+))', "", tweet)
-        tweet = re.sub('@[^\s]+', "", tweet)
-        tweet = re.sub('[\s]+', " ", tweet)
-        tweet = re.sub(r'#([^\s]+)', lambda m:tagdef(m.group(0)), tweet)
+        tweet = re.sub(r"((www\.[\s]+)|(https?://[^\s]+))", "", tweet)
+        tweet = re.sub(r"@[^\s]+", "", tweet)
+        tweet = re.sub(r"[\s]+", " ", tweet)
+        tweet = re.sub(r"#([^\s]+)", lambda m:tagdef(m.group(0)), tweet)
         tweet = tweet.strip('\'"')
 
         return tweet

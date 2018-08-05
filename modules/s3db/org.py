@@ -2,7 +2,7 @@
 
 """ Sahana Eden Organisation Model
 
-    @copyright: 2009-2017 (c) Sahana Software Foundation
+    @copyright: 2009-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -126,6 +126,8 @@ class S3OrganisationModel(S3Model):
 
         hierarchical_organisation_types = settings.get_org_organisation_types_hierarchical()
         multiple_organisation_types = settings.get_org_organisation_types_multiple()
+
+        use_country = settings.get_org_country()
 
         # ---------------------------------------------------------------------
         # Organisation Types
@@ -269,8 +271,11 @@ class S3OrganisationModel(S3Model):
                                                       filterby="parent",
                                                       filter_opts=(None,),
                                                       orderby="org_region.name"))
+                # IFRC: Only show the Regions, not the Zones
+                opts_filter = ("parent", (None,))
             else:
                 hierarchy = None
+                opts_filter = (None, None)
 
             # CRUD strings
             crud_strings[tablename] = Storage(
@@ -293,9 +298,8 @@ class S3OrganisationModel(S3Model):
                             IS_ONE_OF(db, "org_region.id",
                                       region_represent,
                                       sort=True,
-                                      # IFRC: Only show the Regions, not the Zones
-                                      not_filterby="parent",
-                                      not_filter_opts=(None,)
+                                      not_filterby=opts_filter[0],
+                                      not_filter_opts=opts_filter[1],
                                       )),
                 sortby = "name",
                 comment = S3PopupLink(c = "org",
@@ -371,8 +375,11 @@ class S3OrganisationModel(S3Model):
                            label = T("Home Country"),
                            represent = self.gis_country_code_represent,
                            requires = IS_EMPTY_OR(IS_IN_SET_LAZY(
-                                lambda: gis.get_countries(key_type="code"),
-                                                          zero=messages.SELECT_LOCATION)),
+                                        lambda: gis.get_countries(key_type="code"),
+                                        zero = messages.SELECT_LOCATION
+                                        )),
+                           readable = use_country,
+                           writable = use_country,
                            ),
                      # Simple free-text contact field, can be enabled
                      # in templates as needed
@@ -415,8 +422,7 @@ class S3OrganisationModel(S3Model):
                            comment = DIV(_class="tooltip",
                                          _title="%s|%s" % (T("Logo"),
                                                            T("Logo of the organization. This should be a png or jpeg file and it should be no larger than 400x400"))),
-                           uploadfolder = os.path.join(
-                                            current.request.folder, "uploads"),
+                           uploadfolder = os.path.join(current.request.folder, "uploads"),
                            ),
                      s3_comments(),
                      #document_id(), # Better to have multiple Documents on a Tab
@@ -424,19 +430,19 @@ class S3OrganisationModel(S3Model):
                      #Field("archived", "boolean", default=False),
                      *s3_meta_fields())
 
-        form_fields = ["name",
+        crud_fields = ["name",
                        "acronym",
                        S3SQLInlineLink(
                             "organisation_type",
                             field = "organisation_type_id",
-                            # Default 10 options just triggers which adds unnecessary complexity to a commonly-used form & commonly an early one (crerate Org when registering)
+                            # Default 10 options just triggers which adds unnecessary complexity to a commonly-used form & commonly an early one (create Org when registering)
                             filter = False,
                             label = T("Type"),
                             multiple = multiple_organisation_types,
                             widget = type_widget,
                        ),
                        "region_id",
-                       "country",
+                       "country" if use_country else None,
                        "phone",
                        "website",
                        "year",
@@ -446,7 +452,7 @@ class S3OrganisationModel(S3Model):
 
         use_sector = settings.get_org_sector()
         if use_sector:
-            form_fields.insert(3, S3SQLInlineLink("sector",
+            crud_fields.insert(3, S3SQLInlineLink("sector",
                                                   columns = 4,
                                                   label = T("Sectors"),
                                                   field = "sector_id",
@@ -455,11 +461,11 @@ class S3OrganisationModel(S3Model):
 
         if settings.get_org_summary():
             # Include Summary fields in form
-            position = form_fields.index("year")
-            form_fields.insert(position + 1, "summary.national_staff")
-            form_fields.insert(position + 2, "summary.international_staff")
+            position = crud_fields.index("year")
+            crud_fields.insert(position + 1, "summary.national_staff")
+            crud_fields.insert(position + 2, "summary.international_staff")
 
-        crud_form = S3SQLCustomForm(*form_fields)
+        crud_form = S3SQLCustomForm(*crud_fields)
 
         # CRUD strings
         ADD_ORGANIZATION = T("Create Organization")
@@ -524,22 +530,13 @@ class S3OrganisationModel(S3Model):
         else:
             text_comment = T("You can search by name, acronym or comments")
 
+        # Reusable field
         organisation_comment = S3PopupLink(c = "org",
                                            f = "organisation",
                                            label = ADD_ORGANIZATION,
                                            title = ADD_ORGANIZATION,
                                            tooltip = tooltip,
                                            )
-
-        from_organisation_comment = S3PopupLink(c = "org",
-                                                f = "organisation",
-                                                vars = {"child": "from_organisation_id"},
-                                                label = ADD_ORGANIZATION,
-                                                title = ADD_ORGANIZATION,
-                                                tooltip = tooltip,
-                                                )
-
-        # Reusable field
         auth = current.auth
         organisation_id = S3ReusableField("organisation_id", "reference %s" % tablename,
                                           comment = organisation_comment,
@@ -556,12 +553,12 @@ class S3OrganisationModel(S3Model):
         list_fields = ["id",
                        "name",
                        "acronym",
-                       "organisation_organisation_type.organisation_type_id",
+                       (T("Type"), "organisation_organisation_type.organisation_type_id"),
                        "website"
                        ]
 
         if use_sector:
-            list_fields.insert(4,"sector_organisation.sector_id")
+            list_fields.insert(4, (T("Sectors"), "sector_organisation.sector_id"))
 
         filter_widgets = [S3TextFilter(text_fields,
                                        label = T("Search"),
@@ -572,7 +569,8 @@ class S3OrganisationModel(S3Model):
         append = filter_widgets.append
 
         # Don't add Type or Sector Filters for Supplier organizations in the asset and inv controllers
-        if current.request.function != "supplier":
+        # or for Training Centers
+        if current.request.function not in ("supplier", "training_center"):
             append(type_filter)
             if use_sector:
                 append(S3OptionsFilter("sector_organisation.sector_id",
@@ -584,26 +582,35 @@ class S3OrganisationModel(S3Model):
                                        )
                        )
 
-        append(S3OptionsFilter("country",
-                               #label = T("Home Country"),
-                                ),
-               )
+        if use_country:
+            append(S3OptionsFilter("country",
+                                   #label = T("Home Country"),
+                                   ),
+                   )
 
         report_fields = ["organisation_organisation_type.organisation_type_id",
-                         "country",
                          ]
+        if use_country:
+            report_fields.append("country")
+
+        default_col = "organisation_organisation_type.organisation_type_id"
         if use_sector:
             report_fields.insert(1, "sector_organisation.sector_id")
             default_row = "sector_organisation.sector_id"
-        else:
+        elif use_country:
             default_row = "country"
+        else:
+            # Single column (switch axes)
+            default_row = default_col
+            default_col = None
+
         report_options = Storage(rows = report_fields,
                                  cols = report_fields,
                                  fact = [(T("Number of Organizations"), "count(id)"),
                                          (T("List of Organizations"), "list(name)"),
                                          ],
                                  defaults=Storage(rows = default_row,
-                                                  cols = "organisation_organisation_type.organisation_type_id",
+                                                  cols = default_col,
                                                   fact = "count(id)",
                                                   totals = True,
                                                   chart = "spectrum:cols",
@@ -671,6 +678,8 @@ class S3OrganisationModel(S3Model):
                        hrm_human_resource = "organisation_id",
                        # Members
                        member_membership = "organisation_id",
+                       # DVR response themes
+                       dvr_response_theme = "organisation_id",
                        # Evacuees
                        evr_case = "organisation_id",
                        # Locations served
@@ -724,10 +733,12 @@ class S3OrganisationModel(S3Model):
                        # Assets
                        asset_asset = "organisation_id",
                        # Needs
-                       req_organisation_needs = {"name": "needs",
-                                                 "joinby": "organisation_id",
-                                                 "multiple": False,
-                                                 },
+                       req_need = {"name": "needs",
+                                   "link": "req_need_organisation",
+                                   "joinby": "organisation_id",
+                                   "key": "need_id",
+                                   "multiple": False,
+                                   },
                        # Requests
                        #req_req = "donated_by_id",
 
@@ -863,7 +874,7 @@ class S3OrganisationModel(S3Model):
         # Pass names back to global scope (s3.*)
         #
         return dict(org_organisation_type_id = organisation_type_id,
-                    org_organisation_crud_fields = form_fields,
+                    org_organisation_crud_fields = crud_fields,
                     org_organisation_id = organisation_id,
                     org_organisation_represent = org_organisation_represent,
                     org_region_id = region_id,
@@ -1073,9 +1084,7 @@ class S3OrganisationModel(S3Model):
         value = s3_unicode(value).lower().strip()
 
         if not value:
-            output = current.xml.json_message(False, 400,
-                            "Missing option! Require value")
-            raise HTTP(400, body=output)
+            r.error(400, "Missing option! Require value")
 
         response = current.response
         resource = r.resource
@@ -1113,9 +1122,6 @@ class S3OrganisationModel(S3Model):
                     dict(max=MAX_SEARCH_RESULTS)))
                 ]
         else:
-            field = table.name
-            field2 = table.acronym
-
             # Fields to return
             fields = ["id",
                       "name",
@@ -1129,10 +1135,11 @@ class S3OrganisationModel(S3Model):
                            ]
 
             rows = resource.select(fields,
-                                   start=0,
-                                   limit=limit,
-                                   orderby=field,
-                                   as_rows=True)
+                                   start = 0,
+                                   limit = limit,
+                                   orderby = table.name,
+                                   as_rows = True,
+                                   )
             output = []
             append = output.append
             for row in rows:
@@ -1185,7 +1192,7 @@ class S3OrganisationModel(S3Model):
 # =============================================================================
 class S3OrganisationNameModel(S3Model):
     """
-        Location Names model
+        Organsiation Names model
         - local names/acronyms for Organisations
     """
 
@@ -1195,7 +1202,6 @@ class S3OrganisationNameModel(S3Model):
     def model(self):
 
         T = current.T
-        l10n_languages = current.deployment_settings.get_L10n_languages()
 
         # ---------------------------------------------------------------------
         # Local Names
@@ -1205,12 +1211,7 @@ class S3OrganisationNameModel(S3Model):
                           self.org_organisation_id(empty = False,
                                                    ondelete = "CASCADE",
                                                    ),
-                          Field("language",
-                                label = T("Language"),
-                                represent = lambda opt: l10n_languages.get(opt,
-                                                current.messages.UNKNOWN_OPT),
-                                requires = IS_ISO639_2_LANGUAGE_CODE(),
-                                ),
+                          s3_language(empty = False),
                           Field("name_l10n",
                                 label = T("Local Name"),
                                 ),
@@ -1303,7 +1304,7 @@ class S3OrganisationBranchModel(S3Model):
             Remove any duplicate memberships and update affiliations
         """
 
-        _id = form.vars.id
+        id_ = form.vars.id
         db = current.db
         s3db = current.s3db
 
@@ -1323,7 +1324,7 @@ class S3OrganisationBranchModel(S3Model):
         left = [otable.on(ltable.organisation_id == otable.id),
                 btable.on(ltable.branch_id == btable.id)]
 
-        record = db(ltable.id == _id).select(otable.root_organisation,
+        record = db(ltable.id == id_).select(otable.root_organisation,
                                              btable.root_organisation,
                                              ltable.branch_id,
                                              ltable.organisation_id,
@@ -1346,7 +1347,7 @@ class S3OrganisationBranchModel(S3Model):
                 # Eliminate duplicate affiliations
                 query = (ltable.branch_id == branch_id) & \
                         (ltable.organisation_id == organisation_id) & \
-                        (ltable.id != _id) & \
+                        (ltable.id != id_) & \
                         (ltable.deleted != True)
 
                 deleted_fk = {"branch_id": branch_id,
@@ -1465,7 +1466,7 @@ class S3OrganisationCapacityModel(S3Model):
         tablename = "org_capacity_assessment"
         define_table(tablename,
                      self.org_organisation_id(empty = False),
-                     s3_date(future=0),
+                     s3_date(future = 0),
                      self.pr_person_id(label = T("Lead Facilitator")),
                      s3_comments(),
                      *s3_meta_fields()
@@ -2097,7 +2098,7 @@ class S3OrganisationResourceModel(S3Model):
                                      ),
                           Field("value", "integer",
                                 label = T("Quantity"),
-                                requires = IS_INT_IN_RANGE(0, 999999),
+                                requires = IS_INT_IN_RANGE(0, None),
                                 ),
                           s3_comments(),
                           *s3_meta_fields())
@@ -2286,6 +2287,8 @@ class S3OrganisationSectorModel(S3Model):
                                            "key": "organisation_id",
                                            "actuate": "hide",
                                           },
+                       org_sector_organisation = {"joinby": "sector_id",
+                                                  },
                        project_project = {"link": "project_sector_project",
                                           "joinby": "sector_id",
                                           "key": "project_id",
@@ -2372,6 +2375,13 @@ class S3OrganisationSectorModel(S3Model):
         define_table(tablename,
                      sector_id(),
                      self.org_organisation_id(),
+                     Field("lead", "boolean",
+                           label = T("Lead Organization?"),
+                           represent = s3_yes_no_represent,
+                           comment = DIV(_class="tooltip",
+                                         _title="%s|%s" % (T("Lead Organisation?"),
+                                                           T("If the organization is a lead for this sector."))),
+                           ),
                      *s3_meta_fields()
                      )
 
@@ -2949,11 +2959,11 @@ class S3OrganisationSummaryModel(S3Model):
                           self.org_organisation_id(ondelete="CASCADE"),
                           Field("national_staff", "integer", # national is a reserved word in Postgres
                                 label = T("# of National Staff"),
-                                requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 9999)),
+                                requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                                 ),
                           Field("international_staff", "integer",
                                 label = T("# of International Staff"),
-                                requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 9999)),
+                                requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                                 ),
                           *s3_meta_fields())
 
@@ -3027,7 +3037,8 @@ class S3OrganisationTeamModel(S3Model):
                           *s3_meta_fields())
 
         self.configure(tablename,
-                       onaccept = self.org_team_onaccept,
+                       onaccept = self.organisation_team_onaccept,
+                       ondelete = self.organisation_team_ondelete,
                        )
 
         # Pass names back to global scope (s3.*)
@@ -3035,37 +3046,31 @@ class S3OrganisationTeamModel(S3Model):
 
     # -------------------------------------------------------------------------
     @staticmethod
-    def org_team_onaccept(form):
+    def organisation_team_onaccept(form):
         """
-            Update affiliations.
-
-            @ToDo: ondelete function needed too
+            Onaccept of org_organisation_team:
+                - update affiliations (OU relationships) of the team
         """
 
-        if hasattr(form, "vars"):
-            _id = form.vars.id
-        elif isinstance(form, Row) and "id" in form:
-            _id = form.id
-        else:
+        try:
+            record_id = form.vars.id
+        except AttributeError:
+            record_id = None
+
+        if not record_id:
             return
 
-        if not _id:
-            return
+        org_update_affiliations("org_organisation_team", record_id)
 
-        db = current.db
-        table = db.org_organisation_team
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def organisation_team_ondelete(row):
+        """
+            Ondelete of org_organisation_team:
+                - update affiliations (OU relationships) of the team
+        """
 
-        record = db(table.id == _id).select(table.group_id,
-                                            table.organisation_id,
-                                            limitby=(0, 1)).first()
-        if record:
-            from pr import OU
-            org = ("org_organisation", record.organisation_id)
-            group = ("pr_group", record.group_id)
-            current.s3db.pr_add_affiliation(org, group,
-                                            role="Groups",
-                                            role_type=OU,
-                                            )
+        org_update_affiliations("org_organisation_team", row.id)
 
 # =============================================================================
 class S3OrganisationTypeTagModel(S3Model):
@@ -3125,7 +3130,10 @@ class S3SiteModel(S3Model):
 
         T = current.T
         auth = current.auth
+
         messages = current.messages
+        NONE = messages["NONE"]
+        OBSOLETE = messages.OBSOLETE
 
         add_components = self.add_components
         set_method = self.set_method
@@ -3165,20 +3173,18 @@ class S3SiteModel(S3Model):
                           Field("obsolete", "boolean",
                                 default = False,
                                 label = T("Obsolete"),
-                                represent = lambda opt: \
-                                          (opt and [T("Obsolete")] or
-                                          [messages["NONE"]])[0],
+                                represent = lambda opt: OBSOLETE if opt else NONE,
                                 readable = False,
                                 writable = False,
                                 ),
                           Field("comments", "text"),
-                          *s3_ownerstamp())
+                          *S3MetaFields.owner_meta_fields())
 
         # ---------------------------------------------------------------------
         settings = current.deployment_settings
         org_site_label = settings.get_org_site_label()
         if settings.get_org_site_autocomplete():
-            widget=S3SiteAutocompleteWidget(),
+            widget=S3SiteAutocompleteWidget()
             comment=DIV(_class="tooltip",
                         _title="%s|%s" % (org_site_label,
                                           messages.AUTOCOMPLETE_HELP))
@@ -3188,23 +3194,23 @@ class S3SiteModel(S3Model):
 
         org_site_represent = org_SiteRepresent(show_link=True)
 
-        site_id = self.super_link("site_id", "org_site",
-                                  comment = comment,
-                                  #default = auth.user.site_id if auth.is_logged_in() else None,
-                                  label = org_site_label,
-                                  orderby = "org_site.name",
-                                  #readable = True,
-                                  represent = org_site_represent,
-                                  widget = widget,
-                                  #writable = True,
-                                  )
+        site_id = lambda: self.super_link("site_id", "org_site",
+                                          comment = comment,
+                                          #default = auth.user.site_id if auth.is_logged_in() else None,
+                                          label = org_site_label,
+                                          orderby = "org_site.name",
+                                          #readable = True,
+                                          represent = org_site_represent,
+                                          widget = widget,
+                                          #writable = True,
+                                          )
 
         # Custom Method for S3SiteAutocompleteWidget
         set_method("org", "site",
                    method = "search_ac",
                    action = self.site_search_ac)
 
-        # Custom Method for S3AddPersonWidget2
+        # Custom Method for S3AddPersonWidget
         # @ToDo: One for HRMs
         set_method("org", "site",
                    method = "site_contact_person",
@@ -3241,14 +3247,11 @@ class S3SiteModel(S3Model):
         # Components
         add_components(tablename,
                        # Facility Types
-                       # Format for S3SQLInlineComponentCheckbox
                        org_facility_type = {"link": "org_site_facility_type",
                                             "joinby": "site_id",
                                             "key": "facility_type_id",
                                             "actuate": "hide",
                                             },
-                       # Format for filter_widgets & imports
-                       org_site_facility_type = "site_id",
 
                        # Locations
                        org_site_location = ({"name": "location",
@@ -3300,16 +3303,12 @@ class S3SiteModel(S3Model):
                        org_site_org_group = "site_id",
 
                        # Needs
-                       req_site_needs = (# with alias
-                                         {"name": "needs",
-                                          "joinby": "site_id",
-                                          "multiple": False,
-                                          },
-                                         # without alias
-                                         {"joinby": "site_id",
-                                          "multiple": False,
-                                          },
-                                         ),
+                       req_need = {"name": "needs",
+                                   "link": "req_need_site",
+                                   "joinby": "site_id",
+                                   "key": "need_id",
+                                   "multiple": False,
+                                   },
 
                        # Requests
                        req_req = "site_id",
@@ -3444,13 +3443,12 @@ class S3SiteModel(S3Model):
     @staticmethod
     def site_contact_person(r, **attr):
         """
-            JSON lookup method for S3AddPersonWidget2
+            JSON lookup method for S3AddPersonWidget
         """
 
         site_id = r.id
         if not site_id:
-            output = current.xml.json_message(False, 400, "No id provided!")
-            raise HTTP(400, body=output)
+            r.error(400, "No id provided!")
 
         db = current.db
         s3db = current.s3db
@@ -3463,10 +3461,9 @@ class S3SiteModel(S3Model):
                                   limitby=(0, 1)).first()
 
         if person:
-            fake = Storage(id = person.person_id,
-                           tablename = "org_site",
-                           )
-            return s3db.pr_person_lookup(fake, **attr)
+            attr = dict(attr)
+            attr["person_id"] = person.person_id
+            return s3db.pr_person_lookup(r, **attr)
         else:
             current.response.headers["Content-Type"] = "application/json"
             output = json.dumps(None, separators=SEPARATORS)
@@ -3501,9 +3498,7 @@ class S3SiteModel(S3Model):
         value = s3_unicode(value).lower().strip()
 
         if not value:
-            output = current.xml.json_message(False, 400,
-                            "Missing option! Require value")
-            raise HTTP(400, body=output)
+            r.error(400, "Missing option! Require value")
 
         # Construct query
         query = (FS("name").lower().like(value + "%"))
@@ -3527,9 +3522,6 @@ class S3SiteModel(S3Model):
                     dict(max=MAX_SEARCH_RESULTS)))
                 ]
         else:
-            from s3.s3widgets import set_match_strings
-            s3db = current.s3db
-
             # default fields to return
             fields = ["name",
                       "site_id",
@@ -3573,7 +3565,7 @@ class S3SiteModel(S3Model):
                     record["addr"] = addr_street
 
                 # Populate match information (if applicable)
-                set_match_strings(record, value)
+                s3_set_match_strings(record, value)
                 append(record)
 
         response.headers["Content-Type"] = "application/json"
@@ -3694,7 +3686,6 @@ class S3SiteNameModel(S3Model):
     def model(self):
 
         T = current.T
-        LANGUAGE_CODE = IS_ISO639_2_LANGUAGE_CODE
 
         # ---------------------------------------------------------------------
         # Local Names
@@ -3703,11 +3694,7 @@ class S3SiteNameModel(S3Model):
         self.define_table(tablename,
                           # Component not instance
                           self.super_link("site_id", "org_site"),
-                          Field("language",
-                                label = T("Language"),
-                                represent = LANGUAGE_CODE.represent,
-                                requires = LANGUAGE_CODE(),
-                                ),
+                          s3_language(empty = False),
                           Field("name_l10n",
                                 label = T("Local Name"),
                                 ),
@@ -3857,7 +3844,9 @@ class S3FacilityModel(S3Model):
         define_table = self.define_table
         super_link = self.super_link
 
-        NONE = current.messages["NONE"]
+        messages = current.messages
+        NONE = messages["NONE"]
+        OBSOLETE = messages.OBSOLETE
 
         hierarchical_facility_types = settings.get_org_facility_types_hierarchical()
 
@@ -4017,8 +4006,7 @@ class S3FacilityModel(S3Model):
                      Field("obsolete", "boolean",
                            default = False,
                            label = T("Obsolete"),
-                           represent = lambda opt: \
-                                       (opt and [T("Obsolete")] or [current.messages["NONE"]])[0],
+                           represent = lambda opt: OBSOLETE if opt else NONE,
                            readable = False,
                            writable = False,
                            ),
@@ -4154,7 +4142,7 @@ class S3FacilityModel(S3Model):
             filter_widgets.append(
                 S3OptionsFilter("reqs",
                                 label = T("Highest Priority Open Requests"),
-                                options = self.req_priority_opts,
+                                options = lambda: self.req_priority_opts,
                                 cols = 3,
                                 ))
 
@@ -4342,6 +4330,7 @@ class S3FacilityModel(S3Model):
         """
             Produce a static GeoJSON[P] feed of Facility data
             Designed to be run on a schedule to serve a high-volume website
+            - current.task.schedule_task("s3db_task", "org_facility_geojson", period=86400, repeats=0)
         """
 
         from shapely.geometry import Point
@@ -4353,7 +4342,7 @@ class S3FacilityModel(S3Model):
         ltable = db.org_site_facility_type
         ttable = db.org_facility_type
         gtable = db.gis_location
-        ntable = s3db.req_site_needs
+        #ntable = s3db.req_need
 
         # Limit the number of decimal places
         formatter = ".%sf" % decimals
@@ -4362,11 +4351,11 @@ class S3FacilityModel(S3Model):
         query = (stable.deleted != True) & \
                 (stable.obsolete != True) & \
                 (gtable.id == stable.location_id)
-        lquery = (ntable.deleted != True) & \
-                 (ntable.site_id == stable.site_id)
-        left = [ntable.on(lquery),
+        #lquery = (ntable.deleted != True) & \
+        #         (ntable.site_id == stable.site_id)
+        left = [#ntable.on(lquery),
                 ltable.on(stable.site_id == ltable.site_id),
-                ttable.on(ttable.facility_type_id == ltable.facility_type_id),
+                ttable.on(ttable.id == ltable.facility_type_id),
                 ]
         facs = db(query).select(stable.id,
                                 stable.name,
@@ -4377,7 +4366,7 @@ class S3FacilityModel(S3Model):
                                 stable.phone2,
                                 stable.email,
                                 stable.website,
-                                ntable.needs,
+                                #ntable.needs,
                                 gtable.addr_street,
                                 gtable.L1,
                                 gtable.L4,
@@ -4413,12 +4402,12 @@ class S3FacilityModel(S3Model):
             if g.L1:
                 # Encode smaller if-possible
                 L1 = g.L1
-                if L1 == "New York":
-                    properties["L1"] = "NY"
-                elif L1 == "New Jersey":
-                    properties["L1"] = "NJ"
-                else:
-                    properties["L1"] = L1
+                #if L1 == "New York":
+                #    properties["L1"] = "NY"
+                #elif L1 == "New Jersey":
+                #    properties["L1"] = "NJ"
+                #else:
+                properties["L1"] = L1
             if g.L4:
                 properties["L4"] = g.L4
             if o.phone1:
@@ -4429,16 +4418,16 @@ class S3FacilityModel(S3Model):
                 properties["email"] = o.email
             if o.website:
                 properties["web"] = o.website
-            n = f.req_site_needs
-            if n:
-                if n.needs:
-                    needs = json.loads(n.needs)
-                    if "urgent" in needs:
-                        properties["urgent"] = needs["urgent"]
-                    if "need" in needs:
-                        properties["need"] = needs["need"]
-                    if "no" in needs:
-                        properties["no"] = needs["no"]
+            #n = f.req_site_needs
+            #if n:
+            #    if n.needs:
+            #        needs = json.loads(n.needs)
+            #        if "urgent" in needs:
+            #            properties["urgent"] = needs["urgent"]
+            #        if "need" in needs:
+            #            properties["need"] = needs["need"]
+            #        if "no" in needs:
+            #            properties["no"] = needs["no"]
             f = dict(type = "Feature",
                      properties = properties,
                      geometry = json.loads(geojson)
@@ -4461,7 +4450,7 @@ class S3FacilityModel(S3Model):
         File.close()
 
 # -----------------------------------------------------------------------------
-def org_facility_rheader(r, tabs=[]):
+def org_facility_rheader(r, tabs=None):
     """
         RHeader for facilities when doing a req_match
     """
@@ -4510,7 +4499,7 @@ class S3RoomModel(S3Model):
         #
         tablename = "org_room"
         self.define_table(tablename,
-                          self.org_site_id, # site_id
+                          self.org_site_id(), # site_id
                           Field("name", length=128, notnull=True,
                                 label = T("Name"),
                                 requires = [IS_NOT_EMPTY(),
@@ -4584,7 +4573,11 @@ class S3OfficeModel(S3Model):
         T = current.T
         db = current.db
         s3 = current.response.s3
+
         messages = current.messages
+        NONE = messages["NONE"]
+        OBSOLETE = messages.OBSOLETE
+
         settings = current.deployment_settings
         add_components = self.add_components
         configure = self.configure
@@ -4737,15 +4730,14 @@ class S3OfficeModel(S3Model):
                      Field("obsolete", "boolean",
                            default = False,
                            label = T("Obsolete"),
-                           represent = lambda opt: \
-                                     (opt and [T("Obsolete")] or [messages["NONE"]])[0],
+                           represent = lambda opt: OBSOLETE if opt else NONE,
                            readable = False,
                            writable = False,
                            ),
                      s3_comments(),
                      *s3_meta_fields())
 
-        form_fields = ["name",
+        crud_fields = ["name",
                        "code",
                        "organisation_id",
                        "office_type_id",
@@ -4760,11 +4752,11 @@ class S3OfficeModel(S3Model):
         org_summary = settings.get_org_summary()
         if org_summary:
             # Include Summary fields in form
-            position = form_fields.index("email")
-            form_fields.insert(position+1, "summary.national_staff")
-            form_fields.insert(position+2, "summary.international_staff")
+            position = crud_fields.index("email")
+            crud_fields.insert(position + 1, "summary.national_staff")
+            crud_fields.insert(position + 2, "summary.international_staff")
 
-        crud_form = S3SQLCustomForm(*form_fields)
+        crud_form = S3SQLCustomForm(*crud_fields)
 
         # CRUD strings
         crud_strings[tablename] = Storage(
@@ -4918,9 +4910,9 @@ class S3OfficeModel(S3Model):
         if current.deployment_settings.get_org_summary():
 
             db = current.db
-            id = form_vars.id
+            office_id = form_vars.id
             table = current.s3db.org_office_summary
-            query = (table.office_id == id)
+            query = (table.office_id == office_id)
             existing = db(query).select(table.id,
                                         limitby=(0, 1)).first()
             post_vars = current.request.post_vars
@@ -4932,7 +4924,7 @@ class S3OfficeModel(S3Model):
                                  international_staff = international_staff
                                  )
             elif national_staff or international_staff:
-                table.insert(office_id = id,
+                table.insert(office_id = office_id,
                              national_staff = national_staff,
                              international_staff = international_staff
                              )
@@ -4964,11 +4956,11 @@ class S3OfficeSummaryModel(S3Model):
                                 ),
                           Field("national_staff", "integer", # national is a reserved word in Postgres
                                 label = T("# of National Staff"),
-                                requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 9999)),
+                                requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                                 ),
                           Field("international_staff", "integer",
                                 label = T("# of International Staff"),
-                                requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 9999)),
+                                requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                                 ),
                           *s3_meta_fields())
 
@@ -5027,7 +5019,7 @@ def org_organisation_address(row):
         row = row.org_organisation
     try:
         organisation_id = row.id
-    except:
+    except AttributeError:
         # not available
         return current.messages["NONE"]
 
@@ -5041,37 +5033,35 @@ def org_organisation_address(row):
             (otable.location_id == gtable.id)
     row = db(query).select(gtable.addr_street, limitby=(0, 1)).first()
 
-    if row:
-        row.addr_street
-    else:
-        return current.messages["NONE"]
+    return row.addr_street if row else current.messages["NONE"]
 
 # =============================================================================
-def org_organisation_logo(id,
+def org_organisation_logo(org,
                           #type="png",
                           ):
     """
-        Return a logo of the organisation with the given id, if one exists
+        Return a logo of the organisation with the given org, if one exists
 
-        The id can either be the id of the organisation
+        The org can either be the id of the organisation
                or a Row of the organisation
 
         @ToDo: The type can either be png or bmp and is the format of the saved image
     """
 
-    if not id:
+    if not org:
         return None
 
     s3db = current.s3db
-    if isinstance(id, Row):
+    if isinstance(org, Row):
         # Do not repeat the lookup if already done by IS_ONE_OF or RHeader
-        record = id
+        record = org
     else:
         table = s3db.org_organisation
-        record = current.db(table.id == id).select(table.name,
-                                                   table.acronym,
-                                                   table.logo,
-                                                   limitby=(0, 1)).first()
+        record = current.db(table.id == org).select(table.name,
+                                                    table.acronym,
+                                                    table.logo,
+                                                    limitby = (0, 1),
+                                                    ).first()
 
     if record and record.logo:
         #format = None
@@ -5092,7 +5082,7 @@ def org_organisation_logo(id,
     return ""
 
 # =============================================================================
-def org_parents(organisation_id, path=[]):
+def org_parents(organisation_id, path=None):
     """
         Lookup the parent organisations of a branch organisation
 
@@ -5103,6 +5093,8 @@ def org_parents(organisation_id, path=[]):
 
     if not organisation_id:
         return path
+    if path is None:
+        path = []
 
     db = current.db
     s3db = current.s3db
@@ -5303,7 +5295,7 @@ class org_OrganisationRepresent(S3Represent):
                              multiple=multiple)
 
     # -------------------------------------------------------------------------
-    def custom_lookup_rows(self, key, values, fields=[]):
+    def custom_lookup_rows(self, key, values, fields=None):
         """
             Custom lookup method for organisation rows, does a
             left join with the parent organisation. Parameters
@@ -5442,25 +5434,26 @@ class org_SiteRepresent(S3Represent):
                  ):
 
         settings = current.deployment_settings
+
         # Translation uses org_site_name & not T()
         translate = settings.get_L10n_translate_org_site()
         language = current.session.s3.language
         if language == settings.get_L10n_default_language():
             translate = False
 
-        self.show_type = show_type
         if show_type or show_link or translate:
             # Need a custom lookup
             self.lookup_rows = self.custom_lookup_rows
-        # Need a custom representation
-        fields = ["name"]
 
-        super(org_SiteRepresent,
-              self).__init__(lookup="org_site",
-                             fields=fields,
-                             show_link=show_link,
-                             translate=translate,
-                             multiple=multiple)
+        self.L10n = {}
+        self.show_type = show_type
+
+        super(org_SiteRepresent, self).__init__(lookup = "org_site",
+                                                fields = ["name"],
+                                                show_link = show_link,
+                                                translate = translate,
+                                                multiple = multiple,
+                                                )
 
     # -------------------------------------------------------------------------
     def bulk(self, values, rows=None, list_type=False, show_link=True, include_blank=True):
@@ -5506,7 +5499,7 @@ class org_SiteRepresent(S3Represent):
         return labels
 
     # -------------------------------------------------------------------------
-    def custom_lookup_rows(self, key, values, fields=[]):
+    def custom_lookup_rows(self, key, values, fields=None):
         """
             Custom lookup method for site rows, does a left join with any
             instance_types found.
@@ -5520,69 +5513,93 @@ class org_SiteRepresent(S3Represent):
         s3db = current.s3db
         stable = s3db.org_site
 
+        show_type = self.show_type
+        show_link = self.show_link
+
         count = len(values)
         if count == 1:
             value = values[0]
             query = (stable.site_id == value)
-            limitby = (0, 1)
         else:
             query = (stable.site_id.belongs(values))
-            limitby = (0, count)
+        limitby = (0, count)
 
-        if self.show_link:
-            # We need the instance_type IDs
-            # Do a first query to see which instance_types we have
-            rows = db(query).select(stable.instance_type,
-                                    limitby=limitby)
-            instance_types = []
-            for row in rows:
-                if row.instance_type not in instance_types:
-                    instance_types.append(row.instance_type)
+        fields = [stable.site_id,
+                  stable.name,
+                  ]
+        if show_type or show_link:
+            fields.append(stable.instance_type)
 
-            # Now do a second query which left-joins with all the instance tables we have
-            fields = [stable.site_id,
-                      stable.instance_type,
-                      stable.name,
-                      ]
-            left = []
-            for instance_type in instance_types:
-                table = s3db[instance_type]
-                fields.append(table.id)
-                left.append(table.on(table.site_id == stable.site_id))
-
-                if instance_type == "org_facility":
-                    # We also need the Facility Types
-                    ltable = db.org_site_facility_type
-                    ttable = db.org_facility_type
-                    fields.append(ttable.name)
-                    left.append(ltable.on(ltable.site_id == stable.site_id))
-                    left.append(ttable.on(ttable.id == ltable.facility_type_id))
-            rows = db(query).select(*fields, left=left)
-
-        elif self.show_type:
-            # We don't need instance_type IDs
-            # Just do a join with org_facility_type
-            ttable = s3db.org_facility_type
-            ltable = db.org_site_facility_type
-
-            left = [ltable.on(ltable.site_id == stable.site_id),
-                    ttable.on(ttable.id == ltable.facility_type_id)]
-
-            rows = db(query).select(stable.site_id,
-                                    stable.instance_type,
-                                    stable.name,
-                                    ttable.name,
-                                    left=left,
-                                    limitby=limitby)
-        else:
-            # We are just translating
-            rows = db(query).select(stable.site_id,
-                                    stable.name,
-                                    limitby=limitby)
-
+        rows = db(query).select(limitby=limitby, *fields)
         self.queries += 1
 
+        if show_type:
+
+            # Collect the site_ids
+            site_ids = set(row.site_id for row in rows)
+
+            # Retrieve the facility type links
+            ltable = s3db.org_site_facility_type
+            query = ltable.site_id.belongs(site_ids)
+            links = db(query).select(ltable.site_id,
+                                     ltable.facility_type_id,
+                                     )
+
+            # Collect all type IDs and type IDs per site_id
+            all_types = set()
+            facility_types = {}
+
+            for link in links:
+
+                facility_type_id = link.facility_type_id
+                all_types.add(facility_type_id)
+
+                site_id = link.site_id
+                if site_id in facility_types:
+                    facility_types[site_id].append(facility_type_id)
+                else:
+                    facility_types[site_id] = [facility_type_id]
+
+            # Bulk-represent all type IDs
+            # (stores the representations in the S3Represent)
+            ltable.facility_type_id.represent.bulk(list(all_types))
+
+            # Add the list of corresponding type IDs to each row
+            for row in rows:
+                row.facility_types = facility_types.get(row.site_id) or []
+
+        if show_link:
+
+            # Collect site_ids per instance type
+            site_ids = {}
+            for row in rows:
+                instance_type = row.instance_type
+                if instance_type in site_ids:
+                    site_ids[instance_type].add(row.site_id)
+                else:
+                    site_ids[instance_type] = set([row.site_id])
+
+            # Retrieve site ID / instance ID pairs per instance_type
+            instance_ids = {}
+            for instance_type in site_ids:
+                table = s3db.table(instance_type)
+                if not table:
+                    continue
+                query = table.site_id.belongs(site_ids[instance_type])
+                instances = db(query).select(table._id,
+                                             table.site_id,
+                                             )
+                self.queries += 1
+                key = table._id.name
+                for instance in instances:
+                    instance_ids[instance.site_id] = instance[key]
+
+            # Add the instance ID to each row
+            for row in rows:
+                row.instance_id = instance_ids.get(row.site_id)
+
         if self.translate:
+
             table = s3db.org_site_name
             query = (table.deleted == False) & \
                     (table.language == current.session.s3.language)
@@ -5594,6 +5611,7 @@ class org_SiteRepresent(S3Represent):
                                          table.name_l10n,
                                          limitby = (0, count),
                                          ).as_dict(key="site_id")
+
         return rows
 
     # -------------------------------------------------------------------------
@@ -5609,12 +5627,12 @@ class org_SiteRepresent(S3Represent):
         if row:
             try:
                 instance_type = row["org_site.instance_type"]
-                id = row[instance_type].id
+                instance_id = row.instance_id
             except (AttributeError, KeyError):
                 return v
             else:
                 c, f = instance_type.split("_", 1)
-                return A(v, _href=URL(c=c, f=f, args=[id],
+                return A(v, _href=URL(c=c, f=f, args=[instance_id],
                                       # remove the .aaData extension in paginated views
                                       extension=""
                                       ))
@@ -5631,9 +5649,9 @@ class org_SiteRepresent(S3Represent):
         """
 
         if self.translate:
-            _row = self.l10n.get(row["org_site.site_id"])
-            if _row:
-                name = _row["name_l10n"]
+            l10n_row = self.l10n.get(row["org_site.site_id"])
+            if l10n_row:
+                name = l10n_row["name_l10n"]
             else:
                 name = row["org_site.name"]
         else:
@@ -5644,11 +5662,13 @@ class org_SiteRepresent(S3Represent):
 
         if self.show_type:
             instance_type = row["org_site.instance_type"]
-            facility_type = row.get("org_facility_type.name", None)
+            facility_types = row.get("facility_types")
 
-            if facility_type:
-                # These need to be translated
-                name = "%s (%s)" % (name, current.T(facility_type))
+            if facility_types:
+                ltable = current.s3db.org_site_facility_type
+                represent = ltable.facility_type_id.represent
+                type_names = represent.multiple(facility_types)
+                name = "%s (%s)" % (name, type_names)
             else:
                 instance_type = current.auth.org_site_types.get(instance_type, None)
                 if instance_type:
@@ -5728,7 +5748,6 @@ class org_SiteCheckInMethod(S3Method):
                 person_data = self.ajax_data(person, status)
 
         # Standard form fields and data
-        from s3 import S3StringWidget
         formfields = [Field("label",
                             label = T("ID"),
                             requires = IS_NOT_EMPTY(error_message=T("Enter or scan an ID")),
@@ -5966,8 +5985,6 @@ class org_SiteCheckInMethod(S3Method):
             @param status: the status dict (from status())
         """
 
-        T = current.T
-
         person_details = cls.person_details(person)
         output = {"d": s3_str(person_details),
                   "i": True if status.get("check_in_allowed") else False,
@@ -5994,7 +6011,6 @@ class org_SiteCheckInMethod(S3Method):
         """
 
         s3db = current.s3db
-        person = None
 
         # Fields to extract
         fields = ["id",
@@ -6009,7 +6025,10 @@ class org_SiteCheckInMethod(S3Method):
                   ]
 
         query = (FS("pe_label") == label)
-        presource = s3db.resource("pr_person", filter=query)
+        presource = s3db.resource("pr_person",
+                                  components=[],
+                                  filter = query,
+                                  )
         rows = presource.select(fields,
                                 start = 0,
                                 limit = 1,
@@ -6077,7 +6096,6 @@ class org_SiteCheckInMethod(S3Method):
         """
 
         T = current.T
-        settings = current.deployment_settings
 
         name = s3_fullname(person)
         dob = person.date_of_birth
@@ -6130,7 +6148,7 @@ class org_SiteCheckInMethod(S3Method):
         s3db = current.s3db
         ptable = s3db.pr_person
 
-        from s3.s3track import S3Trackable
+        from s3 import S3Trackable
         person_id = person.id
         record = r.record
 
@@ -6156,7 +6174,7 @@ class org_SiteCheckInMethod(S3Method):
         s3db = current.s3db
         ptable = s3db.pr_person
 
-        from s3.s3track import S3Trackable
+        from s3 import S3Trackable
         person_id = person.id
 
         record = r.record
@@ -6207,7 +6225,7 @@ def org_site_has_assets(row, tablename="org_facility"):
     if hasattr(row, tablename):
         row = row[tablename]
     try:
-        id = row.id
+        record_id = row.id
     except AttributeError:
         return None
 
@@ -6216,7 +6234,7 @@ def org_site_has_assets(row, tablename="org_facility"):
     stable = s3db[tablename]
 
     query = (atable.deleted != True) & \
-            (stable.id == id) & \
+            (stable.id == record_id) & \
             (atable.site_id == stable.site_id)
 
     asset = current.db(query).select(atable.id,
@@ -6237,7 +6255,7 @@ def org_site_has_inv(row, tablename="org_facility"):
     if hasattr(row, tablename):
         row = row[tablename]
     try:
-        id = row.id
+        record_id = row.id
     except AttributeError:
         return None
 
@@ -6246,7 +6264,7 @@ def org_site_has_inv(row, tablename="org_facility"):
     stable = s3db[tablename]
 
     query = (itable.deleted != True) & \
-            (stable.id == id) & \
+            (stable.id == record_id) & \
             (itable.site_id == stable.site_id) & \
             (itable.quantity > 0)
 
@@ -6273,7 +6291,7 @@ def org_site_top_req_priority(row, tablename="org_facility"):
     if hasattr(row, tablename):
         row = row[tablename]
     try:
-        id = row.id
+        record_id = row.id
     except AttributeError:
         return None
 
@@ -6282,7 +6300,7 @@ def org_site_top_req_priority(row, tablename="org_facility"):
     stable = s3db[tablename]
 
     query = (rtable.deleted != True) & \
-            (stable.id == id) & \
+            (stable.id == record_id) & \
             (rtable.site_id == stable.site_id) & \
             (rtable.fulfil_status != REQ_STATUS_COMPLETE) & \
             (rtable.is_template == False)
@@ -6298,7 +6316,7 @@ def org_site_top_req_priority(row, tablename="org_facility"):
         return None
 
 # =============================================================================
-def org_rheader(r, tabs=[]):
+def org_rheader(r, tabs=None):
     """ Organisation/Office/Facility/Group page headers """
 
     if r.representation != "html":
@@ -6368,20 +6386,22 @@ def org_rheader(r, tabs=[]):
                         (T("Staff & Volunteers"), "human_resource"),
                         (T("Assets"), "asset"),
                         (T("Projects"), "project"),
-                        (T("User Roles"), "roles"),
                         #(T("Tasks"), "task"),
                         ]
+                append_tab = tabs.append
                 if settings.get_org_tags():
                     append_tab((T("Tags"), "tag"))
                 if settings.get_org_resources_tab():
-                    tabs.insert(-1, (T("Resources"), "resource"))
+                    append_tab((T("Resources"), "resource"))
                 if settings.get_org_needs_tab():
-                    tabs.insert(-1, (T("Needs"), "needs"))
+                    append_tab((T("Needs"), "needs"))
                 if settings.get_org_service_locations():
-                    tabs.insert(-1, (T("Service Locations"), "service_location"))
+                    append_tab((T("Service Locations"), "service_location"))
+                # Org Role Manager always last
+                append_tab((T("User Roles"), "roles"))
 
             if settings.get_L10n_translate_org_organisation():
-                    tabs.insert(1, (T("Local Names"), "name"))
+                tabs.insert(1, (T("Local Names"), "name"))
 
             # Use branches?
             if settings.get_org_branches() and not skip_branches:
@@ -6393,53 +6413,72 @@ def org_rheader(r, tabs=[]):
 
         rheader_tabs = s3_rheader_tabs(r, tabs)
 
-        # @ToDo: Update for Component
-        # if record.sector_id:
-        #    if settings.get_ui_label_cluster():
-        #        sector_label = T("Cluster(s)")
-        #    else:
-        #        sector_label = T("Sector(s)")
-        #    sectors = TR(TH("%s: " % sector_label),
-        #                 table.sector_id.represent(record.sector_id))
-        # else:
-        #    sectors = None
-
-        if record.website:
-            website = TR(TH("%s: " % table.website.label),
-                         A(record.website, _href=record.website))
-        else:
-            website = None
-
-        if record.root_organisation != record.id:
-            btable = s3db.org_organisation_branch
-            query = (btable.branch_id == record.id) & \
-                    (btable.organisation_id == table.id)
-            row = current.db(query).select(table.id,
-                                           table.name,
-                                           limitby=(0, 1)
-                                           ).first()
-            if row:
-                parent = TR(TH("%s: " % T("Branch of")),
-                            A(row.name, _href=URL(args=[row.id, "read"])),
-                            )
-            else:
-                parent = None
-        else:
-            parent = None
-
         rheader = DIV()
         logo = org_organisation_logo(record)
 
         record_data = TABLE(TR(TH("%s: " % table.name.label),
                                record.name,
                                ),
-                      )
-        for item in (parent, website): #, sectors):
-            if item is not None:
-                record_data.append(item)
+                            )
+
+        db = current.db
+        record_id = record.id
+
+        if record.acronym:
+            record_data.append(TR(TH("%s: " % table.acronym.label),
+                                  record.acronym))
+
+        if record.root_organisation != record_id:
+            btable = s3db.org_organisation_branch
+            query = (btable.branch_id == record.id) & \
+                    (btable.organisation_id == table.id)
+            row = db(query).select(table.id,
+                                   table.name,
+                                   limitby=(0, 1)
+                                   ).first()
+            if row:
+                record_data.append(TR(TH("%s: " % T("Branch of")),
+                                      A(row.name, _href=URL(args=[row.id, "read"])),
+                                      ))
+
+        if settings.get_org_organisation_type_rheader():
+            ltable = s3db.org_organisation_organisation_type
+            query = (ltable.organisation_id == record_id) & \
+                    (ltable.deleted == False)
+            rows = db(query).select(ltable.organisation_type_id)
+            if rows:
+                if settings.get_org_organisation_types_multiple():
+                    label = T("Types")
+                else:
+                    label = T("Type")
+                record_data.append(TR(TH("%s: " % label),
+                                      ltable.organisation_type_id.represent.multiple([row.organisation_type_id for row in rows])))
+
+        if settings.get_org_sector_rheader():
+            ltable = s3db.org_sector_organisation
+            query = (ltable.organisation_id == record_id) & \
+                    (ltable.deleted == False)
+            rows = db(query).select(ltable.sector_id)
+            if rows:
+                if settings.get_ui_label_cluster():
+                    label = T("Clusters")
+                else:
+                    label = T("Sectors")
+                record_data.append(TR(TH("%s: " % label),
+                                      ltable.sector_id.represent.multiple([row.sector_id for row in rows])))
+
+        if settings.get_org_country() and record.country:
+            record_data.append(TR(TH("%s: " % table.country.label),
+                                  table.country.represent(record.country)))
+
+        if record.website:
+            record_data.append(TR(TH("%s: " % table.website.label),
+                                  A(record.website, _href=record.website)))
 
         if logo:
-            rheader.append(TABLE(TR(TD(logo), TD(record_data))))
+            rheader.append(TABLE(TR(TD(logo),
+                                    TD(record_data),
+                                    )))
         else:
             rheader.append(record_data)
 
@@ -6467,7 +6506,7 @@ def org_rheader(r, tabs=[]):
         if settings.has_module("inv"):
             tabs = tabs + s3db.inv_tabs(r)
         if settings.get_org_needs_tab():
-            append_tab((T("Needs"), "site_needs"))
+            append_tab((T("Needs"), "needs"))
         elif settings.has_module("req"):
             tabs = tabs + s3db.req_tabs(r)
         if settings.has_module("asset"):
@@ -6493,9 +6532,14 @@ def org_rheader(r, tabs=[]):
                     return ", ".join([row.name for row in rows])
                 else:
                     return current.messages["NONE"]
-            rheader_fields = [["name", "organisation_id", "email"],
+            rheader_fields = [["name",
+                               "organisation_id",
+                               "email",
+                               ],
                               [(T("Facility Type"), facility_type_lookup),
-                               "location_id", "phone1"],
+                               "location_id",
+                               "phone1",
+                               ],
                               ]
 
         rheader_fields, rheader_tabs = S3ResourceHeader(rheader_fields,
@@ -6584,14 +6628,26 @@ def org_organisation_controller():
                            )
 
         elif r.interactive or r.representation == "aadata":
-            component = r.component
-            gis = current.gis
+
             otable = r.table
+
+            gis = current.gis
             otable.country.default = gis.get_default_country("code")
-            type_filter = r.get_vars.get("organisation_type.name", None)
+
+            f = r.function
+            if settings.get_org_regions() and f != "organisation":
+                # Non-default function name (e.g. project/partners)
+                # => use same function for options lookup after popup-create
+                popup_link = otable.region_id.comment
+                if popup_link and isinstance(popup_link, S3PopupLink):
+                    popup_link.vars["parent"] = f
 
             method = r.method
+            component = r.component
+
             use_branches = settings.get_org_branches()
+            type_filter = r.get_vars.get("organisation_type.name", None)
+
             if use_branches and not component and \
                not r.record and \
                r.method != "deduplicate" and \
@@ -6838,7 +6894,7 @@ def org_site_staff_config(r):
 
     # Filter out people which are already staff for this office
     # - this only works for an IS_ONE_OF dropdown
-    # - @ToDo: Pass a flag to pr_search_ac via S3AddPersonWidget2 to do the same thing
+    # - @ToDo: Pass a flag to pr_search_ac via S3AddPersonWidget to do the same thing
     #site_id = record.site_id
     #try:
     #    person_id_field = r.target()[2].person_id
@@ -6862,11 +6918,11 @@ def org_office_controller():
         multiple controllers for unified menus
     """
 
-    T = current.T
+    #T = current.T
     s3db = current.s3db
     request = current.request
     s3 = current.response.s3
-    settings = current.deployment_settings
+    #settings = current.deployment_settings
 
     # Get default organisation_id
     req_vars = request.vars
@@ -7033,11 +7089,11 @@ def org_facility_controller():
                     if method == "update" and \
                        r.representation == "popup" and \
                        get_vars.get("profile") == "org_organisation":
-                            # Coming from organisation profile
-                            # Don't allow change of organisation_id in this case
-                            field = table.organisation_id
-                            field.writable = False
-                            field.readable = False
+                        # Coming from organisation profile
+                        # Don't allow change of organisation_id in this case
+                        field = table.organisation_id
+                        field.writable = False
+                        field.readable = False
 
                 elif method == "create":
                     table = r.table
@@ -7224,7 +7280,6 @@ def org_facility_controller():
 # =============================================================================
 # Hierarchy Manipulation
 # =============================================================================
-#
 def org_update_affiliations(table, record):
     """
         Update OU affiliations related to this record
@@ -7243,7 +7298,7 @@ def org_update_affiliations(table, record):
         ltable = current.s3db.org_organisation_branch
         if not isinstance(record, Row):
             record = current.db(ltable.id == record).select(ltable.ALL,
-                                                            limitby=(0, 1)
+                                                            limitby=(0, 1),
                                                             ).first()
         if not record:
             return
@@ -7254,7 +7309,7 @@ def org_update_affiliations(table, record):
         mtable = current.s3db.org_group_membership
         if not isinstance(record, Row):
             record = current.db(mtable.id == record).select(mtable.ALL,
-                                                            limitby=(0, 1)
+                                                            limitby=(0, 1),
                                                             ).first()
         if not record:
             return
@@ -7274,6 +7329,21 @@ def org_update_affiliations(table, record):
                                               limitby=(0, 1)).first()
 
         org_site_update_affiliations(record)
+
+    elif rtype == "org_organisation_team":
+
+        if not isinstance(record, Row) or "group_id" not in record:
+            ltable = current.s3db.org_organisation_team
+            record = current.db(ltable.id == record).select(ltable.id,
+                                                            ltable.organisation_id,
+                                                            ltable.group_id,
+                                                            ltable.deleted,
+                                                            ltable.deleted_fk,
+                                                            limitby=(0, 1),
+                                                            ).first()
+        if not record:
+            return
+        org_team_update_affiliations(record)
 
 # =============================================================================
 def organisation_update_affiliations(record):
@@ -7420,7 +7490,6 @@ def org_site_update_affiliations(record):
 
     db = current.db
     s3db = current.s3db
-    stable = s3db.org_site
     otable = db.org_organisation
     ptable = s3db.pr_pentity
     rtable = db.pr_role
@@ -7455,6 +7524,78 @@ def org_site_update_affiliations(record):
         if o_pe_id and not seen:
             s3db.pr_add_affiliation(o_pe_id, s_pe_id, role=SITES,
                                     role_type=OU)
+
+# =============================================================================
+def org_team_update_affiliations(record):
+    """
+        Update affiliations for an organisation team
+
+        @param record: the org_organisation_team record
+    """
+
+    # Get the group_id of the team
+    if record.deleted:
+        group_id = None
+        if record.deleted_fk:
+            try:
+                fk = json.loads(record.deleted_fk)
+            except (TypeError, ValueError, KeyError):
+                pass
+            else:
+                group_id = fk.get("group_id")
+    else:
+        group_id = record.group_id
+    if not group_id:
+        # Nothing we can do
+        return
+
+    s3db = current.s3db
+
+    # Get the pe_id of the team
+    team_pe_id = s3db.pr_get_pe_id("pr_group", group_id)
+    if not team_pe_id:
+        # Nothing we can do
+        return
+
+    from pr import OU
+    TEAMS = "Groups" # Backwards-compatibility, but should be "Teams"
+
+    db = current.db
+
+    # Get current memberships (=organisation pe_ids)
+    ltable = s3db.org_organisation_team
+    otable = s3db.org_organisation
+    query = (ltable.group_id == group_id) & \
+            (ltable.deleted == False)
+    left = otable.on(ltable.organisation_id == otable.id)
+    rows = db(query).select(otable.pe_id, left=left)
+    current_memberships = set(row["pe_id"] for row in rows)
+
+    # Get current affiliations (=organisation pe_ids)
+    etable = s3db.pr_pentity
+    rtable = db.pr_role
+    atable = db.pr_affiliation
+    query = (atable.pe_id == team_pe_id) & \
+            (atable.deleted == False) & \
+            (rtable.id == atable.role_id) & \
+            (rtable.role == TEAMS) & \
+            (rtable.deleted == False) & \
+            (etable.pe_id == rtable.pe_id) & \
+            (etable.instance_type == "org_organisation")
+    rows = db(query).select(rtable.pe_id)
+    current_affiliations = set(row["pe_id"] for row in rows)
+
+    # Remove all affiliations which are not current memberships
+    obsolete = current_affiliations - current_memberships
+    remove_affiliation = s3db.pr_remove_affiliation
+    for org_pe_id in obsolete:
+        remove_affiliation(org_pe_id, team_pe_id, role=TEAMS)
+
+    # Add affiliations for all new memberships
+    new =  current_memberships - current_affiliations
+    add_affiliation = s3db.pr_add_affiliation
+    for org_pe_id in new:
+        add_affiliation(org_pe_id, team_pe_id, role=TEAMS, role_type=OU)
 
 # =============================================================================
 def org_update_root_organisation(organisation_id, root_org=None):
@@ -7707,7 +7848,7 @@ class org_OrganisationDuplicate(object):
                                   fk[1] == name
 
         all_items = item.job.items
-        for uid, link_item in all_items.items():
+        for link_item in all_items.values():
             if link_item.tablename == "org_organisation_branch":
                 references = link_item.references
                 parent = branch = None
@@ -7734,7 +7875,7 @@ class org_AssignMethod(S3Method):
         e.g. Organisation Group
     """
 
-    def __init__(self, component, types=None):
+    def __init__(self, component):
         """
             @param component: the Component in which to create records
         """
@@ -7749,18 +7890,14 @@ class org_AssignMethod(S3Method):
             @param attr: controller options for this request
         """
 
-        component = self.component
-        components = r.resource.components
-        for c in components:
-            if c == component:
-                component = components[c]
-                break
         try:
-            if component.link:
-                component = component.link
-        except:
+            component = r.resource.components[self.component]
+        except KeyError:
             current.log.error("Invalid Component!")
             raise
+
+        if component.link:
+            component = component.link
 
         tablename = component.tablename
 
@@ -7862,8 +7999,8 @@ class org_AssignMethod(S3Method):
                 limit = 4 * display_length
             else:
                 limit = None
-            filter, orderby, left = resource.datatable_filter(list_fields, get_vars)
-            resource.add_filter(filter)
+            dtfilter, orderby, left = resource.datatable_filter(list_fields, get_vars)
+            resource.add_filter(dtfilter)
             data = resource.select(list_fields,
                                    start=0,
                                    limit=limit,
@@ -8120,11 +8257,11 @@ class org_CapacityReport(S3Method):
                 indicator = row.indicator_id
                 rating = row.rating
                 # Update the Consolidated
-                consolidated[indicator][row.rating] += 1
+                consolidated[indicator][rating] += 1
                 # Lookup which org this data belongs to
                 o = latest_assessments[a]
                 # Populate the Individual
-                orgs[o][indicator] = row.rating
+                orgs[o][indicator] = rating
 
         return indicators, orgs, consolidated
 
@@ -8140,6 +8277,7 @@ class org_CapacityReport(S3Method):
         try:
             import xlwt
         except ImportError:
+            from s3.s3codecs import S3XLS
             if current.auth.permission.format in S3Request.INTERACTIVE_FORMATS:
                 current.session.error = S3XLS.ERROR.XLWT_ERROR
                 redirect(URL(extension=""))
@@ -8226,7 +8364,7 @@ class org_CapacityReport(S3Method):
         # Create the file
         try:
             from cStringIO import StringIO    # Faster, where available
-        except:
+        except ImportError:
             from StringIO import StringIO
 
         output = StringIO()
@@ -8303,7 +8441,7 @@ def org_logo_represent(org = None,
 
     if not logo and fallback_org:
         # Default to fallback org
-        logo = org_image_represent(org=fallback_org, width=width)
+        logo = org_logo_represent(org=fallback_org, width=width)
 
     if not logo:
         # Placeholder
@@ -8477,20 +8615,22 @@ def org_resource_list_layout(list_id, item_id, resource, rfields, record):
     permit = current.auth.s3_has_permission
     table = current.db.org_resource
     if permit("update", table, record_id=record_id):
-        vars = {"refresh": list_id,
-                "record": record_id,
-                }
+        link_vars = {"refresh": list_id,
+                     "record": record_id,
+                     }
         f = current.request.function
         if f == "organisation" and organisation_id:
-            vars["(organisation)"] = organisation_id
+            link_vars["(organisation)"] = organisation_id
         elif f == "location" and location_id:
-            vars["(location)"] = location_id
+            link_vars["(location)"] = location_id
         edit_btn = A(ICON("edit"),
-                     _href=URL(c="org", f="resource",
-                               args=[record_id, "update.popup"],
-                               vars=vars),
-                     _class="s3_modal",
-                     _title=current.response.s3.crud_strings.org_resource.title_update,
+                     _href = URL(c = "org",
+                                 f = "resource",
+                                 args = [record_id, "update.popup"],
+                                 vars = link_vars,
+                                 ),
+                     _class = "s3_modal",
+                     _title = current.response.s3.crud_strings.org_resource.title_update,
                      )
     else:
         edit_btn = ""

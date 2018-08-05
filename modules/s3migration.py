@@ -4,7 +4,7 @@
 
     @requires: U{B{I{gluon}} <http://web2py.com>}
 
-    @copyright: 2012-2017 (c) Sahana Software Foundation
+    @copyright: 2012-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -40,6 +40,7 @@ from uuid import uuid4
 from gluon import current, DAL, Field
 from gluon.cfs import getcfs
 from gluon.compileapp import build_environment,compile_application,remove_compiled_application,run_models_in
+from gluon.globals import Request, Response, Session
 from gluon.restricted import restricted
 from gluon.storage import Storage
 
@@ -77,6 +78,7 @@ class S3Migration(object):
                      )
         migrate.migrate()
         migrate.compile()
+        migrate.refresh_roles()
         migrate.post(moves=[],
                      news=[],
                      strbools=[],
@@ -85,7 +87,7 @@ class S3Migration(object):
 
         FYI: If you need to access a filename in eden/databases/ then here is how:
         import hashlib
-        (db_string, pool_size) = settings.get_database_string()
+        (db_type, db_string, pool_size) = settings.get_database_string()
         prefix = hashlib.md5(db_string).hexdigest()
         filename = "%s_%s.table" % (prefix, tablename)
 
@@ -105,20 +107,23 @@ class S3Migration(object):
         import s3cfg
         settings = s3cfg.S3Config()
 
-        # Pass into template
-        current.deployment_settings = settings
-
         # Read settings
-        request = current.request
-        model = "%s/models/000_config.py" % request.folder
+        folder = current.request.folder
+        model = "%s/models/000_config.py" % folder
         code = getcfs(model, model, None)
-        response = current.response
+        request = Request({})
+        request.controller = "dontrunany"
+        request.folder = folder
+        response = Response()
+        session = Session()
+        #session.connect(request, response)
 
         # Needed as some Templates look at this & we don't wish to crash:
         response.s3 = Storage()
+        response.s3.gis = Storage()
 
         # Global variables for 000_config.py
-        environment = build_environment(request, response, current.session)
+        environment = build_environment(request, response, session, store_current=False)
         environment["settings"] = settings
         # Some (older) 000_config.py also use "deployment_settings":
         environment["deployment_settings"] = settings
@@ -139,8 +144,8 @@ class S3Migration(object):
 
         self.environment = environment
 
-        self.db_engine = settings.get_database_type()
-        (db_string, pool_size) = settings.get_database_string()
+        (db_type, db_string, pool_size) = settings.get_database_string()
+        self.db_engine = db_type
 
         # Get a handle to the database
         self.db = DAL(db_string,
@@ -287,7 +292,7 @@ class S3Migration(object):
                         _skip.append(tablename)
                     except:
                         import sys
-                        print "Skipping %s: %s" % (tablename, sys.exc_info()[1])
+                        sys.stderr.write("Skipping %s: %s\n" % (tablename, sys.exc_info()[1]))
                 else:
                     try:
                         db_bak.define_table(tablename, db[tablename])
@@ -299,7 +304,7 @@ class S3Migration(object):
                         _skip.append(tablename)
                     except:
                         import sys
-                        print "Skipping %s: %s" % (tablename, sys.exc_info()[1])
+                        sys.stderr.write("Skipping %s: %s\n" % (tablename, sys.exc_info()[1]))
             skip = _skip
 
         # Which tables do we need to backup?
@@ -431,10 +436,13 @@ class S3Migration(object):
         settings = current.deployment_settings
         s3 = current.response.s3
         s3.views = views = {}
-        s3.theme = theme = settings.get_theme()
+
+        theme = settings.get_theme()
         if theme != "default":
+
             folder = request.folder
-            location = settings.get_template_location()
+            layouts = s3.theme_layouts
+
             exists = os_path.exists
             for view in ["create.html",
                          "dashboard.html",
@@ -454,8 +462,8 @@ class S3Migration(object):
                          #"timeplot.html",
                          "update.html",
                          ]:
-                if exists(join(folder, location, "templates", theme, "views", "_%s" % view)):
-                    views[view] = "../%s/templates/%s/views/_%s" % (location, theme, view)
+                if exists(join(folder, "modules", "templates", layouts, "views", "_%s" % view)):
+                    views[view] = "../modules/templates/%s/views/_%s" % (layouts, view)
 
         def apath(path="", r=None):
             """
@@ -729,8 +737,7 @@ class S3Migration(object):
             db.executesql(sql)
         except:
             import sys
-            e = sys.exc_info()[1]
-            print >> sys.stderr, e
+            sys.stderr.write("%s\n" % sys.exc_info()[1])
 
         # Modify the .table file
         table = db[tablename]
@@ -776,8 +783,7 @@ class S3Migration(object):
             db.executesql(sql)
         except:
             import sys
-            e = sys.exc_info()[1]
-            print >> sys.stderr, e
+            sys.stderr.write("%s\n" % sys.exc_info()[1])
 
         # Modify the .table file
         table = db[tablename]
@@ -828,10 +834,9 @@ class S3Migration(object):
                 try:
                     executesql(sql)
                 except:
-                    print "Error: Cannot amend ondelete for Table %s and Field %s" % (tablename, fieldname)
                     import sys
-                    e = sys.exc_info()[1]
-                    print >> sys.stderr, e
+                    sys.stderr.write("Error: Cannot amend ondelete for Table %s and Field %s\n" % (tablename, fieldname))
+                    sys.stderr.write("%s\n" % sys.exc_info()[1])
 
             elif db_engine == "postgres":
                 # http://www.postgresql.org/docs/9.3/static/sql-altertable.html
@@ -841,10 +846,9 @@ class S3Migration(object):
                 try:
                     executesql(sql)
                 except:
-                    print "Error: Cannot remove old ondelete for Table %s and Field %s" % (tablename, fieldname)
                     import sys
-                    e = sys.exc_info()[1]
-                    print >> sys.stderr, e
+                    sys.stderr.write("Error: Cannot remove old ondelete for Table %s and Field %s\n" % (tablename, fieldname))
+                    sys.stderr.write("%s\n" % sys.exc_info()[1])
 
                 sql = "ALTER TABLE %(tablename)s ADD CONSTRAINT %(tablename)s_%(fieldname)s_fkey FOREIGN KEY (%(fieldname)s) REFERENCES %(reftable)s(id) ON DELETE %(ondelete)s;" % \
                     dict(tablename=tablename, fieldname=fieldname, reftable=reftable, ondelete=ondelete)
@@ -852,10 +856,9 @@ class S3Migration(object):
                 try:
                     executesql(sql)
                 except:
-                    print "Error: Cannot add new ondelete for Table %s and Field %s" % (tablename, fieldname)
                     import sys
-                    e = sys.exc_info()[1]
-                    print >> sys.stderr, e
+                    sys.stderr.write("Error: Cannot add new ondelete for Table %s and Field %s\n" % (tablename, fieldname))
+                    sys.stderr.write("%s\n" % sys.exc_info()[1])
 
             else:
                 raise NotImplementedError
@@ -901,10 +904,9 @@ class S3Migration(object):
             try:
                 executesql(sql)
             except:
-                print "Error: Table %s with FK %s" % (tablename, fk)
                 import sys
-                e = sys.exc_info()[1]
-                print >> sys.stderr, e
+                sys.stderr.write("Error: Table %s with FK %s\n" % (tablename, fk))
+                sys.stderr.write("%s\n" % sys.exc_info()[1])
 
     # -------------------------------------------------------------------------
     def remove_notnull(self, tablename, fieldname):
@@ -933,8 +935,7 @@ class S3Migration(object):
             db.executesql(sql)
         except:
             import sys
-            e = sys.exc_info()[1]
-            print >> sys.stderr, e
+            sys.stderr.write("%s\n" % sys.exc_info()[1])
 
         # Modify the .table file
         table = db[tablename]
@@ -978,8 +979,7 @@ class S3Migration(object):
             db.executesql(sql)
         except:
             import sys
-            e = sys.exc_info()[1]
-            print >> sys.stderr, e
+            sys.stderr.write("%s\n" % sys.exc_info()[1])
 
         # Modify the .table file
         table = db[tablename]
@@ -1065,7 +1065,8 @@ class S3Migration(object):
                                                     tablename_new)
             self.db.executesql(sql)
         except Exception, e:
-            print e
+            import sys
+            sys.stderr.write("%s\n" % e)
 
     # -------------------------------------------------------------------------
     def list_field_to_reference(self,

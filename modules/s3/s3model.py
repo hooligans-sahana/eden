@@ -2,7 +2,7 @@
 
 """ S3 Data Model Extensions
 
-    @copyright: 2009-2017 (c) Sahana Software Foundation
+    @copyright: 2009-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -33,21 +33,31 @@ __all__ = ("S3Model",
 
 from collections import OrderedDict
 
-from gluon import *
-# Here are dependencies listed for reference:
-#from gluon import current
-#from gluon.dal import Field
-#from gluon.validators import IS_EMPTY_OR, IS_IN_SET, IS_NOT_EMPTY
+from gluon import current, IS_EMPTY_OR, IS_FLOAT_IN_RANGE, IS_INT_IN_RANGE, \
+                  IS_IN_SET, IS_NOT_EMPTY, SQLFORM, TAG
 from gluon.storage import Storage
 from gluon.tools import callback
 
-from s3dal import Table, Field
+from s3dal import Table, Field, original_tablename
 from s3navigation import S3ScriptItem
 from s3resource import S3Resource
 from s3validators import IS_ONE_OF
+from s3widgets import s3_comments_widget, s3_richtext_widget
 
 DYNAMIC_PREFIX = "s3dt"
 DEFAULT = lambda: None
+
+# Table options that are always JSON-serializable objects,
+# and can thus be passed as-is from dynamic model "settings"
+# to s3db.configure (& thence to mobile table.settings)
+SERIALIZABLE_OPTS = ("autosync",
+                     "autototals",
+                     "card",
+                     "grids",
+                     "insertable",
+                     "show_hidden",
+                     "subheadings",
+                     )
 
 ogetattr = object.__getattribute__
 
@@ -67,15 +77,16 @@ class S3Model(object):
         self.cache = (current.cache.ram, 60)
 
         self.context = None
-        self.classes = Storage()
+        self.classes = {}
 
         # Initialize current.model
         if not hasattr(current, "model"):
-            current.model = Storage(config = Storage(),
-                                    components = Storage(),
-                                    methods = Storage(),
-                                    cmethods = Storage(),
-                                    hierarchies = Storage())
+            current.model = {"config": {},
+                             "components": {},
+                             "methods": {},
+                             "cmethods": {},
+                             "hierarchies": {},
+                             }
 
         response = current.response
         if "s3" not in response:
@@ -95,17 +106,31 @@ class S3Model(object):
             if self.__loaded():
                 return
             self.__lock()
+            try:
+                env = self.mandatory()
+            except Exception:
+                self.__unlock()
+                raise
+            else:
+                if isinstance(env, dict):
+                    response.s3.update(env)
             if module in mandatory_models or \
                current.deployment_settings.has_module(module):
-                env = self.model()
+                try:
+                    env = self.model()
+                except Exception:
+                    self.__unlock()
+                    raise
             else:
-                env = self.defaults()
-            if isinstance(env, (Storage, dict)):
+                try:
+                    env = self.defaults()
+                except Exception:
+                    self.__unlock()
+                    raise
+            if isinstance(env, dict):
                 response.s3.update(env)
             self.__loaded(True)
             self.__unlock()
-
-        return
 
     # -------------------------------------------------------------------------
     def __loaded(self, loaded=None):
@@ -161,6 +186,14 @@ class S3Model(object):
         return self.__getattr__(str(key))
 
     # -------------------------------------------------------------------------
+    def mandatory(self):
+        """
+            Mandatory objects defined by this model, regardless whether
+            enabled or disabled
+        """
+        return None
+
+    # -------------------------------------------------------------------------
     def model(self):
         """
             Defines all tables in this model, to be implemented by
@@ -199,46 +232,54 @@ class S3Model(object):
                 return models.__dict__[prefix].__dict__[name]
 
         db = current.db
-        found = None
-        # import ipdb; ipdb.set_trace()
+
+        # Table already defined?
         if hasattr(db, tablename):
             return ogetattr(db, tablename)
         elif ogetattr(db, "_lazy_tables") and \
              tablename in ogetattr(db, "_LAZY_TABLES"):
             return ogetattr(db, tablename)
-        else:
-            prefix, name = tablename.split("_", 1)
-            if prefix == DYNAMIC_PREFIX:
-                try:
-                    found = S3DynamicModel(tablename).table
-                except AttributeError:
-                    pass
-            elif hasattr(models, prefix):
-                module = models.__dict__[prefix]
-                loaded = False
+
+        found = None
+
+        prefix, name = tablename.split("_", 1)
+        if prefix == DYNAMIC_PREFIX:
+            try:
+                found = S3DynamicModel(tablename).table
+            except AttributeError:
+                pass
+
+        elif hasattr(models, prefix):
+            module = models.__dict__[prefix]
+
+            names = module.__all__
+            s3models = module.__dict__
+
+            if not db_only and tablename in names:
+                # A name defined at module level (e.g. a class)
+                s3db.classes[tablename] = (prefix, tablename)
+                found = s3models[tablename]
+            else:
+                # A name defined in an S3Model
                 generic = []
-                for n in module.__all__:
-                    model = module.__dict__[n]
+                loaded = False
+                for n in names:
+                    model = s3models[n]
                     if hasattr(model, "_s3model"):
-                        if loaded:
-                            continue
                         if hasattr(model, "names"):
                             if tablename in model.names:
                                 model(prefix)
                                 loaded = True
-                            else:
-                                continue
+                                break
                         else:
                             generic.append(n)
-                    else:
-                        if n == tablename:
-                            s3db.classes[tablename] = (prefix, n)
-                            found = model
-                            loaded = True
                 if not loaded:
-                    [module.__dict__[n](prefix) for n in generic]
+                    for n in generic:
+                        s3models[n](prefix)
+
         if found:
             return found
+
         if not db_only and tablename in s3:
             return s3[tablename]
         elif hasattr(db, tablename):
@@ -364,8 +405,8 @@ class S3Model(object):
         s3.all_models_loaded = True
 
     # -------------------------------------------------------------------------
-    @classmethod
-    def define_table(cls, tablename, *fields, **args):
+    @staticmethod
+    def define_table(tablename, *fields, **args):
         """
             Same as db.define_table except that it does not repeat
             a table definition if the table is already defined.
@@ -377,6 +418,34 @@ class S3Model(object):
         else:
             table = db.define_table(tablename, *fields, **args)
         return table
+
+    # -------------------------------------------------------------------------
+    @staticmethod
+    def get_aliased(table, alias):
+        """
+            Helper method to get a Table instance with alias; prevents
+            re-instantiation of an already existing alias for the same
+            table (which can otherwise lead to name collisions in PyDAL).
+
+            @param table: the original table
+            @param alias: the alias
+
+            @return: the aliased Table instance
+        """
+
+        db = current.db
+
+        if hasattr(db, alias):
+            aliased = ogetattr(db, alias)
+            if original_tablename(aliased) == original_tablename(table):
+                return aliased
+
+        aliased = table.with_alias(alias)
+        if aliased._id.table != aliased:
+            # Older PyDAL not setting _id attribute correctly
+            aliased._id = aliased[table._id.name]
+
+        return aliased
 
     # -------------------------------------------------------------------------
     # Resource configuration
@@ -400,11 +469,11 @@ class S3Model(object):
             @param attr: dict of attributes to update
         """
 
-        config = current.model.config
+        config = current.model["config"]
 
         tn = tablename._tablename if type(tablename) is Table else tablename
         if tn not in config:
-            config[tn] = Storage()
+            config[tn] = {}
         config[tn].update(attr)
         return
 
@@ -418,7 +487,7 @@ class S3Model(object):
             @param key: the key (name) of the attribute
         """
 
-        config = current.model.config
+        config = current.model["config"]
 
         tn = tablename._tablename if type(tablename) is Table else tablename
         if tn in config:
@@ -436,7 +505,7 @@ class S3Model(object):
             @param keys: keys of attributes to remove (maybe multiple)
         """
 
-        config = current.model.config
+        config = current.model["config"]
 
         tn = tablename._tablename if type(tablename) is Table else tablename
         if tn in config:
@@ -496,7 +565,7 @@ class S3Model(object):
                 if current_cb:
                     callbacks[m] = extend(current_cb, cb)
         else:
-            current_cb = callbacks[m]
+            current_cb = callbacks[method]
             if current_cb:
                 callbacks[method] = extend(current_cb, cb)
             else:
@@ -535,11 +604,11 @@ class S3Model(object):
 
         if str(field.type) == "integer":
 
-            config = current.model.config
+            config = current.model["config"]
             tablename, fieldname = str(field).split(".")
 
             # 1st try this table's references
-            this_config = config[tablename]
+            this_config = config.get(tablename)
             if this_config:
                 references = this_config.get("references")
                 if references is not None and fieldname in references:
@@ -614,17 +683,17 @@ class S3Model(object):
             @param links: component link configurations
         """
 
-        components = current.model.components
+        components = current.model["components"]
         load_all_models = current.response.s3.load_all_models
 
         master = master._tablename if type(master) is Table else master
 
         hooks = components.get(master)
         if hooks is None:
-            hooks = Storage()
+            hooks = {}
         for tablename, ll in links.items():
 
-            prefix, name = tablename.split("_", 1)
+            name = tablename.split("_", 1)[1]
             if not isinstance(ll, (tuple, list)):
                 ll = [ll]
 
@@ -644,6 +713,10 @@ class S3Model(object):
                     defaults = None
                     multiple = True
                     filterby = None
+                    # @ToDo: use these as fallback for RHeader Tabs on Web App
+                    #        (see S3ComponentTab.__init__)
+                    label = None
+                    plural = None
 
                 elif isinstance(link, dict):
                     alias = link.get("name", name)
@@ -698,22 +771,26 @@ class S3Model(object):
                     defaults = link.get("defaults")
                     multiple = link.get("multiple", True)
                     filterby = link.get("filterby")
+                    label = link.get("label")
+                    plural = link.get("plural")
 
                 else:
                     continue
 
-                component = Storage(tablename=tablename,
-                                    pkey=pkey,
-                                    fkey=fkey,
-                                    linktable=linktable,
-                                    lkey=lkey,
-                                    rkey=rkey,
-                                    actuate=actuate,
-                                    autodelete=autodelete,
-                                    autocomplete=autocomplete,
-                                    defaults=defaults,
-                                    multiple=multiple,
-                                    filterby=filterby,
+                component = Storage(tablename = tablename,
+                                    pkey = pkey,
+                                    fkey = fkey,
+                                    linktable = linktable,
+                                    lkey = lkey,
+                                    rkey = rkey,
+                                    actuate = actuate,
+                                    autodelete = autodelete,
+                                    autocomplete = autocomplete,
+                                    defaults = defaults,
+                                    multiple = multiple,
+                                    filterby = filterby,
+                                    label = label,
+                                    plural = plural,
                                     )
                 hooks[alias] = component
 
@@ -801,19 +878,16 @@ class S3Model(object):
 
     # -------------------------------------------------------------------------
     @classmethod
-    def get_component(cls, table, name):
+    def get_component(cls, table, alias):
         """
-            Finds a component definition.
+            Get a component description for a component alias
 
-            @param table: the primary table or table name
-            @param name: the component name (without prefix)
+            @param table: the master table
+            @param alias: the component alias
+
+            @returns: the component description (Storage)
         """
-
-        components = cls.get_components(table, names=name)
-        if name in components:
-            return components[name]
-        else:
-            return None
+        return cls.parse_hook(table, alias)
 
     # -------------------------------------------------------------------------
     @classmethod
@@ -824,37 +898,156 @@ class S3Model(object):
             @param table: the table or table name
             @param names: a list of components names to limit the search to,
                           None for all available components
+
+            @returns: the component descriptions (Storage {alias: description})
         """
 
-        components = current.model.components
+        table, hooks = cls.get_hooks(table, names=names)
+
+        # Build component-objects for each hook
+        components = Storage()
+        if table and hooks:
+            for alias in hooks:
+                component = cls.parse_hook(table, alias, hook=hooks[alias])
+                if component:
+                    components[alias] = component
+
+        return components
+
+    # -------------------------------------------------------------------------
+    @classmethod
+    def parse_hook(cls, table, alias, hook=None):
+        """
+            Parse a component configuration, loading all necessary table
+            models and applying defaults
+
+            @param table: the master table
+            @param alias: the component alias
+            @param hook: the component configuration (if already known)
+
+            @returns: the component description (Storage {key: value})
+        """
+
+        load = cls.table
+
+        if hook is None:
+            table, hooks = cls.get_hooks(table, names=[alias])
+            if hooks and alias in hooks:
+                hook = hooks[alias]
+            else:
+                return None
+
+        tn = hook.tablename
+        lt = hook.linktable
+
+        ctable = load(tn)
+        if ctable is None:
+            return None
+
+        if lt:
+            ltable = load(lt)
+            if ltable is None:
+                return None
+        else:
+            ltable = None
+
+        prefix, name = tn.split("_", 1)
+        component = Storage(defaults=hook.defaults,
+                            multiple=hook.multiple,
+                            tablename=tn,
+                            table=ctable,
+                            prefix=prefix,
+                            name=name,
+                            alias=alias,
+                            label=hook.label,
+                            plural=hook.plural,
+                            )
+
+        if hook.supertable is not None:
+            joinby = hook.supertable._id.name
+        else:
+            joinby = hook.fkey
+
+        if hook.pkey is None:
+            if hook.supertable is not None:
+                component.pkey = joinby
+            else:
+                component.pkey = table._id.name
+        else:
+            component.pkey = hook.pkey
+
+        if ltable is not None:
+
+            if hook.actuate:
+                component.actuate = hook.actuate
+            else:
+                component.actuate = "link"
+            component.linktable = ltable
+
+            if hook.fkey is None:
+                component.fkey = ctable._id.name
+            else:
+                component.fkey = hook.fkey
+
+            component.lkey = hook.lkey
+            component.rkey = hook.rkey
+            component.autocomplete = hook.autocomplete
+            component.autodelete = hook.autodelete
+
+        else:
+            component.linktable = None
+            component.fkey = hook.fkey
+            component.lkey = component.rkey = None
+            component.actuate = None
+            component.autocomplete = None
+            component.autodelete = None
+
+        if hook.filterby is not None:
+            component.filterby = hook.filterby
+
+        return component
+
+    # -------------------------------------------------------------------------
+    @classmethod
+    def get_hooks(cls, table, names=None):
+        """
+            Find applicable component configurations (hooks) for a table
+
+            @param table: the master table (or table name)
+            @param names: component aliases to find (default: all configured
+                          components for the master table)
+
+            @returns: tuple (table, {alias: hook, ...})
+        """
+
+        components = current.model["components"]
         load = cls.table
 
         # Get tablename and table
         if type(table) is Table:
-            tablename = table._tablename
+            tablename = original_tablename(table)
         else:
             tablename = table
             table = load(tablename)
             if table is None:
                 # Primary table not defined
-                return None
+                return None, None
 
         # Single alias?
-        single = False
         if isinstance(names, str):
-            single = True
             names = set([names])
         elif names is not None:
             names = set(names)
 
-        # Get hooks for direct components
         hooks = {}
-        get_hooks = cls.__get_hooks
+        get_hooks = cls.__filter_hooks
+        supertables = None
+
+        # Get hooks for direct components
         direct_components = components.get(tablename)
         if direct_components:
             names = get_hooks(hooks, direct_components, names=names)
 
-        supertables = None
         if names is None or names:
             # Add hooks for super-components
             supertables = cls.get_config(tablename, "super_entity")
@@ -898,137 +1091,11 @@ class S3Model(object):
                                           supertable = s,
                                           )
 
-        # Build component-objects for each hook
-        components = Storage()
-        for alias in hooks:
-
-            hook = hooks[alias]
-            tn = hook.tablename
-            lt = hook.linktable
-
-            ctable = load(tn)
-            if ctable is None:
-                continue
-
-            if lt:
-                ltable = load(lt)
-                if ltable is None:
-                    continue
-            else:
-                ltable = None
-
-            prefix, name = tn.split("_", 1)
-            component = Storage(defaults=hook.defaults,
-                                multiple=hook.multiple,
-                                tablename=tn,
-                                table=ctable,
-                                prefix=prefix,
-                                name=name,
-                                alias=alias,
-                                )
-
-            if hook.supertable is not None:
-                joinby = hook.supertable._id.name
-            else:
-                joinby = hook.fkey
-
-            if hook.pkey is None:
-                if hook.supertable is not None:
-                    component.pkey = joinby
-                else:
-                    component.pkey = table._id.name
-            else:
-                component.pkey = hook.pkey
-
-            if ltable is not None:
-
-                if hook.actuate:
-                    component.actuate = hook.actuate
-                else:
-                    component.actuate = "link"
-                component.linktable = ltable
-
-                if hook.fkey is None:
-                    component.fkey = ctable._id.name
-                else:
-                    component.fkey = hook.fkey
-
-                component.lkey = hook.lkey
-                component.rkey = hook.rkey
-                component.autocomplete = hook.autocomplete
-                component.autodelete = hook.autodelete
-
-            else:
-                component.linktable = None
-                component.fkey = hook.fkey
-                component.lkey = component.rkey = None
-                component.actuate = None
-                component.autocomplete = None
-                component.autodelete = None
-
-            if hook.filterby is not None:
-                component.filterby = hook.filterby
-
-            components[alias] = component
-
-        return components
+        return table, hooks
 
     # -------------------------------------------------------------------------
     @classmethod
-    def has_components(cls, table):
-        """
-            Checks whether there are components defined for a table
-
-            @param table: the table or table name
-        """
-
-        components = current.model.components
-        load = cls.table
-
-        # Get tablename and table
-        if type(table) is Table:
-            tablename = table._tablename
-        else:
-            tablename = table
-            table = load(tablename)
-            if table is None:
-                return False
-
-        # Attach dynamic components
-        if cls.get_config(tablename, "dynamic_components"):
-            cls.add_dynamic_components(tablename)
-
-        # Get table hooks
-        hooks = Storage()
-        get_hooks = cls.__get_hooks
-        h = components.get(tablename, None)
-        if h:
-            get_hooks(hooks, h)
-        if len(hooks):
-            return True
-
-        # Check for super-components
-        supertables = cls.get_config(tablename, "super_entity")
-        if supertables:
-            if not isinstance(supertables, (list, tuple)):
-                supertables = [supertables]
-            for s in supertables:
-                if isinstance(s, str):
-                    s = load(s)
-                if s is None:
-                    continue
-                h = components.get(s._tablename, None)
-                if h:
-                    get_hooks(hooks, h, supertable=s)
-            if len(hooks):
-                return True
-
-        # No components found
-        return False
-
-    # -------------------------------------------------------------------------
-    @classmethod
-    def __get_hooks(cls, components, hooks, names=None, supertable=None):
+    def __filter_hooks(cls, components, hooks, names=None, supertable=None):
         """
             DRY Helper method to filter component hooks
 
@@ -1053,6 +1120,60 @@ class S3Model(object):
 
     # -------------------------------------------------------------------------
     @classmethod
+    def has_components(cls, table):
+        """
+            Checks whether there are components defined for a table
+
+            @param table: the table or table name
+        """
+
+        components = current.model["components"]
+        load = cls.table
+
+        # Get tablename and table
+        if type(table) is Table:
+            tablename = table._tablename
+        else:
+            tablename = table
+            table = load(tablename)
+            if table is None:
+                return False
+
+        # Attach dynamic components
+        if cls.get_config(tablename, "dynamic_components"):
+            cls.add_dynamic_components(tablename)
+
+        # Get table hooks
+        hooks = {}
+        filter_hooks = cls.__filter_hooks
+        h = components.get(tablename, None)
+        if h:
+            filter_hooks(hooks, h)
+        if len(hooks):
+            return True
+
+        # Check for super-components
+        # FIXME: add dynamic components for super-table?
+        supertables = cls.get_config(tablename, "super_entity")
+        if supertables:
+            if not isinstance(supertables, (list, tuple)):
+                supertables = [supertables]
+            for s in supertables:
+                if isinstance(s, str):
+                    s = load(s)
+                if s is None:
+                    continue
+                h = components.get(s._tablename, None)
+                if h:
+                    filter_hooks(hooks, h, supertable=s)
+            if len(hooks):
+                return True
+
+        # No components found
+        return False
+
+    # -------------------------------------------------------------------------
+    @classmethod
     def get_alias(cls, tablename, link):
         """
             Find a component alias from the link table alias.
@@ -1061,7 +1182,7 @@ class S3Model(object):
             @param link: the alias of the link table
         """
 
-        components = current.model.components
+        components = current.model["components"]
 
         table = cls.table(tablename)
         if not table:
@@ -1078,7 +1199,7 @@ class S3Model(object):
                 for alias in hooks:
                     hook = hooks[alias]
                     if hook.linktable:
-                        prefix, name = hook.linktable.split("_", 1)
+                        name = hook.linktable.split("_", 1)[1]
                         if name == link:
                             return alias
             return None
@@ -1148,8 +1269,8 @@ class S3Model(object):
             @param action: function to invoke for this method
         """
 
-        methods = current.model.methods
-        cmethods = current.model.cmethods
+        methods = current.model["methods"]
+        cmethods = current.model["cmethods"]
 
         if not method:
             raise SyntaxError("No method specified")
@@ -1181,8 +1302,8 @@ class S3Model(object):
             @param method: name of the method
         """
 
-        methods = current.model.methods
-        cmethods = current.model.cmethods
+        methods = current.model["methods"]
+        cmethods = current.model["cmethods"]
 
         if not method:
             return None
@@ -1266,7 +1387,9 @@ class S3Model(object):
 
     # -------------------------------------------------------------------------
     @classmethod
-    def super_link(cls, name, supertable,
+    def super_link(cls,
+                   name,
+                   supertable,
                    label=None,
                    comment=None,
                    represent=None,
@@ -1286,7 +1409,8 @@ class S3Model(object):
                    default=DEFAULT,
                    ondelete="CASCADE",
                    readable=False,
-                   writable=False):
+                   writable=False,
+                   ):
         """
             Get a foreign key field for a super-entity
 
@@ -1299,43 +1423,53 @@ class S3Model(object):
 
         if isinstance(supertable, str):
             supertable = cls.table(supertable)
+
         if supertable is None:
             if name is not None:
-                return Field(name, "integer",
-                             readable=False,
-                             writable=False)
+                return Field(name,
+                             "integer",
+                             readable = False,
+                             writable = False,
+                             )
             else:
                 raise SyntaxError("Undefined super-entity")
-        else:
-            key = cls.super_key(supertable)
-            if name is not None and name != key:
-                raise SyntaxError("Primary key %s not found in %s" % \
-                                 (name, supertable._tablename))
-            requires = IS_ONE_OF(current.db,
-                                 "%s.%s" % (supertable._tablename, key),
-                                 represent,
-                                 orderby=orderby,
-                                 sort=sort,
-                                 groupby=groupby,
-                                 filterby=filterby,
-                                 filter_opts=filter_opts,
-                                 instance_types=instance_types,
-                                 realms=realms,
-                                 updateable=updateable,
-                                 not_filterby=not_filterby,
-                                 not_filter_opts=not_filter_opts,)
-            if empty:
-                requires = IS_EMPTY_OR(requires)
+
+        try:
+            key = supertable._id.name
+        except AttributeError:
+            raise SyntaxError("No id-type key found in %s" %
+                              supertable._tablename)
+
+        if name is not None and name != key:
+            raise SyntaxError("Primary key %s not found in %s" %
+                             (name, supertable._tablename))
+
+        requires = IS_ONE_OF(current.db,
+                             "%s.%s" % (supertable._tablename, key),
+                             represent,
+                             orderby = orderby,
+                             sort = sort,
+                             groupby = groupby,
+                             filterby = filterby,
+                             filter_opts = filter_opts,
+                             instance_types = instance_types,
+                             realms = realms,
+                             updateable = updateable,
+                             not_filterby = not_filterby,
+                             not_filter_opts = not_filter_opts,
+                             )
+        if empty:
+            requires = IS_EMPTY_OR(requires)
 
         # Add the script into the comment
         if script:
             if comment:
-                comment = TAG[""](comment,
-                                  S3ScriptItem(script=script))
+                comment = TAG[""](comment, S3ScriptItem(script=script))
             else:
                 comment = S3ScriptItem(script=script)
 
-        return Field(key, supertable,
+        return Field(key,
+                     supertable,
                      default = default,
                      requires = requires,
                      readable = readable,
@@ -1344,7 +1478,8 @@ class S3Model(object):
                      comment = comment,
                      represent = represent,
                      widget = widget,
-                     ondelete = ondelete)
+                     ondelete = ondelete,
+                     )
 
     # -------------------------------------------------------------------------
     @classmethod
@@ -1410,7 +1545,7 @@ class S3Model(object):
         if not _record:
             return False
 
-        super_keys = Storage()
+        super_keys = {}
         for tn, s, key, shared in updates:
             data = Storage([(fn, _record[shared[fn]]) for fn in shared])
             data.instance_type = tablename
@@ -1451,6 +1586,10 @@ class S3Model(object):
 
         # Update the super_keys in the record
         if super_keys:
+            # System update => don't update modified_by/on
+            if "modified_on" in table.fields:
+                super_keys["modified_by"] = table.modified_by
+                super_keys["modified_on"] = table.modified_on
             db(table.id == record_id).update(**super_keys)
 
         record.update(super_keys)
@@ -1689,6 +1828,7 @@ class S3DynamicModel(object):
                 # CRUD Form
                 crud_fields = settings.get("form")
                 if crud_fields:
+                    from s3forms import S3SQLCustomForm
                     try:
                         crud_form = S3SQLCustomForm(**crud_fields)
                     except:
@@ -1696,10 +1836,12 @@ class S3DynamicModel(object):
                     else:
                         config["crud_form"] = crud_form
 
-                # Sub-headings for CRUD Form
-                subheadings = settings.get("subheadings")
-                if subheadings:
-                    config["subheadings"] = subheadings
+                # JSON-serializable config options can be configured
+                # without pre-processing
+                for key in SERIALIZABLE_OPTS:
+                    setting = settings.get(key)
+                    if setting:
+                        config[key] = setting
 
                 # Apply config
                 if config:
@@ -1766,6 +1908,11 @@ class S3DynamicModel(object):
             if comments:
                 field.comment = T(comments)
 
+            # Field settings
+            settings = row.settings
+            if settings:
+                field.s3_settings = settings
+
         return field
 
     # -------------------------------------------------------------------------
@@ -1794,12 +1941,22 @@ class S3DynamicModel(object):
 
         if fieldtype in ("string", "text"):
             default = row.default_value
+            settings = row.settings or {}
+            widget = settings.get("widget")
+            if widget == "richtext":
+                widget = s3_richtext_widget
+            elif widget == "comments":
+                widget = s3_comments_widget
+            else:
+                widget = None
         else:
             default = None
+            widget = None
 
         field = Field(fieldname, fieldtype,
                       default = default,
                       requires = requires,
+                      widget = widget,
                       )
         return field
 
@@ -1988,7 +2145,6 @@ class S3DynamicModel(object):
         ktable = current.s3db.table(ktablename)
         if ktable:
             from s3fields import S3Represent
-            from s3validators import IS_ONE_OF
             if "name" in ktable.fields:
                 represent = S3Represent(lookup = ktablename,
                                         translate = True,

@@ -2,7 +2,7 @@
 
 """ S3 RESTful API
 
-    @copyright: 2009-2017 (c) Sahana Software Foundation
+    @copyright: 2009-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -39,21 +39,17 @@ import sys
 import types
 try:
     from cStringIO import StringIO    # Faster, where available
-except:
+except ImportError:
     from StringIO import StringIO
 
-from gluon import *
-# Here are dependencies listed for reference:
-#from gluon.globals import current
-#from gluon.html import URL
-#from gluon.http import HTTP, redirect
+from gluon import current, redirect, HTTP, URL
 from gluon.storage import Storage
 
 from s3datetime import s3_parse_datetime
 from s3resource import S3Resource
 from s3utils import s3_get_extension, s3_remove_last_record_id, s3_store_last_record_id
 
-REGEX_FILTER = re.compile(".+\..+|.*\(.+\).*")
+REGEX_FILTER = re.compile(r".+\..+|.*\(.+\).*")
 HTTP_METHODS = ("GET", "PUT", "POST", "DELETE")
 
 # =============================================================================
@@ -701,6 +697,8 @@ class S3Request(object):
             output["r"] = self
 
         # Redirection
+        # NB must re-read self.http/method here in case the have
+        # been changed during prep, method handling or postp
         if self.next is not None and \
            (self.http != "GET" or self.method == "clear"):
             if isinstance(output, dict):
@@ -871,6 +869,9 @@ class S3Request(object):
             if get_vars["show_urls"].lower() == "false":
                 current.xml.show_urls = False
 
+        # Mobile data export (default: False)
+        mdata = get_vars.get("mdata") == "1"
+
         # Maxbounds (default: False)
         maxbounds = False
         if "maxbounds" in get_vars:
@@ -960,19 +961,20 @@ class S3Request(object):
         if target == resource.tablename:
             # Master resource targetted
             target = None
-        output = resource.export_xml(start=start,
-                                     limit=limit,
-                                     msince=msince,
-                                     fields=fields,
-                                     dereference=True,
+        output = resource.export_xml(start = start,
+                                     limit = limit,
+                                     msince = msince,
+                                     fields = fields,
+                                     dereference = True,
                                      # maxdepth in args
-                                     references=references,
-                                     mcomponents=mcomponents,
-                                     rcomponents=rcomponents,
-                                     stylesheet=stylesheet,
-                                     as_json=as_json,
-                                     maxbounds=maxbounds,
-                                     target= target,
+                                     references = references,
+                                     mdata = mdata,
+                                     mcomponents = mcomponents,
+                                     rcomponents = rcomponents,
+                                     stylesheet = stylesheet,
+                                     as_json = as_json,
+                                     maxbounds = maxbounds,
+                                     target = target,
                                      **args)
         # Transformation error?
         if not output:
@@ -1538,14 +1540,14 @@ class S3Request(object):
         """
 
         stylesheet = None
-        format = self.representation
+        representation = self.representation
         if self.component:
             resourcename = self.component.name
         else:
             resourcename = self.name
 
         # Native S3XML?
-        if format == "xml":
+        if representation == "xml":
             return stylesheet
 
         # External stylesheet specified?
@@ -1568,7 +1570,7 @@ class S3Request(object):
         if method != "import":
             method = "export"
         filename = "%s.%s" % (method, extension)
-        stylesheet = os.path.join(folder, path, format, filename)
+        stylesheet = os.path.join(folder, path, representation, filename)
         if not os.path.exists(stylesheet):
             if not skip_error:
                 self.error(501, "%s: %s" % (current.ERROR.BAD_TEMPLATE,
@@ -1956,10 +1958,11 @@ class S3Method(object):
 
         settings = current.deployment_settings
         theme = settings.get_theme()
-        location = settings.get_template_location()
+        theme_layouts = settings.get_theme_layouts()
+
         if theme != "default":
             # See if there is a Custom View for this Theme
-            view = join(folder, location, "templates", theme, "views",
+            view = join(folder, "modules", "templates", theme_layouts, "views",
                         "%s_%s_%s" % (prefix, r.name, default))
             if exists(view):
                 # There is a view specific to this page
@@ -1968,22 +1971,22 @@ class S3Method(object):
                 return open(view, "rb")
             else:
                 if "/" in default:
-                    subfolder, _default = default.split("/", 1)
+                    subfolder, default_ = default.split("/", 1)
                 else:
                     subfolder = ""
-                    _default = default
-                if exists(join(folder, location, "templates", theme, "views",
-                               subfolder, "_%s" % _default)):
+                    default_ = default
+                if exists(join(folder, "modules", "templates", theme_layouts, "views",
+                               subfolder, "_%s" % default_)):
                     # There is a general view for this page type
                     # NB This should not include {{extend layout.html}}
                     if subfolder:
                         subfolder = "%s/" % subfolder
                     # Pass this mapping to the View
                     current.response.s3.views[default] = \
-                        "../%s/templates/%s/views/%s_%s" % (location,
-                                                            theme,
-                                                            subfolder,
-                                                            _default)
+                        "../modules/templates/%s/views/%s_%s" % (theme_layouts,
+                                                                 subfolder,
+                                                                 default_,
+                                                                 )
 
         if r.component:
             view = "%s_%s_%s" % (r.name, r.component_name, default)
@@ -2043,14 +2046,14 @@ class S3Method(object):
 
     # -------------------------------------------------------------------------
     @staticmethod
-    def _remove_filters(vars):
+    def _remove_filters(get_vars):
         """
             Remove all filters from URL vars
 
-            @param vars: the URL vars as dict
+            @param get_vars: the URL vars as dict
         """
 
-        return Storage((k, v) for k, v in vars.iteritems()
+        return Storage((k, v) for k, v in get_vars.iteritems()
                               if not REGEX_FILTER.match(k))
 
     # -------------------------------------------------------------------------
@@ -2090,12 +2093,14 @@ def s3_request(*args, **kwargs):
     try:
         r = S3Request(*args, **kwargs)
     except (AttributeError, SyntaxError):
-        error = 400
-    except KeyError:
-        error = 404
-    if error:
         if kwargs.get("catch_errors") is False:
             raise
+        error = 400
+    except KeyError:
+        if kwargs.get("catch_errors") is False:
+            raise
+        error = 404
+    if error:
         message = sys.exc_info()[1]
         if hasattr(message, "message"):
             message = message.message

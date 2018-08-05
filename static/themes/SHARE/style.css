@@ -1,0 +1,16 @@
+.req_status_committed {
+  color: lime;
+  font-weight: bold;
+}
+#filter-form.form-container form,
+#filter-form.form-container table {
+  background: #b3d9ff;
+}
+.top-bar-section label {
+  color: #fff;
+  font-size: 1.4em;
+  font-weight: bold;
+  line-height: 2.8125rem;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}

@@ -15,7 +15,7 @@ def index():
 # -----------------------------------------------------------------------------
 def index_alt():
     """
-        Module homepage for non-Admin users when no CMS content found
+        Default module homepage
     """
 
     # Just redirect to the person list
@@ -182,10 +182,11 @@ def person():
                 #     case perspective (dvr/case) for multiple cases
                 #     per person!
                 crud_form = S3SQLCustomForm(
-                                "dvr_case.reference",
+                                #"dvr_case.reference",
                                 "dvr_case.organisation_id",
                                 "dvr_case.date",
                                 "dvr_case.status_id",
+                                #"pe_label",
                                 "first_name",
                                 "middle_name",
                                 "last_name",
@@ -193,8 +194,7 @@ def person():
                                 "gender",
                                 S3SQLInlineComponent(
                                         "contact",
-                                        fields = [("", "value"),
-                                                  ],
+                                        fields = [("", "value")],
                                         filterby = {"field": "contact_method",
                                                     "options": "EMAIL",
                                                     },
@@ -204,8 +204,7 @@ def person():
                                         ),
                                 S3SQLInlineComponent(
                                         "contact",
-                                        fields = [("", "value"),
-                                                  ],
+                                        fields = [("", "value")],
                                         filterby = {"field": "contact_method",
                                                     "options": "SMS",
                                                     },
@@ -217,8 +216,7 @@ def person():
                                 S3SQLInlineComponent(
                                         "address",
                                         label = T("Current Address"),
-                                        fields = [("", "location_id"),
-                                                  ],
+                                        fields = [("", "location_id")],
                                         filterby = {"field": "type",
                                                     "options": "1",
                                                     },
@@ -237,7 +235,7 @@ def person():
                                   "last_name",
                                   #"email.value",
                                   #"phone.value",
-                                  "dvr_case.reference",
+                                  #"dvr_case.reference",
                                   ],
                                   label = T("Search"),
                                   comment = T("You can search by name, ID or case number"),
@@ -338,7 +336,7 @@ def person():
                     name = "number%s" % row.number
                     if row.section != section:
                         label = section = row.section
-                        #subheadings[T(section)] = "sub_%sdata" % name
+                        #subheadings["sub_%sdata" % name] = T(section)
                     else:
                         label = ""
                     cappend(S3SQLInlineComponent("data",
@@ -363,7 +361,8 @@ def person():
                                )
 
         # Module-specific list fields (must be outside of r.interactive)
-        list_fields = ["dvr_case.reference",
+        list_fields = [#"dvr_case.reference",
+                       #"pe_label",
                        "first_name",
                        "middle_name",
                        "last_name",
@@ -399,6 +398,109 @@ def person_search():
     s3.prep = prep
 
     return s3_rest_controller("pr", "person")
+
+# -----------------------------------------------------------------------------
+def document():
+
+    def prep(r):
+
+        table = r.table
+        resource = r.resource
+
+        get_vars = r.get_vars
+        if "viewing" in get_vars:
+            try:
+                vtablename, record_id = get_vars["viewing"].split(".")
+            except ValueError:
+                return False
+        else:
+            return False
+
+        ctable = s3db.dvr_case
+        auth = current.auth
+        has_permission = auth.s3_has_permission
+        if vtablename == "pr_person":
+            if not has_permission("read", "pr_person", record_id):
+                r.unauthorised()
+            include_activity_docs = settings.get_dvr_case_include_activity_docs()
+            query = auth.s3_accessible_query("read", ctable) & \
+                    (ctable.person_id == record_id) & \
+                    (ctable.deleted == False)
+
+        elif vtablename == "dvr_case":
+            include_activity_docs = False
+            query = auth.s3_accessible_query("read", ctable) & \
+                    (ctable.id == record_id) & \
+                    (ctable.deleted == False)
+        else:
+            # Unsupported
+            return False
+
+        # Get the case doc_id
+        case = db(query).select(ctable.doc_id,
+                                limitby = (0, 1),
+                                orderby = ~ctable.modified_on,
+                                ).first()
+        if case:
+            doc_ids = [case.doc_id]
+        else:
+            # No case found
+            r.error(404, "Case not found")
+
+        # Include case activities
+        field = r.table.doc_id
+        if include_activity_docs:
+
+            # Look up relevant case activities
+            atable = s3db.dvr_case_activity
+            query = auth.s3_accessible_query("read", atable) & \
+                    (atable.person_id == record_id) & \
+                    (atable.deleted == False)
+            rows = db(query).select(atable.doc_id,
+                                    orderby = ~atable.created_on,
+                                    )
+
+            # Append the doc_ids
+            for row in rows:
+                doc_ids.append(row.doc_id)
+
+            # Make doc_id readable and visible in table
+            field.represent = s3db.dvr_DocEntityRepresent()
+            field.label = T("Attachment of")
+            field.readable = True
+            s3db.configure("doc_document",
+                           list_fields = ["id",
+                                          (T("Attachment of"), "doc_id"),
+                                          "name",
+                                          "file",
+                                          "date",
+                                          "comments",
+                                          ],
+                           )
+
+        # Apply filter and defaults
+        if len(doc_ids) == 1:
+            # Single doc_id => set default, hide field
+            doc_id = doc_ids[0]
+            field.default = doc_id
+            r.resource.add_filter(FS("doc_id") == doc_id)
+        else:
+            # Multiple doc_ids => default to case, make selectable
+            field.default = doc_ids[0]
+            field.readable = field.writable = True
+            field.requires = IS_ONE_OF(db, "doc_entity.doc_id",
+                                       field.represent,
+                                       filterby = "doc_id",
+                                       filter_opts = doc_ids,
+                                       )
+            r.resource.add_filter(FS("doc_id").belongs(doc_ids))
+
+        return True
+    s3.prep = prep
+
+    return s3_rest_controller("doc", "document",
+                              rheader = s3db.dvr_rheader,
+                              )
 
 # -----------------------------------------------------------------------------
 def group_membership():
@@ -707,6 +809,12 @@ def referral_type():
 # =============================================================================
 # Responses
 #
+def response_theme():
+    """ Response Themes: RESTful CRUD Controller """
+
+    return s3_rest_controller()
+
+# -----------------------------------------------------------------------------
 def response_type():
     """ Response Types: RESTful CRUD Controller """
 
@@ -733,6 +841,11 @@ def response_action():
     def prep(r):
 
         resource = r.resource
+
+        if not r.record:
+            # Filter out response actions of archived cases
+            query = (FS("case_activity_id$person_id$dvr_case.archived") == False)
+            resource.add_filter(query)
 
         mine = r.get_vars.get("mine")
         if mine == "a":
@@ -1040,6 +1153,28 @@ def housing_type():
 # -----------------------------------------------------------------------------
 def income_source():
     """ Income Sources: RESTful CRUD Controller """
+
+    return s3_rest_controller()
+
+# =============================================================================
+# Legal Status
+#
+def residence_status_type():
+    """ Residence Status Types: RESTful CRUD controller """
+
+    return s3_rest_controller()
+
+# -----------------------------------------------------------------------------
+def residence_permit_type():
+    """ Residence Permit Types: RESTful CRUD controller """
+
+    return s3_rest_controller()
+
+# =============================================================================
+# Service Contacts
+#
+def service_contact_type():
+    """ Service Contact Types: RESTful CRUD controller """
 
     return s3_rest_controller()
 

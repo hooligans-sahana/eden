@@ -133,22 +133,71 @@ def incident():
                                    deletable = False,
                                    )
                     s3.crud.submit_button = T("Update")
+
+                elif cname == "sitrep":
+                    stable = s3db.event_sitrep
+                    stable.location_id.default = r.record.location_id
+                    stable.event_id.readable = stable.event_id.writable = False
+                    list_fields = s3db.get_config("event_sitrep", "list_fields")
+                    try:
+                        list_fields.remove("event_id")
+                    except ValueError:
+                        # Already removed
+                        pass
+
                 elif cname in ("asset", "human_resource", "organisation", "site"):
-                    s3.crud.submit_button = T("Assign")
+                    atable = s3db.table("budget_allocation")
+                    if atable:
+                        field = atable.budget_entity_id
+                        field.readable = field.writable = True
+
+                    #s3.crud.submit_button = T("Assign")
+                    #s3.crud.submit_button = T("Add")
                     s3.crud_labels["DELETE"] = T("Remove")
-                    # Default Event to that of the Incident
-                    f = s3db["event_%s" % cname].event_id
+
+                    # Default Event in the link to that of the Incident
+                    ltable = s3db.table("event_%s" % cname)
+                    if ltable:
+                        f = ltable.event_id
+                        f.default = r.record.event_id
+                        f.readable = f.writable = False
+                        if cname in ("asset", "human_resource"):
+                            # DateTime
+                            for f in (ltable.start_date, ltable.end_date):
+                                f.requires = IS_EMPTY_OR(IS_UTC_DATETIME())
+                                f.represent = lambda dt: S3DateTime.datetime_represent(dt, utc=True)
+                                f.widget = S3CalendarWidget(timepicker = True)
+
+                elif cname == "incident_asset":
+                    atable = s3db.table("budget_allocation")
+                    if atable:
+                        field = atable.budget_entity_id
+                        field.readable = field.writable = True
+
+                    #s3.crud.submit_button = T("Assign")
+                    #s3.crud.submit_button = T("Add")
+                    s3.crud_labels["DELETE"] = T("Remove")
+
+                    # Default Event in the link to that of the Incident
+                    ltable = s3db.table("event_asset")
+                    f = ltable.event_id
                     f.default = r.record.event_id
                     f.readable = f.writable = False
+                    # DateTime
+                    for f in (ltable.start_date, ltable.end_date):
+                        f.requires = IS_EMPTY_OR(IS_UTC_DATETIME())
+                        f.represent = lambda dt: S3DateTime.datetime_represent(dt, utc=True)
+                        f.widget = S3CalendarWidget(timepicker = True)
 
             elif r.method not in ("read", "update"):
                 # Create or ListCreate
-                r.table.closed.writable = r.table.closed.readable = False
+                table = r.table
+                table.closed.writable = table.closed.readable = False
+                table.end_date.writable = table.end_date.readable = False
 
             elif r.method == "update":
                 # Can't change details after event activation
                 table = r.table
-                table.scenario_id.writable = False
                 table.exercise.writable = False
                 table.exercise.comment = None
                 table.date.writable = False
@@ -197,8 +246,8 @@ def incident_report():
                                             )
                         form = Storage(vars=form_vars)
                         s3db.gis_location_onvalidation(form)
-                        id = s3db.gis_location.insert(**form_vars)
-                        field.default = id
+                        location_id = s3db.gis_location.insert(**form_vars)
+                        field.default = location_id
                 # WKT from Feature?
                 wkt = get_vars.get("wkt", None)
                 if wkt is not None:
@@ -206,13 +255,95 @@ def incident_report():
                                         )
                     form = Storage(vars = form_vars)
                     s3db.gis_location_onvalidation(form)
-                    id = s3db.gis_location.insert(**form_vars)
-                    field.default = id
+                    location_id = s3db.gis_location.insert(**form_vars)
+                    field.default = location_id
 
         return True
     s3.prep = prep
 
     return s3_rest_controller()
+
+# -----------------------------------------------------------------------------
+def scenario():
+    """
+        RESTful CRUD controller
+    """
+
+    return s3_rest_controller(rheader = s3db.event_rheader)
+
+# -----------------------------------------------------------------------------
+def sitrep():
+    """ RESTful CRUD controller """
+
+    if settings.get_event_sitrep_dynamic():
+        # All templates use the same component name for answers so need to add the right component manually
+        try:
+            sitrep_id = int(request.args(0))
+        except:
+            # Multiple record method
+            pass
+        else:
+            dtable = s3db.s3_table
+            stable = s3db.event_sitrep
+            ttable = s3db.dc_template
+            query = (stable.id == sitrep_id) & \
+                    (stable.template_id == ttable.id) & \
+                    (ttable.table_id == dtable.id)
+            template = db(query).select(dtable.name,
+                                        limitby=(0, 1),
+                                        ).first()
+            try:
+                dtablename = template.name
+            except:
+                # Old URL?
+                pass
+            else:
+                components = {dtablename: {"name": "answer",
+                                           "joinby": "sitrep_id",
+                                           "multiple": False,
+                                           }
+                              }
+                s3db.add_components("event_sitrep", **components)
+
+    # Pre-process
+    def prep(r):
+        if r.interactive:
+            if r.component_name == "answer":
+                # CRUD Strings
+                tablename = r.component.tablename
+                #s3.crud_strings[tablename] = Storage(
+                #    label_create = T("Create Responses"),
+                #    title_display = T("Response Details"),
+                #    title_list = T("Responses"),
+                #    title_update = T("Edit Response"),
+                #    label_list_button = T("List Responses"),
+                #    label_delete_button = T("Clear Response"),
+                #    msg_record_created = T("Response created"),
+                #    msg_record_modified = T("Response updated"),
+                #    msg_record_deleted = T("Response deleted"),
+                #    msg_list_empty = T("No Responses currently defined"),
+                #)
+
+                # Custom Form with Questions & Subheadings sorted correctly
+                s3db.dc_answer_form(r, tablename)
+
+        return True
+    s3.prep = prep
+
+    return s3_rest_controller(rheader = s3db.event_rheader)
+
+# -----------------------------------------------------------------------------
+def template():
+    """ RESTful CRUD controller """
+
+    from s3 import FS
+    s3.filter = FS("master") == "event_sitrep"
+
+    s3db.dc_template.master.default = "event_sitrep"
+
+    return s3_rest_controller("dc", "template",
+                              rheader = s3db.dc_rheader,
+                              )
 
 # -----------------------------------------------------------------------------
 def resource():
@@ -326,14 +457,14 @@ def organisation():
 def compose():
     """ Send message to people/teams """
 
-    vars = request.vars
+    req_vars = request.vars
 
-    if "hrm_id" in vars:
-        id = vars.hrm_id
+    if "hrm_id" in req_vars:
+        hrm_id = req_vars.hrm_id
         fieldname = "hrm_id"
         table = s3db.pr_person
         htable = s3db.hrm_human_resource
-        pe_id_query = (htable.id == id) & \
+        pe_id_query = (htable.id == hrm_id) & \
                       (htable.person_id == table.id)
         title = T("Send a message to this person")
     else:
@@ -341,7 +472,8 @@ def compose():
         redirect(URL(f="index"))
 
     pe = db(pe_id_query).select(table.pe_id,
-                                limitby=(0, 1)).first()
+                                limitby=(0, 1),
+                                ).first()
     if not pe:
         session.error = T("Record not found")
         redirect(URL(f="index"))
@@ -352,7 +484,8 @@ def compose():
     table = s3db.pr_contact
     contact = db(table.pe_id == pe_id).select(table.contact_method,
                                               orderby="priority",
-                                              limitby=(0, 1)).first()
+                                              limitby=(0, 1),
+                                              ).first()
     if contact:
         s3db.msg_outbox.contact_method.default = contact.contact_method
     else:
@@ -360,13 +493,13 @@ def compose():
         redirect(URL(f="index"))
 
     # URL to redirect to after message sent
-    url = URL(c=module,
-              f="compose",
-              vars={fieldname: id})
+    url = URL(c = module,
+              f = "compose",
+              vars = {fieldname: hrm_id},
+              )
 
     # Create the form
-    output = msg.compose(recipient = pe_id,
-                         url = url)
+    output = msg.compose(recipient=pe_id, url=url)
 
     output["title"] = title
     response.view = "msg/compose.html"

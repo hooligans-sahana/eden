@@ -2,7 +2,7 @@
 
 """ Sahana Eden Delphi Decision Maker Model
 
-    @copyright: 2009-2017 (c) Sahana Software Foundation
+    @copyright: 2009-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -227,7 +227,8 @@ class S3DelphiModel(S3Model):
                            represent = s3_yes_no_represent,
                            ),
                      *s3_meta_fields(),
-                     on_define = lambda table: [table.modified_on.set_attributes(label = T("Last Modification")),
+                     on_define = lambda table: [table.created_by.set_attributes(label = T("Created By")),
+                                                table.modified_on.set_attributes(label = T("Last Modification")),
                                                 ]
                      )
 
@@ -254,7 +255,7 @@ class S3DelphiModel(S3Model):
                                  "created_by",
                                  "modified_on",
                                  ],
-                  orderby = table.code,
+                  orderby = "delphi_problem.code",
                   )
 
         # Components

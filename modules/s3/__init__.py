@@ -11,7 +11,7 @@
 
     @requires: U{B{I{gluon}} <http://web2py.com>}
 
-    @copyright: 2009-2017 (c) Sahana Software Foundation
+    @copyright: 2009-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -137,5 +137,8 @@ from s3navigation import *
 # Mobile APIs
 from s3xforms import *
 from s3mobile import *
+
+# Anonymize
+from s3anonymize import *
 
 # END =========================================================================

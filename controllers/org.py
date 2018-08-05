@@ -77,6 +77,22 @@ def group_person_status():
 def region():
     """ RESTful CRUD controller """
 
+    def prep(r):
+        if r.representation == "popup":
+
+            if settings.get_org_regions_hierarchical():
+
+                table = r.table
+
+                # Zone is required when creating new regions from popup
+                field = table.parent
+                requires = field.requires
+                if isinstance(requires, IS_EMPTY_OR):
+                    field.requires = requires.other
+
+        return True
+    s3.prep = prep
+
     return s3_rest_controller()
 
 # -----------------------------------------------------------------------------
@@ -252,7 +268,7 @@ def capacity_assessment():
         name = "number%s" % row.number
         if row.section != section:
             label = section = row.section
-            #subheadings[T(section)] = "sub_%sdata" % name
+            #subheadings["sub_%sdata" % name] = T(section)
         else:
             label = ""
         cappend(S3SQLInlineComponent("data",
@@ -467,7 +483,7 @@ def incoming():
 # -----------------------------------------------------------------------------
 def facility_geojson():
     """
-        Create GeoJSON[P] of Facilities for use by a high-traffic website
+        Create a Static GeoJSON[P] of Facilities for use by a high-traffic website
         - controller just for testing
         - function normally run on a schedule
 

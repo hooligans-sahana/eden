@@ -39,6 +39,7 @@ s3.download_url = "%s/default/download" % s3.base_url
 #messages["BREADCRUMB"] = ">> "
 messages["UNKNOWN_OPT"] = "Unknown"
 messages["NONE"] = "-"
+messages["OBSOLETE"] = "Obsolete"
 messages["READ"] = settings.get_ui_label_read()
 messages["UPDATE"] = settings.get_ui_label_update()
 messages["DELETE"] = "Delete"
@@ -199,14 +200,16 @@ if settings.has_module("vol") and \
     _settings.register_next = URL(c="vol", f="person")
 
 # Languages available in User Profiles
-if len(s3.l10n_languages) > 1:
-    _settings.table_user.language.requires = IS_IN_SET(s3.l10n_languages,
-                                                       zero=None)
-else:
-    field = _settings.table_user.language
-    field.default = s3.l10n_languages.keys()[0]
-    field.readable = False
-    field.writable = False
+#if len(s3.l10n_languages) > 1:
+#    _settings.table_user.language.requires = s3base.IS_ISO639_2_LANGUAGE_CODE(sort = True,
+#                                                                              translate = True,
+#                                                                              zero = None,
+#                                                                              )
+#else:
+#    field = _settings.table_user.language
+#    field.default = s3.l10n_languages.keys()[0]
+#    field.readable = False
+#    field.writable = False
 
 _settings.lock_keys = True
 

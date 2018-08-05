@@ -221,8 +221,8 @@ def s3_rest_controller(prefix=None, resourcename=None, **attr):
     set_handler("map", s3base.S3Map)
     set_handler("mform", s3base.S3MobileCRUD, representation="json")
     set_handler("profile", s3base.S3Profile)
-    set_handler("report", s3base.S3Report)
-    set_handler("report", s3base.S3Report, transform=True)
+    set_handler("report", s3base.S3Report) # For HTML, JSON
+    set_handler("report", s3base.S3Report, transform=True) # For GeoJSON
     set_handler("search_ac", s3base.search_ac)
     set_handler("summary", s3base.S3Summary)
     set_handler("timeplot", s3base.S3TimePlot)
@@ -294,10 +294,10 @@ def s3_rest_controller(prefix=None, resourcename=None, **attr):
                s3_has_permission("create", tablename):
                 label = s3base.S3CRUD.crud_string(tablename,
                                                   "label_create")
-                hook = r.resource.components[name]
-                fkey = "%s.%s" % (name, hook.fkey)
+                component = r.resource.components[name]
+                fkey = "%s.%s" % (name, component.fkey)
                 get_vars_copy = get_vars.copy()
-                get_vars_copy.update({fkey: r.record[hook.fkey]})
+                get_vars_copy.update({fkey: r.record[component.fkey]})
                 url = URL(prefix, name, args=["create"], vars=get_vars_copy)
                 add_btn = A(label, _href=url, _class="action-btn")
                 output.update(add_btn=add_btn)

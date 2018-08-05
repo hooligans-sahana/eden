@@ -6,6 +6,7 @@
 # python web2py.py -S eden -M -R applications/eden/modules/unit_tests/s3/s3xml.py
 #
 import json
+import os
 import unittest
 
 from gluon import *
@@ -16,7 +17,7 @@ except:
 
 from lxml import etree
 
-from s3 import S3Hierarchy, s3_meta_fields, S3Represent, S3XMLFormat, IS_ONE_OF
+from s3 import S3Hierarchy, s3_meta_fields, S3Represent, S3RepresentLazy, S3XMLFormat, IS_ONE_OF
 
 from unit_tests import run_suite
 
@@ -912,6 +913,196 @@ class S3JSONParsingTests(unittest.TestCase):
         assertEqual(v, "2")
 
 # =============================================================================
+class LookupListRepresentTests(unittest.TestCase):
+
+    # -------------------------------------------------------------------------
+    def setUp(self):
+
+        # Insert test record
+        table = current.s3db.org_organisation
+        record_id = table.insert(name="ExampleOrg", acronym="EO")
+        self.assertTrue(record_id)
+        self.record_id = record_id
+
+    # -------------------------------------------------------------------------
+    def tearDown(self):
+
+        # Drop test record
+        table = current.s3db.org_organisation
+        success = current.db(table.id == self.record_id).delete()
+        self.assertEqual(success, 1)
+
+    # -------------------------------------------------------------------------
+    def testLookupListRepresentation(self):
+        """ Test llrepr attribute construction """
+
+        assertTrue = self.assertTrue
+        assertEqual = self.assertEqual
+
+        xml = current.xml
+        LLREPR = xml.ATTRIBUTE.llrepr
+
+        # Extract the record
+        table = current.s3db.org_organisation
+        row = current.db(table.id == self.record_id).select(table.id,
+                                                            table.uuid,
+                                                            limitby = (0, 1),
+                                                            ).first()
+
+        # Lookup List Representation Method
+        llrepr = S3Represent(lookup = "org_organisation",
+                             fields = ["name", "acronym"],
+                             labels = "%(name)s [%(acronym)s]",
+                             )
+        expected = "ExampleOrg [EO]"
+
+        # List of lazy representations
+        lazy = []
+
+        # Render the record
+        elem = xml.resource(None,
+                            table,
+                            row,
+                            fields = ["uuid"],
+                            lazy = lazy,
+                            llrepr = llrepr,
+                            )
+
+        # Inspect initial attributes
+        assertEqual(elem.get("uuid"), row.uuid)
+        assertEqual(elem.get(LLREPR), None)
+
+        # Element should not have any children
+        assertEqual(len(elem), 0)
+
+        # Lazy representation in lazy-array
+        assertEqual(len(lazy), 1)
+        lazy_repr = lazy[0]
+
+        # First argument is a S3RepresentLazy
+        lazy_llrepr = lazy_repr[0]
+        assertTrue(isinstance(lazy_llrepr, S3RepresentLazy))
+
+        # Render and verify the attribute
+        lazy_llrepr.render_node(lazy_repr[1],
+                                lazy_repr[2],
+                                lazy_repr[3],
+                                )
+        assertEqual(elem.get(LLREPR), expected)
+
+        # Verify non-lazy
+        elem = xml.resource(None,
+                            table,
+                            row,
+                            fields = ["uuid"],
+                            lazy = None,
+                            llrepr = llrepr,
+                            )
+
+        # Inspect initial attributes
+        assertEqual(elem.get("uuid"), row.uuid)
+        assertEqual(elem.get(LLREPR), expected)
+
+# =============================================================================
+class EntityResolverTests(unittest.TestCase):
+
+    # -------------------------------------------------------------------------
+    def setUp(self):
+
+        current.auth.override = True
+
+        # XML containing entity with forbidden file access
+        self.forbidden = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE test [ <!ENTITY test SYSTEM "/etc/passwd">]>
+<s3xml>
+    <resource name="org_organisation">
+        <data field="name">SecTestOrg</data>
+        <data field="comments">&test;</data>
+    </resource>
+</s3xml>"""
+
+        # Absolute path to file in local static-folder
+        path = os.path.abspath(os.path.join(current.request.folder,
+                                            "static",
+                                            "formats",
+                                            "xml",
+                                            "commons.xsl",
+                                            ))
+
+        # XML containing entity with permissible file access
+        self.abspath = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE test [ <!ENTITY test SYSTEM "%s">]>
+<s3xml>
+    <resource name="org_organisation">
+        <data field="name">SecTestOrg</data>
+        <data field="comments">&test;</data>
+    </resource>
+</s3xml>""" % path
+
+        # Relative path to file in local static-folder
+        path = os.path.join("applications",
+                            current.request.application,
+                            "static",
+                            "formats",
+                            "xml",
+                            "commons.xsl",
+                            )
+
+        # XML containing entity with permissible file access
+        self.relpath = """<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE test [ <!ENTITY test SYSTEM "%s">]>
+<s3xml>
+    <resource name="org_organisation">
+        <data field="name">SecTestOrg</data>
+        <data field="comments">&test;</data>
+    </resource>
+</s3xml>""" % path
+
+    # -------------------------------------------------------------------------
+    def tearDown(self):
+
+        current.auth.override = False
+
+    # -------------------------------------------------------------------------
+    def testForbiddenFileAccess(self):
+        """ Verify that forbidden file access leads to parser error """
+
+        xml = current.xml
+
+        tree = xml.parse(StringIO(self.forbidden))
+        self.assertEqual(tree, None)
+        self.assertNotEqual(xml.error, None)
+
+    # -------------------------------------------------------------------------
+    def testPermissibleAbsolutePathAccess(self):
+        """ Verify that permissible file access does not lead to parser error """
+
+        xml = current.xml
+
+        tree = xml.parse(StringIO(self.abspath))
+        self.assertNotEqual(tree, None)
+        self.assertEqual(xml.error, None)
+
+    # -------------------------------------------------------------------------
+    def testPermissibleRelativePathAccess(self):
+        """ Verify that permissible file access does not lead to parser error """
+
+        xml = current.xml
+
+        tree = xml.parse(StringIO(self.relpath))
+        self.assertNotEqual(tree, None)
+        self.assertEqual(xml.error, None)
+
+    # -------------------------------------------------------------------------
+    def testImportWithForbiddenFileAccess(self):
+        """ Verify parser error breaks imports with forbidden file access """
+
+        resource = current.s3db.resource("org_organisation")
+
+        with self.assertRaises(SyntaxError):
+            resource.import_xml(StringIO(self.forbidden))
+
+# =============================================================================
 if __name__ == "__main__":
 
     run_suite(
@@ -920,6 +1111,8 @@ if __name__ == "__main__":
         XMLFormatTests,
         GetFieldOptionsTests,
         S3JSONParsingTests,
+        LookupListRepresentTests,
+        EntityResolverTests,
     )
 
 # END ========================================================================

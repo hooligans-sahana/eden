@@ -19,12 +19,14 @@ def config(settings):
 
     # Theme (folder to use for views/layout.html)
     settings.base.theme = "SAMBRO.MV"
+    settings.base.theme_base = "default"
 
     # L10n (Localization) settings
     languages = OrderedDict([
-        ("dv", "ދިވެހި"), # Divehi (Maldives)
+        ("dv", "Divehi"), # Maldives
         ("en-US", "English"),
     ])
+    settings.cap.languages = languages
     settings.L10n.languages = languages
 
     # Alert Hub Title

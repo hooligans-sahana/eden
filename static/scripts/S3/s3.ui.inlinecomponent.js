@@ -1,7 +1,7 @@
 /**
  * jQuery UI InlineComponent Widget
  *
- * @copyright 2015-2017 (c) Sahana Software Foundation
+ * @copyright 2015-2018 (c) Sahana Software Foundation
  * @license MIT
  *
  * requires jQuery 1.9.1+
@@ -11,6 +11,7 @@
 (function($, undefined) {
 
     "use strict";
+
     var inlinecomponentID = 0;
 
     /**
@@ -41,8 +42,6 @@
          * Create the widget
          */
         _create: function() {
-
-            var el = $(this.element);
 
             this.id = inlinecomponentID;
             inlinecomponentID += 1;
@@ -88,8 +87,6 @@
          */
         refresh: function() {
 
-            var el = $(this.element);
-
             this._unbindEvents();
 
             this._openSingleRowSubforms();
@@ -100,7 +97,6 @@
 
             // Hide discard action in add-row unless explicitAdd
             if (!$(this.element).find('.inline-open-add').length) {
-                var test = $('#add-row-' + this.formname + ' .inline-dsc');
                 $('#add-row-' + this.formname + ' .inline-dsc').hide();
             }
 
@@ -121,8 +117,8 @@
 
             el.find('.inline-form.read-row.single').each(function() {
                 // Open edit-row by default
-                var names = $(this).attr('id').split('-');
-                var rowindex = names.pop(); // Will always be 0
+                var names = $(this).attr('id').split('-'),
+                    rowindex = names.pop(); // Will always be 0
                 self._editRow(rowindex);
             });
 
@@ -130,16 +126,19 @@
                 // Check add-row for defaults
                 var $row = $(this),
                     defaults = false;
+
                 $row.find('input[type!="hidden"], select, textarea').each(function() {
-                    var $this = $(this);
-                    if ($this.is(':visible') && $this.val() && $this.attr('type') != 'checkbox') {
+                    var $this = $(this),
+                        visible = $this.css('display') != 'none';
+                    if (visible && $this.val() && $this.attr('type') != 'checkbox') {
                         defaults = true;
                     }
                 });
+
                 if (defaults) {
                     // Enforce validation
                     self._markChanged($row);
-                    self._catchSubmit($row);
+                    self._catchSubmit();
                 }
             });
         },
@@ -156,7 +155,7 @@
             el.find('.inline-form.add-row.required').each(function() {
                 // Ensure these get validated whether or not they are changed
                 self._markChanged(this);
-                self._catchSubmit(this);
+                self._catchSubmit();
             });
         },
 
@@ -200,8 +199,8 @@
                 }
 
                 // Get the row
-                var rowID = 'read-row-' + formname + '-' + rowindex;
-                var row = $('#' + rowID);
+                var rowID = 'read-row-' + formname + '-' + rowindex,
+                    row = $('#' + rowID);
                 if (!row.length) {
                     // New row
                     row = $('<tr id="' + rowID + '" class="read-row">');
@@ -312,9 +311,9 @@
          */
         _deserialize: function() {
 
-            var input = this.input;
+            var input = this.input,
+                data = JSON.parse(input.val());
 
-            var data = JSON.parse(input.val());
             input.data('data', data);
 
             return data;
@@ -328,9 +327,9 @@
          */
         _serialize: function() {
 
-            var input = this.input;
+            var input = this.input,
+                json = JSON.stringify(input.data('data'));
 
-            var json = JSON.stringify(input.data('data'));
             input.val(json);
 
             return json;
@@ -357,7 +356,7 @@
 
             var addRow = $('#add-row-' + this.formname);
             addRow.find('input, select, textarea').prop('disabled', true);
-            addRow.find('.inline-add, .action-lnk').addClass('hide');
+            addRow.find('.inline-add, .action-lnk').hide();
         },
 
         /**
@@ -367,7 +366,7 @@
 
             var addRow = $('#add-row-' + this.formname);
             addRow.find('input, select, textarea').prop('disabled', false);
-            addRow.find('.inline-add, .action-lnk').removeClass('hide');
+            addRow.find('.inline-add, .action-lnk').removeClass('hide').show();
         },
 
         /**
@@ -388,17 +387,89 @@
         },
 
         /**
-         * Ensure that all inline forms are checked upon submission of
-         * main form
-         *
-         * @param {jQuery} element - the trigger element
+         * Ensure that all modifications in inline forms are
+         * validated before submission of the main form
          */
-        _catchSubmit: function(element) {
+        _catchSubmit: function() {
 
-            var ns = this.eventNamespace + this.id;
-            $(this.element).closest('form')
-                           .unbind(ns)
-                           .bind('submit' + ns, {widget: this}, this._submitAll);
+            var form = $(this.element).closest('form'),
+                ns = this.eventNamespace + this.id,
+                self = this;
+
+            // Get or create map of pending inline-form validations
+            var pendingValidations = form.data('pendingValidations');
+            if (!pendingValidations) {
+
+                // This is the first inline-form to require validation
+                pendingValidations = {};
+                form.data('pendingValidations', pendingValidations);
+
+                // Catch submit event
+                form.off('submit' + ns).on('submit' + ns, function(event) {
+
+
+                    // Stop immediate form submission
+                    event.preventDefault();
+
+                    // Trigger inline validation
+                    if (!self.submitInProgress) {
+
+                        // Disable submit button (prevent repeated clicks)
+                        form.find('input[type="submit"]').prop('disabled', true);
+
+                        // Remember that submit is in progress, so it's
+                        // not overtaken by a secondary submit-event from
+                        // another form widget
+                        self.submitInProgress = true;
+
+                        // Inform all inline forms that the form is about
+                        // to get submitted, so all pending rows must be
+                        // validated now
+                        form.trigger('validateInline');
+
+                        // Activate deferred submission
+                        self._deferredSubmit(form);
+                    }
+                });
+            }
+
+            if (!pendingValidations[ns]) {
+
+                // Report that this inline component needs validation
+                pendingValidations[ns] = $.Deferred();
+
+                // Add a handler for the validateInline event
+                form.off('validateInline' + ns).on('validateInline' + ns, function() {
+                    self._validateAll();
+                });
+            }
+        },
+
+        /**
+         * Deferred form submission
+         */
+        _deferredSubmit: function(form) {
+
+            // Collect all pending validation promises
+            var pendingValidations = form.data('pendingValidations'),
+                validations = [];
+            for (var key in pendingValidations) {
+                validations.push(pendingValidations[key]);
+            }
+
+            // Submit the form when all inline validations are done
+            var ns = this.eventNamespace + this.id,
+                self = this;
+            $.when.apply(null, validations).then(
+                function() {
+                    self.submitInProgress = false;
+                    form.off(ns).submit();
+                },
+                function() {
+                    // Validation failed => re-enable submit button
+                    self.submitInProgress = false;
+                    form.find('input[type="submit"]').prop('disabled', false);
+                });
         },
 
         // Data Processing and Validation -------------------------------------
@@ -415,11 +486,11 @@
         _collectData: function(data, rowindex, editIndex) {
 
             var formname = this.formname,
-                rows = data['data'],
+                formRow,
+                rows = data.data,
                 row = {},
                 original = null;
 
-            var formRow;
             if (rowindex == 'none') {
                 formRow = $('#add-row-' + formname);
             } else {
@@ -443,9 +514,9 @@
 
             // Retain the original record ID
             if (original !== null) {
-                var record_id = original['_id'];
+                var record_id = original._id;
                 if (typeof record_id != 'undefined') {
-                    row['_id'] = record_id;
+                    row._id = record_id;
                 }
             }
 
@@ -454,13 +525,13 @@
                 selector,
                 input,
                 value,
-                cssclass,
+                cssClass,
                 intvalue,
-                fields = data['fields'],
+                fields = data.fields,
                 upload_index;
             for (var i=0; i < fields.length; i++) {
 
-                fieldname = fields[i]['name'];
+                fieldname = fields[i].name;
                 selector = '#sub_' + formname + '_' + formname + '_i_' + fieldname + '_edit_' + rowindex;
 
                 input = $(selector);
@@ -471,8 +542,19 @@
 
                     if (input.attr('type') == 'file') {
 
+                        // When editing an existing row, upload-fields are empty
+                        // unless a new file is uploaded, so if it is not marked
+                        // to be deleted, then retain the original file name to
+                        // indicate no change (may not pass validation otherwise):
+                        if (!value && original) {
+                            var dflag = $('#' + formname + '_i_' + fieldname + '_edit_' + rowindex + '__delete');
+                            if (!dflag.prop("checked")) {
+                                value = original[fieldname].value;
+                            }
+                        }
+
                         // Clone the file input ready to accept new files
-                        var cloned = input.clone().insertAfter(input);
+                        input.clone().insertAfter(input);
 
                         // Can the sub-form have multiple rows?
                         // => check if Add-button is present
@@ -517,8 +599,8 @@
                             value = null;
                         }
                     } else {
-                        cssclass = input.attr('class');
-                        if (cssclass == 'generic-widget') {
+                        cssClass = input.attr('class');
+                        if (cssClass == 'generic-widget') {
                             // Reference values need to be ints for S3Represent to find a match in theset
                             // - ensure we don't do this to dates though!
                             intvalue = parseInt(value, 10);
@@ -531,7 +613,7 @@
                     // Field is Read-only
                     if (original !== null) {
                         // Keep current value
-                        value = original[fieldname]['value'];
+                        value = original[fieldname].value;
                     } else if (data.defaults  && (typeof(data.defaults[fieldname]) != 'undefined')) {
                         value = data.defaults[fieldname].value;
                     } else {
@@ -558,13 +640,13 @@
                     if (required) {
                         // Subform is required => cannot delete
                         this._appendError(formname, '0', fieldname, i18n.enter_value);
-                        row['_error'] = true;
+                        row._error = true;
                     } else {
                         // Delete it
-                        row['_delete'] = true;
+                        row._delete = true;
                     }
                 } else {
-                    delete row['_error'];
+                    delete row._error;
                 }
             } else {
                 // Check whether subform is required
@@ -576,7 +658,7 @@
                 // Make sure there is at least one row
                 if (subformRequired) {
                     // Check if empty
-                    delete row['_error'];
+                    delete row._error;
                     var empty = true;
                     for (fieldname in row) {
                         if ((fieldname != '_id') && (row[fieldname] !== '')) {
@@ -595,22 +677,22 @@
                             if (!$('#read-row-' + formname + '-0').length) {
                                 // No rows present => error
                                 this._appendError(formname, errorIndex, fieldname, i18n.enter_value);
-                                row['_error'] = true;
+                                row._error = true;
                             }
                         } else {
                             // Multiple=false, no other rows can exist => error
                             this._appendError(formname, errorIndex, fieldname, i18n.enter_value);
-                            row['_error'] = true;
+                            row._error = true;
                         }
                     }
                 }
             }
 
             // Add the defaults
-            var defaults = data['defaults'];
+            var defaults = data.defaults;
             for (fieldname in defaults) {
                 if (!row.hasOwnProperty(fieldname)) {
-                    value = defaults[fieldname]['value'];
+                    value = defaults[fieldname].value;
                     row[fieldname] = value;
                 }
             }
@@ -620,29 +702,35 @@
         },
 
         /**
-         * Validate a new/updated row
+         * Validate a new/updated row (asynchronously)
          *
-         * @param {string|number} rowindex - the input row index ('none' for add, '0' for edit)
+         * @param {string|number} rowindex - the input row index:
+         *                                   - 'none' for add, '0' for edit
          * @param {object} data - the de-serialized JSON data
          * @param {object} row - the new row data
+         *
+         * @returns: a promise that is resolved (or rejected) when the
+         *           validation result has been processed
          */
         _validate: function(data, rowindex, row) {
 
-            var formname = this.formname;
+            var formname = this.formname,
+                dfd = $.Deferred();
 
             if (row._error) {
                 // Required row which has already been validated as bad
                 this._displayErrors();
-                return null;
+                return dfd.reject();
             }
 
             // Construct the URL
-            var c = data['controller'],
+            var c = data.controller,
                 f = data['function'],
-                resource = data['resource'],
-                component = data['component'];
-            var url = S3.Ap.concat('/' + c + '/' + f + '/validate.json'),
+                resource = data.resource,
+                component = data.component,
+                url = S3.Ap.concat('/' + c + '/' + f + '/validate.json'),
                 concat;
+
             if (null !== resource && typeof resource != 'undefined') {
                 url += '?resource=' + resource;
                 concat = '&';
@@ -655,54 +743,55 @@
 
             // Request validation of the row
             // @ToDo: Skip read-only fields (especially Virtual)
-            var row_json = JSON.stringify(row),
-                response = null;
+            var rowJSON = JSON.stringify(row),
+                self = this;
+
             $.ajaxS3({
-                async: false,
                 type: 'POST',
                 url: url,
-                data: row_json,
+                data: rowJSON,
                 dataType: 'json',
                 contentType: 'application/json; charset=utf-8',
                 // gets moved to .done() inside .ajaxS3
-                success: function(data) {
-                    response = data;
+                success: function(response) {
+
+                    // Check and report errors
+                    var hasErrors = false;
+                    if (!response) {
+                        hasErrors = true;
+                        self._appendError(formname, rowindex, null, "validation failed");
+                    } else if (response.hasOwnProperty('_error')) {
+                        hasErrors = true;
+                        self._appendError(formname, rowindex, null, response._error);
+                    }
+
+                    var item,
+                        error;
+                    for (var field in response) {
+                        item = response[field];
+                        if (item.hasOwnProperty('_error')) {
+                            error = item._error;
+                            if (error == "invalid field") {
+                                // Virtual Field - not a real error
+                                item.text = item.value;
+                            } else {
+                                hasErrors = true;
+                                self._appendError(formname, rowindex, field, error);
+                            }
+                        }
+                    }
+
+                    if (hasErrors) {
+                        self._displayErrors();
+                        dfd.reject();
+                    } else {
+                        // Resolve with validated + represented row
+                        dfd.resolve(response);
+                    }
                 }
             });
 
-            // Check and report errors
-            var has_errors = false;
-            if (!response) {
-                has_errors = true;
-            } else if (response.hasOwnProperty('_error')) {
-                has_errors = true;
-                this._appendError(formname, rowindex, null, response._error);
-            }
-            var item,
-                error,
-                field;
-            for (field in response) {
-                item = response[field];
-                if (item.hasOwnProperty('_error')) {
-                    error = item._error;
-                    if (error == "invalid field") {
-                        // Virtual Field - not a real error
-                        item.text = item.value;
-                    } else {
-                        this._appendError(formname, rowindex, field, error);
-                        has_errors = true;
-                    }
-                }
-            }
-
-            // Return the validated + represented row
-            // (or null if there was an error)
-            if (has_errors) {
-                this._displayErrors();
-                return null;
-            } else {
-                return response;
-            }
+            return dfd.promise();
         },
 
         // Form Actions -------------------------------------------------------
@@ -762,6 +851,40 @@
         },
 
         /**
+         * Make sure a SELECT element contains a certain option, so that
+         * select.val(option) will succeed.
+         *
+         * Solves the situation where an inline record has the option
+         * selected, but the corresponding option-element is added only
+         * later by a script, e.g. filterOptionsS3 (which would then
+         * replace the dummy option element added here, while retaining
+         * the selection).
+         *
+         * @param {jQuery} select - the SELECT element
+         * @param {string|Array} option - the option (Array for multiple)
+         */
+        _ensureSelectable: function(select, option) {
+
+            var checkOpts;
+            if (option) {
+                if (option.constructor === Array) {
+                    checkOpts = option;
+                } else {
+                    checkOpts = [option];
+                }
+            } else {
+                checkOpts = [];
+            }
+
+            checkOpts.forEach(function(optValue) {
+                var optElement = select.find('option[value="' + optValue + '"]');
+                if (!optElement.length) {
+                    select.append('<option value="' + optValue + '">-</option>');
+                }
+            });
+        },
+
+        /**
          * Edit a row
          *
          * @param {string|number} rowindex - the row index
@@ -770,14 +893,14 @@
          */
         _editRow: function(rowindex) {
 
-            var formname = this.formname;
-            var rowname = formname + '-' + rowindex;
+            var formname = this.formname,
+                rowname = formname + '-' + rowindex;
 
             this._removeErrors();
 
-            var data = this._deserialize();
-            var fields = data['fields'];
-            var row = data['data'][rowindex];
+            var data = this._deserialize(),
+                fields = data.fields,
+                row = data.data[rowindex];
 
             if (row._readonly) {
                 // Can't edit the row if it is read-only
@@ -785,10 +908,10 @@
             }
 
             // Show all read rows for this field
-            $('#sub-' + formname + ' .read-row').removeClass('hide');
+            $('#sub-' + formname + ' .read-row').removeClass('hide').show();
             // Hide the current read row, unless it's an Image
             if (formname != 'imageimage') {
-                $('#read-row-' + rowname).addClass('hide');
+                $('#read-row-' + rowname).hide();
             }
 
             // Populate the edit row with the data for this rowindex
@@ -801,27 +924,21 @@
 
             for (i=0; i < fields.length; i++) {
 
-                fieldname = fields[i]['name'];
-                value = row[fieldname]['value'];
+                fieldname = fields[i].name;
+                value = row[fieldname].value;
                 element = '#sub_' + formname + '_' + formname + '_i_' + fieldname + '_edit_0';
 
                 // If the element is a select then we may need to add the option we're choosing
                 var select = $('select' + element);
-                if (select.length !== 0) {
-                    var option = $('select' + element + ' option[value="' + value + '"]');
-                    if (option.length === 0) {
-                        // This option does not exist in the select, so add it
-                        // because otherwise val() won't work. Maybe the option
-                        // gets added later by a script (e.g. S3OptionsFilter)
-                        select.append('<option value="' + value + '">-</option>');
-                    }
+                if (select.length) {
+                    this._ensureSelectable(select, value);
                 }
 
                 input = $(element);
                 if (!input.length) {
 
                     // Read-only field
-                    this._updateColumn($('#edit-row-' + formname), i, row[fieldname]['text']);
+                    this._updateColumn($('#edit-row-' + formname), i, row[fieldname].text);
 
                 } else {
 
@@ -843,6 +960,10 @@
 
                         // Update the upload-widget (i.e. link and image preview)
                         this._updateUploadWidget(input, value);
+
+                        // Also reset the delete-flag in the edit row
+                        var dflag = $('#' + formname + '_i_' + fieldname + '_edit_0__delete');
+                        dflag.prop("checked", false);
 
                     } else if (input.attr('type') == 'checkbox') {
 
@@ -877,11 +998,11 @@
                         } else if (S3.rtl && input.hasClass('phone-widget')) {
                             if (value && (value.charAt(0) != '\u200E')) {
                                 input.val('\u200E' + value);
-                            };
+                            }
                         } else {
                             // Populate text in autocompletes
                             element = '#dummy_sub_' + formname + '_' + formname + '_i_' + fieldname + '_edit_0';
-                            text = row[fieldname]['text'];
+                            text = row[fieldname].text;
                             $(element).val(text);
                         }
 
@@ -894,8 +1015,7 @@
             edit_row.insertAfter('#read-row-' + rowname);
 
             // Remember the current row index in the edit row & show it
-            edit_row.data('rowindex', rowindex)
-                    .removeClass('hide');
+            edit_row.data('rowindex', rowindex).removeClass('hide').show();
 
             // Trigger the dropdown change event
             $('#edit-row-' + formname + ' select:not(".lx-select")').change();
@@ -920,12 +1040,12 @@
             var edit_row = $('#edit-row-' + formname);
 
             // Hide and reset the edit-row
-            edit_row.addClass('hide')
+            edit_row.hide()
                     .data('rowindex', null)
                     .removeClass('changed');
 
             // Show the read-row
-            $('#read-row-' + rowname).removeClass('hide');
+            $('#read-row-' + rowname).removeClass('hide').show();
 
             // Enable the add-row
             this._enableAddRow();
@@ -952,9 +1072,14 @@
                 defaultField,
                 defaultValue,
                 currentField,
-                currentValue,
                 emptyWidget,
                 container;
+
+            // File input change-handler to re-attach after cloning
+            var changeHandler = function() {
+                self._markChanged(this);
+                self._catchSubmit();
+            };
 
             for (var i = fields.length; i--;) {
 
@@ -970,18 +1095,14 @@
                     emptyWidget = defaultField.clone();
                     emptyWidget.attr('id', currentField.attr('id'))
                                .attr('name', currentField.attr('name'))
-                               .change(function() {
-                                    // Re-attach change event handler to the clone
-                                    self._markChanged(this);
-                                    self._catchSubmit(this);
-                                });
+                               .change(changeHandler);
                     currentField.replaceWith(emptyWidget);
 
                 } else {
 
                     // Set the input to the default value
-                    defaultValue = defaultField.val()
-                    currentField.val(defaultValue);
+                    defaultValue = defaultField.val();
+                    currentField.val(defaultValue).change();
 
                     // Refresh widgets
                     if (currentField.attr('type') == 'checkbox') {
@@ -1032,10 +1153,6 @@
                 // Hide the add-row if explicit open-action available
                 addRow.hide();
                 explicitAdd.show();
-//                 $(this.element).find('.inline-open-add').each(function() {
-//                     addRow.hide();
-//                     $(this).show();
-//                 });
             } else {
                 // Hide the discard-option
                 addRow.find('.inline-dsc').hide();
@@ -1044,14 +1161,18 @@
 
         /**
          * Add a new row
+         *
+         * @returns {promise} - a promise that resolves when the new row
+         *                      has been added successfully
          */
         _addRow: function() {
 
             var formName = this.formname,
-                rowindex = 'none';
-
-            var add_button = $('#add-' + formName + '-' + rowindex),
+                rowindex = 'none',
+                throbber,
+                add_button = $('#add-' + formName + '-' + rowindex),
                 multiple;
+
             if (add_button.length) {
                 multiple = true;
             } else {
@@ -1061,24 +1182,23 @@
 
             if (multiple) {
                 // Hide add-button, show throbber
-                add_button.addClass('hide');
-                var throbber = $('#throbber-' + formName + '-' + rowindex);
-                throbber.removeClass('hide');
+                add_button.hide();
+                throbber = $('#throbber-' + formName + '-' + rowindex).removeClass('hide').show();
 
                 // Remove any previous error messages
                 this._removeErrors();
             }
 
             // Collect the values from the add-row
-            var data = this._deserialize();
-            var row_data = this._collectData(data, 'none');
+            var data = this._deserialize(),
+                row_data = this._collectData(data, 'none');
             if (null === row_data) {
                 // Data collection failed (e.g. client-side validation error)
                 if (multiple) {
-                    throbber.addClass('hide');
-                    add_button.removeClass('hide');
+                    throbber.hide();
+                    add_button.removeClass('hide').show();
                 }
-                return false;
+                return $.Deferred().reject();
             }
 
             // If this is an empty required=true row in a multiple=true with existing rows, then don't validate
@@ -1099,79 +1219,83 @@
                         if ($('#read-row-' + formName + '-0').length) {
                             // Rows present, so skip validation
                             // Hide throbber, show add-button
-                            throbber.addClass('hide');
-                            add_button.removeClass('hide');
-                            return true;
+                            throbber.hide();
+                            add_button.removeClass('hide').show();
+                            return $.Deferred().resolve();
                         }
                     }
                 }
             }
 
             // Validate the data
-            var newRow = this._validate(data, rowindex, row_data),
-                success = false;
+            var validated = this._validate(data, rowindex, row_data),
+                self = this;
 
-            if (null !== newRow) {
+            return validated.then(
+                function(newRow) {
 
-                success = true;
+                    if (null !== newRow) {
 
-                // Mark new row as changed
-                newRow['_changed'] = true;
+                        // Mark new row as changed
+                        newRow._changed = true;
 
-                // Add the new row to the real input JSON
-                var newIndex = data['data'].push(newRow) - 1;
-                newRow['_index'] = newIndex;
-                this._serialize();
+                        // Add the new row to the real input JSON
+                        var newIndex = data.data.push(newRow) - 1;
+                        newRow._index = newIndex;
+                        self._serialize();
 
-                if (multiple) {
+                        if (multiple) {
 
-                    // Create a new read-row, reset the add-row
-                    var items = [],
-                        fields = data['fields'],
-                        fieldName,
-                        upload,
-                        uploadID;
+                            // Create a new read-row, reset the add-row
+                            var items = [],
+                                fields = data.fields,
+                                fieldName,
+                                upload,
+                                uploadID;
 
-                    for (var i = 0, len = fields.length; i < len; i++) {
+                            for (var i = 0, len = fields.length; i < len; i++) {
 
-                        fieldName = fields[i]['name'];
+                                fieldName = fields[i].name;
 
-                        // Update file input (moved out by _collectData) to the new row index:
-                        upload = $('#upload_' + formName + '_' + fieldName + '_none');
-                        if (upload.length) {
-                            uploadID = 'upload_' + formName + '_' + fieldName + '_' + newIndex;
-                            $('#' + uploadID).remove();
-                            upload.attr({'id': upload_id, 'name': upload_id});
+                                // Update file input (moved out by _collectData) to the new row index:
+                                upload = $('#upload_' + formName + '_' + fieldName + '_none');
+                                if (upload.length) {
+                                    uploadID = 'upload_' + formName + '_' + fieldName + '_' + newIndex;
+                                    $('#' + uploadID).remove();
+                                    upload.attr({'id': uploadID, 'name': uploadID});
+                                }
+
+                                // Store text representation for the read-row
+                                items.push(newRow[fieldName].text);
+                            }
+
+                            // Reset add-row to defaults
+                            self._resetAddRow();
+
+                            // Render new read row and append to container
+                            var readRow = self._renderReadRow(formName, newIndex, items);
+                            self._appendReadRow(formName, readRow);
+
+                            // Show table headers
+                            // (initially hidden with explicitAdd=true and no rows yet existing)
+                            self._showHeaders();
                         }
-
-                        // Store text representation for the read-row
-                        items.push(newRow[fieldName]['text']);
                     }
 
-                    // Reset add-row to defaults
-                    this._resetAddRow();
-
-                    // Render new read row and append to container
-                    var readRow = this._renderReadRow(formName, newIndex, items);
-                    this._appendReadRow(formName, readRow);
-
-                    // Show table headers
-                    // (initially hidden with explicitAdd=true and no rows yet existing)
-                    this._showHeaders();
-                }
-            }
-
-            if (multiple) {
-                // Hide throbber, show add-button
-                throbber.addClass('hide');
-                add_button.removeClass('hide');
-            }
-
-            if (success) {
-                $(this.element).closest('form').unbind(this.eventNamespace + this.id);
-            }
-
-            return success;
+                    if (multiple) {
+                        // Hide throbber, show add-button
+                        throbber.hide();
+                        add_button.removeClass('hide').show();
+                    }
+                },
+                function() {
+                    // Validation failed
+                    if (multiple) {
+                        // Hide throbber, show add-button
+                        throbber.hide();
+                        add_button.removeClass('hide').show();
+                    }
+                });
         },
 
         /**
@@ -1181,11 +1305,10 @@
          */
         _updateRow: function(rowindex) {
 
-            var formname = this.formname;
-            var rowname = formname + '-' + rowindex;
-
-            var rdy_button = $('#rdy-' + formname + '-0'),
-                multiple;
+            var formname = this.formname,
+                rdy_button = $('#rdy-' + formname + '-0'),
+                multiple,
+                throbber;
             if (rdy_button.length) {
                 multiple = true;
             } else {
@@ -1195,118 +1318,127 @@
 
             if (multiple) {
                 // Hide rdy_button, show throbber
-                rdy_button.addClass('hide');
-                var throbber = $('#throbber-' + formname + '-0');
-                throbber.removeClass('hide');
+                rdy_button.hide();
+                throbber = $('#throbber-' + formname + '-0').removeClass('hide').show();
 
                 // Remove any previous error messages
                 this._removeErrors();
             }
 
             // Collect the values from the edit-row
-            var data = this._deserialize();
-            var row_data = this._collectData(data, '0', rowindex);
+            var data = this._deserialize(),
+                row_data = this._collectData(data, '0', rowindex);
             if (null === row_data) {
                 // Data collection failed (e.g. client-side validation error)
                 if (multiple) {
-                    throbber.addClass('hide');
-                    rdy_button.removeClass('hide');
+                    throbber.hide();
+                    rdy_button.removeClass('hide').show();
                 }
-                return false;
+                return $.Deferred().reject();
             }
 
-            if (row_data['_delete']) {
+            if (row_data._delete) {
 
                 // multiple=False form which has set all fields to '' to delete the row
-                data['data'][rowindex]['_delete'] = true;
+                data.data[rowindex]._delete = true;
                 this._serialize();
-                return true;
+                return $.Deferred().resolve();
 
             } else {
+
                 // Validate the form data
-                var new_row = this._validate(data, '0', row_data);
+                var validated = this._validate(data, '0', row_data),
+                    self = this;
 
-                var success = false;
-                if (null !== new_row) {
-                    success = true;
+                return validated.then(
+                    function(new_row) {
 
-                    // Update the row in the real_input JSON
-                    new_row['_id'] = data['data'][rowindex]['_id'];
-                    new_row['_changed'] = true; // mark as changed
-                    new_row['_index'] = rowindex;
-                    data['data'][rowindex] = new_row;
-                    this._serialize();
+                        if (null !== new_row) {
 
-                    if (multiple) {
-                        // Update read-row in the table, clear edit-row
-                        var items = [],
-                            fields = data['fields'],
-                            default_value,
-                            i;
-                        for (i=0; i < fields.length; i++) {
-                            var field = fields[i]['name'];
-                            items.push(new_row[field]['text']);
+                            // Update the row in the real_input JSON
+                            new_row._id = data.data[rowindex]._id;
+                            new_row._changed = true; // mark as changed
+                            new_row._index = rowindex;
+                            data.data[rowindex] = new_row;
+                            self._serialize();
 
-                            // Reset edit-field to default value
-                            var d = $('#sub_' + formname + '_' + formname + '_i_' + field + '_edit_default');
-                            var f = $('#sub_' + formname + '_' + formname + '_i_' + field + '_edit_0');
+                            if (multiple) {
+                                // Update read-row in the table, clear edit-row
+                                var items = [],
+                                    fields = data.fields,
+                                    default_value,
+                                    i;
 
-                            if (f.attr('type') == 'file') {
+                                // File input change-handler to re-attach after cloning
+                                var changeHandler = function() {
+                                    self._markChanged(self);
+                                    self._catchSubmit();
+                                };
 
-                                // Clone the default file input
-                                // (because we cannot set the value for file inputs)
-                                var self = this,
-                                    emptyWidget = d.clone();
-                                emptyWidget.attr('id', f.attr('id'))
-                                           .attr('name', f.attr('name'))
-                                           .change(function() {
-                                                // Re-attach change event handler to the clone
-                                                self._markChanged(this);
-                                                self._catchSubmit(this);
-                                            });
-                                f.replaceWith(emptyWidget);
+                                for (i=0; i < fields.length; i++) {
+                                    var field = fields[i].name;
+                                    items.push(new_row[field].text);
 
-                            } else {
+                                    // Reset edit-field to default value
+                                    var d = $('#sub_' + formname + '_' + formname + '_i_' + field + '_edit_default'),
+                                        f = $('#sub_' + formname + '_' + formname + '_i_' + field + '_edit_0');
 
-                                // Set input to default value
-                                default_value = d.val();
-                                f.val(default_value);
+                                    if (f.attr('type') == 'file') {
 
-                                // @todo: shouldn't we update widgets here too?
+                                        // Clone the default file input
+                                        // (because we cannot set the value for file inputs)
+                                        var emptyWidget = d.clone();
+                                        emptyWidget.attr('id', f.attr('id'))
+                                                   .attr('name', f.attr('name'))
+                                                   .change(changeHandler);
+                                        f.replaceWith(emptyWidget);
+
+                                    } else {
+
+                                        // Set input to default value
+                                        default_value = d.val();
+                                        f.val(default_value);
+
+                                        // @todo: shouldn't we update widgets here too?
+                                    }
+
+                                    // Copy default value for dummy input
+                                    default_value = $('#dummy_sub_' + formname + '_' + formname + '_i_' + field + '_edit_default').val();
+                                    $('#dummy_sub_' + formname + '_' + formname + '_i_' + field + '_edit_0').val(default_value);
+                                }
+                                // Unmark changed
+                                var edit_row = $('#edit-row-' + formname);
+                                edit_row.removeClass('changed');
+
+                                // Update the read row
+                                var read_row = self._renderReadRow(formname, rowindex, items);
+
+                                // Hide and reset the edit row rowindex
+                                edit_row.hide().data('rowindex', null);
+
+                                // Show the read row
+                                read_row.removeClass('hide').show();
+
+                                // Re-enable add-row
+                                self._enableAddRow();
+                                self._showHeaders();
                             }
-
-                            // Copy default value for dummy input
-                            default_value = $('#dummy_sub_' + formname + '_' + formname + '_i_' + field + '_edit_default').val();
-                            $('#dummy_sub_' + formname + '_' + formname + '_i_' + field + '_edit_0').val(default_value);
                         }
-                        // Unmark changed
-                        var edit_row = $('#edit-row-' + formname);
-                        edit_row.removeClass('changed');
 
-                        // Update the read row
-                        var read_row = this._renderReadRow(formname, rowindex, items);
-
-                        // Hide and reset the edit row
-                        edit_row.addClass('hide')
-                                // Reset rowindex
-                                .data('rowindex', null);
-
-                        // Show the read row
-                        read_row.removeClass('hide');
-
-                        // Re-enable add-row
-                        this._enableAddRow();
-                        this._showHeaders();
-                    }
-                }
-
-                if (multiple) {
-                    // Hide throbber, enable rdy_button
-                    throbber.addClass('hide');
-                    rdy_button.removeClass('hide');
-                }
-
-                return (success);
+                        if (multiple) {
+                            // Hide throbber, enable rdy_button
+                            throbber.hide();
+                            rdy_button.removeClass('hide').show();
+                        }
+                    },
+                    function() {
+                        // Validation failed
+                        if (multiple) {
+                            // Hide throbber, enable rdy_button
+                            throbber.hide();
+                            rdy_button.removeClass('hide').show();
+                        }
+                    });
             }
         },
 
@@ -1327,7 +1459,7 @@
 
             // Update the real_input JSON with deletion of this row
             var data = this._deserialize();
-            data['data'][rowindex]['_delete'] = true;
+            data.data[rowindex]._delete = true;
             this._serialize();
 
             // Remove the read-row for this item
@@ -1344,7 +1476,7 @@
                     $('#add-row-' + formname).addClass('required');
                     edit_row.removeClass('required');
                     // Ensure we validate this if not changed
-                    this._catchSubmit(edit_row);
+                    this._catchSubmit();
                 }
             }
 
@@ -1354,36 +1486,36 @@
         // Event Handlers -----------------------------------------------------
 
         /**
-         * Submit all changed inline-rows, and then the outer form
-         *
-         * @param {event} event - the submit-event (scope = outer form)
+         * Validate all pending changes in this inline form
          */
-        _submitAll: function(event) {
+        _validateAll: function() {
 
-            var self = event.data.widget;
-
-            event.preventDefault();
-
-            var el = $(self.element),
-                empty,
-                success,
-                errors = false,
-                row;
+            var self = this,
+                validations = [];
 
             // Find and validate all pending rows
-            var rows = el.find('.inline-form.changed, .inline-form.required');
-            for (var i=0, len=rows.length; i < len; i++) {
+            $(self.element).find('.inline-form.changed, .inline-form.required')
+                           .each(function() {
 
-                row = $(rows[i]);
-                empty = true;
-                if (!row.hasClass('required')) {
+                var row = $(this),
+                    empty = true;
+
+                if (row.hasClass('required')) {
+                    // Treat required rows as non-empty
+                    empty = false;
+
+                } else {
                     // Check that the row contains data
                     var inputs = row.find('input, select, textarea'),
-                        input;
-                    for (var j=0, numfields=inputs.length; j < numfields; j++) {
-                        input = $(inputs[j]);
+                        input,
+                        tokens,
+                        defaultInput;
+
+                    for (var i = inputs.length; i--;) {
+
+                        input = $(inputs[i]);
+
                         // Ignore hidden inputs unless they have an 'input' flag
-                        var inputFlag = input.data('input');
                         if (input.is('[type="hidden"]')) {
                             if (!input.data('input')) {
                                 continue;
@@ -1391,189 +1523,64 @@
                         } else if (!input.is(':visible')) {
                             continue;
                         }
+
                         // Treat SELECTs as empty if only the default value is selected
-                        if (input.prop('tagName') == 'SELECT') {
-                            var tokens = input.attr('id').split('_');
+                        // ...except in single-rows => always create what is visible
+                        if (input.prop('tagName') == 'SELECT' && !row.hasClass('single')) {
+                            tokens = input.attr('id').split('_');
                             tokens.pop();
                             tokens.push('default');
-                            var defaultInput = $('#' + tokens.join('_'));
+                            defaultInput = $('#' + tokens.join('_'));
                             if (defaultInput.length && defaultInput.val() == input.val()) {
                                 continue;
                             }
                         }
+
                         if ((input.attr('type') != 'checkbox' && input.val()) || input.prop('checked')) {
                             empty = false;
                             break;
                         }
                     }
-                } else {
-                    // Treat required rows as non-empty
-                    empty = false;
                 }
-                // Validate all non-empty rows
+
+                // If not empty, process it
                 if (!empty) {
                     if (row.hasClass('add-row')) {
-                        success = self._addRow();
+                        validations.push(self._addRow());
                     } else {
-                        success = self._updateRow(row.data('rowindex'));
-                    }
-                    if (!success) {
-                        errors = true;
-                    }
-                }
-            }
-            if (!errors) {
-                // Remove the submit-event handler for this widget and
-                // continue submitting the main form (=this)
-                $(this).unbind(self.eventNamespace + self.id).submit();
-            }
-        },
-
-        /**
-         * S3SQLInlineComponentCheckbox: status update after form error
-         */
-        _updateCheckboxStatus: function() {
-
-            var el = $(this.element),
-                self = this,
-                checkbox,
-                fieldname,
-                value,
-                data,
-                row;
-
-            el.find(':checkbox').each(function() {
-
-                checkbox = $(this);
-
-                fieldname = checkbox.attr('id').split('-')[2];
-                value = checkbox.val();
-
-                // Read current data from real input
-                data = self._deserialize()['data'];
-
-                // Find the corresponding data item
-                for (var i=0, len=data.length; i < len; i++) {
-                    row = data[i];
-                    if (row.hasOwnProperty(fieldname) && row[fieldname].value == value) {
-                        // Modify checkbox state, as-required
-                        if (row._changed) {
-                            checkbox.prop('checked', true);
-                        } else if (row._delete) {
-                            checkbox.prop('checked', false);
-                        }
-                        break;
+                        validations.push(self._updateRow(row.data('rowindex')));
                     }
                 }
             });
-        },
 
-        /**
-         * S3SQLInlineComponentCheckbox: click-event handler
-         *
-         * @param {event} event - the click event
-         */
-        _checkboxOnClick: function(event) {
+            var form = $(this.element).closest('form'),
+                pendingValidations = form.data('pendingValidations'),
+                ns = this.eventNamespace + this.id;
 
-            var self = event.data.widget,
-                checkbox = $(this);
-
-            var fieldname = checkbox.attr('id').split('-')[2],
-                value = checkbox.val(),
-                item = null,
-                row;
-
-            // Read current data from real input
-            var data = self._deserialize().data;
-
-            // Find the corresponding data item
-            for (var i=0, len=data.length; i < len; i++) {
-                row = data[i];
-                if (row.hasOwnProperty(fieldname) && row[fieldname].value == value) {
-                    item = row;
-                    break;
-                }
-            }
-
-            // Modify data
-            if (checkbox.prop('checked')) {
-                if (!item) {
-                    // Not yet found, so initialise
-                    var label = checkbox.next().html(); // May be fragile to different formstyles :/
-                    item = {};
-                    item[fieldname] = {'text': label, 'value': value};
-                    data.push(item);
-                }
-                item._changed = true;
-                // Remove delete-marker if re-selected
-                if (item.hasOwnProperty('_delete')) {
-                    delete item._delete;
-                }
-            } else if (item) {
-                item._delete = true;
-            }
-
-            // Write data back to real input
-            self._serialize();
-        },
-
-        /**
-         * S3SQLInlineComponentMultiSelectWidget: change-event handler
-         *
-         * @param {event} event - the change event
-         */
-        _multiselectOnChange: function(event) {
-
-            var self = event.data.widget,
-                multiselect = $(this);
-
-            var fieldname = multiselect.attr('id').split('-')[1],
-                values = multiselect.val(),
-                row,
-                item,
-                label,
-                value;
-
-            // Read current data from real input
-            var data = self._deserialize().data;
-
-            // Update current items
-            var current_items = [],
-                i,
-                len;
-            for (i=0, len=data.length; i < len; i++) {
-                row = data[i];
-                if (row.hasOwnProperty(fieldname)) {
-                    value = row[fieldname].value.toString();
-                    if ($.inArray(value, values) == -1) {
-                        // No longer selected => mark for delete
-                        row._delete = true;
-                    } else {
-                        // Remove delete-marker if re-selected
-                        if (row.hasOwnProperty('_delete')) {
-                            delete row._delete;
-                        }
+            $.when.apply(null, validations).then(
+                function() {
+                    // This inline-component is valid
+                    if (pendingValidations[ns]) {
+                        // Resolve + remove the validation promise
+                        // (subsequent changes will create a new one)
+                        pendingValidations[ns].resolve();
+                        delete pendingValidations[ns];
                     }
-                    current_items.push(value);
-                }
-            }
-
-            // Add new items
-            var new_items = $(values).not(current_items).get();
-            for (i=0, len=new_items.length; i < len; i++) {
-                value = new_items[i];
-                label = multiselect.find('option[value=' + value + ']').html();
-                item = {};
-                item[fieldname] = {'text': label, 'value': value};
-                item._changed = true;
-                if (item.hasOwnProperty('_delete')) {
-                    delete item._delete;
-                }
-                data.push(item);
-            }
-
-            // Write data back to real input
-            self._serialize();
+                    // Remove validateInline handler
+                    // (will be re-added if changed again)
+                    form.off('validateInline' + ns);
+                },
+                function() {
+                    // This inline-component is not valid
+                    if (pendingValidations[ns]) {
+                        // Reject the validation promise, and create a
+                        // new one; leave the validateInline handler in
+                        // place so this component is re-validated when
+                        // Submit is clicked again
+                        pendingValidations[ns].reject();
+                        pendingValidations[ns] = $.Deferred();
+                    }
+                });
         },
 
         // Event Management ---------------------------------------------------
@@ -1588,7 +1595,7 @@
                 self = this;
 
             // Button events
-            el.delegate('.read-row', 'click' + ns, function(e) {
+            el.on('click' + ns, '.read-row', function(e) {
                 // Click into read-row opens the row for edit
                 // (unless the click-target is a link anchor)
                 var target = e.target;
@@ -1599,37 +1606,37 @@
                     self._editRow(rowindex);
                     return false;
                 }
-            }).delegate('.inline-add', 'click' + ns, function() {
+            }).on('click' + ns, '.inline-add', function() {
                 self._addRow();
                 return false;
-            }).delegate('.inline-dsc', 'click' + ns, function() {
+            }).on('click' + ns, '.inline-dsc', function() {
                 self._resetAddRow();
                 return false;
-            }).delegate('.inline-cnc', 'click' + ns, function() {
+            }).on('click' + ns, '.inline-cnc', function() {
                 var names = $(this).attr('id').split('-');
-                var zero = names.pop();
-                var formname = names.pop();
-                var rowindex = $('#edit-row-' + formname).data('rowindex');
+                names.pop();
+                var formname = names.pop(),
+                    rowindex = $('#edit-row-' + formname).data('rowindex');
                 self._cancelEdit(rowindex);
                 return false;
-            }).delegate('.inline-rdy', 'click' + ns, function() {
+            }).on('click' + ns, '.inline-rdy', function() {
                 var names = $(this).attr('id').split('-');
-                var zero = names.pop();
-                var formname = names.pop();
-                var rowindex = $('#edit-row-' + formname).data('rowindex');
+                names.pop();
+                var formname = names.pop(),
+                    rowindex = $('#edit-row-' + formname).data('rowindex');
                 self._updateRow(rowindex);
                 return false;
-            }).delegate('.inline-edt', 'click' + ns, function() {
-                var names = $(this).attr('id').split('-');
-                var rowindex = names.pop();
+            }).on('click' + ns, '.inline-edt', function() {
+                var names = $(this).attr('id').split('-'),
+                    rowindex = names.pop();
                 self._editRow(rowindex);
                 return false;
-            }).delegate('.inline-rmv', 'click' + ns, function() {
-                var names = $(this).attr('id').split('-');
-                var rowindex = names.pop();
+            }).on('click' + ns, '.inline-rmv', function() {
+                var names = $(this).attr('id').split('-'),
+                    rowindex = names.pop();
                 self._removeRow(rowindex);
                 return false;
-            }).delegate('.error', 'click' + ns, function() {
+            }).on('click' + ns, '.error', function() {
                 $(this).fadeOut('medium', function() { $(this).remove(); });
                 return false;
             });
@@ -1638,6 +1645,7 @@
             var inputs = 'input',
                 textInputs = 'input[type="text"],input[type="file"],textarea',
                 fileInputs = 'input[type="file"]',
+                dateInputs = 'input.s3-calendar-widget',
                 otherInputs = 'input[type!="text"][type!="file"],select',
                 multiSelects = 'select.multiselect-widget',
                 hierarchyInputs = 'input.s3-hierarchy-input';
@@ -1645,39 +1653,43 @@
             el.find('.add-row,.edit-row').each(function() {
                 var $this = $(this);
                 // Event to be triggered to force recollection of data (used by LocationSelector when modifying Point/Polygon on map)
-                $this.find('div.map_wrapper').bind('change' + ns, function() {
+                $this.find('div.map_wrapper').on('change' + ns, function() {
                     self._markChanged(this);
-                    self._catchSubmit(this);
+                    self._catchSubmit();
                 });
 
-                $this.find(textInputs).bind('input' + ns, function() {
+                $this.find(textInputs).on('input' + ns, function() {
                     self._markChanged(this);
-                    self._catchSubmit(this);
+                    self._catchSubmit();
                 });
-                $this.find(fileInputs).bind('change' + ns, function() {
+                $this.find(fileInputs).on('change' + ns, function() {
                     self._markChanged(this);
-                    self._catchSubmit(this);
+                    self._catchSubmit();
                 });
-                $this.find(otherInputs).bind('focusin' + ns, function() {
+                $this.find(dateInputs).on('change' + ns, function() {
+                    self._markChanged(this);
+                    self._catchSubmit();
+                });
+                $this.find(otherInputs).on('focusin' + ns, function() {
                     $(this).one('change' + ns, function() {
                         self._markChanged(this);
-                        self._catchSubmit(this);
+                        self._catchSubmit();
                     }).one('focusout', function() {
-                        $(this).unbind('change' + ns);
+                        $(this).off('change' + ns);
                     });
                 });
-                $this.find(multiSelects).bind('multiselectopen' + ns, function() {
-                    $(this).unbind('change' + ns)
+                $this.find(multiSelects).on('multiselectopen' + ns, function() {
+                    $(this).off('change' + ns)
                            .one('change' + ns, function() {
                         self._markChanged(this);
-                        self._catchSubmit(this);
+                        self._catchSubmit();
                     });
                 });
-                $this.find(hierarchyInputs).bind('change' + ns, function() {
+                $this.find(hierarchyInputs).on('change' + ns, function() {
                     self._markChanged(this);
-                    self._catchSubmit(this);
+                    self._catchSubmit();
                 });
-                $this.find(inputs).bind('keypress' + ns, function(e) {
+                $this.find(inputs).on('keypress' + ns, function(e) {
                     if (e.which == 13) {
                         e.preventDefault();
                         return false;
@@ -1687,7 +1699,7 @@
             });
 
             el.find('.add-row').each(function() {
-                $(this).find(inputs).bind('keyup' + ns, function(e) {
+                $(this).find(inputs).on('keyup' + ns, function(e) {
                     switch (e.which) {
                         case 13: // Enter
                             self._addRow();
@@ -1699,7 +1711,7 @@
             });
 
             el.find('.edit-row').each(function() {
-                $(this).find(inputs).bind('keyup' + ns, function(e) {
+                $(this).find(inputs).on('keyup' + ns, function(e) {
                     var rowIndex = $(this).closest('.edit-row').data('rowindex');
                     switch (e.which) {
                         case 13: // Enter
@@ -1714,26 +1726,8 @@
                 });
             });
 
-            // Event Management for S3SQLInlineComponentCheckbox
-            if (el.hasClass('inline-checkbox')) {
-                var error_wrapper = $(this.element).closest('form')
-                                                   .find('.error_wrapper');
-                if (error_wrapper.length) {
-                    this._updateCheckboxStatus();
-                }
-                // Delegate click-event, so that it also applies for
-                // dynamically inserted checkboxes
-                el.delegate(':checkbox', 'click' + ns, {widget: this}, this._checkboxOnClick);
-            }
-
-            // Event Management for S3SQLInlineComponentMultiSelectWidget
-            if (el.hasClass('inline-multiselect')) {
-                el.find('.inline-multiselect-widget')
-                  .bind('change' + ns, {widget: this}, this._multiselectOnChange);
-            }
-
             // Explicit open-action to reveal the add-row
-            el.find('.inline-open-add').bind('click' + ns, function(e) {
+            el.find('.inline-open-add').on('click' + ns, function(e) {
                 e.preventDefault();
                 $('#add-row-' + self.formname).removeClass('hide').show();
                 $(this).hide();
@@ -1750,26 +1744,19 @@
             var el = $(this.element),
                 ns = this.eventNamespace;
 
-            // Remove inline-multiselect-widget event handlers
-            if (el.hasClass('inline-multiselect')) {
-                el.find('.inline-multiselect-widget')
-                  .unbind(ns);
-            }
-
             // Remove inline-locationselector-widget event handlers
-            el.find('.inline-locationselector-widget')
-              .unbind(ns);
+            el.find('.inline-locationselector-widget').off(ns);
 
             // Remove all form event handlers
             el.find('.add-row,.edit-row').each(function() {
-                $(this).find('input,textarea,select').unbind(ns);
+                $(this).find('input,textarea,select').off(ns);
             });
 
             // Remove open-action event handler
-            el.find('.inline-open-add').unbind(ns);
+            el.find('.inline-open-add').off(ns);
 
             // Remove all delegations
-            el.undelegate(ns);
+            el.off(ns);
 
             return true;
         }

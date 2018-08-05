@@ -62,7 +62,7 @@ class index(S3CustomController):
                        "event_location.location_id",
                        ]
         if internal:
-            list_fields.insert(1, (T("Category"), "tag.value"))
+            list_fields.insert(1, (T("Category"), "event_tag.value"))
 
         start = None
         limit = 5
@@ -154,10 +154,11 @@ class index(S3CustomController):
 
         tablename = resource.tablename
 
-        dt, totalrows, ids = resource.datatable(fields=list_fields,
-                                                start=start,
-                                                limit=limit,
-                                                orderby=orderby)
+        dt, totalrows = resource.datatable(fields=list_fields,
+                                           start=start,
+                                           limit=limit,
+                                           orderby=orderby,
+                                           )
         displayrows = totalrows
 
         if dt.empty:

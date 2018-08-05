@@ -660,15 +660,15 @@ def rat_tables():
                  assessment_id(),
                  Field("houses_total", "integer",
                        label = T("Total number of houses in the area"),
-                       requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 99999999)),
+                       requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                        ),
                  Field("houses_destroyed", "integer",
-                       requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 99999999)),
+                       requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                        **rat_label_and_tooltip(
                            "Number of houses destroyed/uninhabitable",
                            "How many houses are uninhabitable (uninhabitable = foundation and structure destroyed)?")),
                  Field("houses_damaged", "integer",
-                       requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 99999999)),
+                       requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                        **rat_label_and_tooltip(
                            "Number of houses damaged, but usable",
                            "How many houses suffered damage but remain usable (usable = windows broken, cracks in walls, roof slightly damaged)?")),
@@ -876,7 +876,7 @@ def rat_tables():
                           "Place for solid waste disposal",
                           "Where is solid waste disposed in the village/camp?")),
                 Field("latrines_number", "integer",
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999)),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                       **rat_label_and_tooltip(
                           "Number of latrines",
                           "How many latrines are available in the village/IDP centre/Camp?")),
@@ -959,17 +959,17 @@ def rat_tables():
                           "What types of health services are still functioning in the affected area?",
                           multiple=True)),
                 Field("staff_number_doctors", "integer",
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999)),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                       **rat_label_and_tooltip(
                           "Number of doctors actively working",
                           "How many doctors in the health centers are still actively working?")),
                 Field("staff_number_nurses", "integer",
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999)),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                       **rat_label_and_tooltip(
                           "Number of nurses actively working",
                           "How many nurses in the health centers are still actively working?")),
                 Field("staff_number_midwives", "integer",
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999)),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                       **rat_label_and_tooltip(
                           "Number of midwives actively working",
                           "How many midwives in the health centers are still actively working?")),
@@ -1329,24 +1329,24 @@ def rat_tables():
                 assessment_id(),
                 Field("schools_total", "integer",
                       label = T("Total number of schools in affected area"),
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999))),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None))),
                 Field("schools_public", "integer",
                       label = T("Number of public schools"),
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999))),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None))),
                 Field("schools_private", "integer",
                       label = T("Number of private schools"),
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999))),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None))),
                 Field("schools_religious", "integer",
                       label = T("Number of religious schools"),
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999))),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None))),
 
                 Field("schools_destroyed", "integer",
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999)),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                       **rat_label_and_tooltip(
                           "Number of schools destroyed/uninhabitable",
                           "uninhabitable = foundation and structure destroyed")),
                 Field("schools_damaged", "integer",
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999)),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                       **rat_label_and_tooltip(
                           "Number of schools damaged but usable",
                           "windows broken, cracks in walls, roof slightly damaged")),
@@ -1367,7 +1367,7 @@ def rat_tables():
                           "Are there alternative places for studying?")),
                 Field("alternative_study_places_number", "integer",
                       label = T("Number of alternative places for studying"),
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999))),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None))),
                 Field("alternative_study_places", "list:integer",
                       requires = IS_EMPTY_OR(IS_IN_SET(rat_alternative_study_places,
                                                        zero=None,
@@ -1382,65 +1382,65 @@ def rat_tables():
                       label = T("Other alternative places for study")),
 
                 Field("schools_open_pre_disaster", "integer",
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999)),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                       **rat_label_and_tooltip(
                           "Number of schools open before disaster",
                           "How many primary/secondary schools were opening prior to the disaster?")),
                 Field("schools_open_post_disaster", "integer",
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999)),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                       **rat_label_and_tooltip(
                           "Number of schools open now",
                           "How many of the primary/secondary schools are now open and running a regular schedule of class?")),
 
                 Field("teachers_active_pre_disaster", "integer",
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999)),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                       **rat_label_and_tooltip(
                           "Number of teachers before disaster",
                           "How many teachers worked in the schools prior to the disaster?")),
                 Field("teachers_affected_by_disaster", "integer",
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999)),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                       **rat_label_and_tooltip(
                           "Number of teachers affected by disaster",
                           "How many teachers have been affected by the disaster (affected = unable to work)?")),
 
                 Field("children_0612_female", "integer",
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999)),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                       **rat_label_and_tooltip(
                           "Girls 6-12 yrs in affected area",
                           "How many primary school age girls (6-12) are in the affected area?")),
                 Field("children_0612_male", "integer",
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999)),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                       **rat_label_and_tooltip(
                           "Boys 6-12 yrs in affected area",
                           "How many primary school age boys (6-12) are in the affected area?")),
                 Field("children_0612_not_in_school_female", "integer",
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999)),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                       **rat_label_and_tooltip(
                           "Girls 6-12 yrs not attending school",
                           "How many of the primary school age girls (6-12) in the area are not attending school?")),
                 Field("children_0612_not_in_school_male", "integer",
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999)),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                       **rat_label_and_tooltip(
                           "Boys 6-12 yrs not attending school",
                           "How many of the primary school age boys (6-12) in the area are not attending school?")),
 
                 Field("children_1318_female", "integer",
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999)),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                       **rat_label_and_tooltip(
                           "Girls 13-18 yrs in affected area",
                           "How many secondary school age girls (13-18) are in the affected area?")),
                 Field("children_1318_male", "integer",
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999)),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                       **rat_label_and_tooltip(
                           "Boys 13-18 yrs in affected area",
                           "How many secondary school age boys (13-18) are in the affected area?")),
                 Field("children_1318_not_in_school_female", "integer",
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999)),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                       **rat_label_and_tooltip(
                           "Girls 13-18 yrs not attending school",
                           "How many of the secondary school age girls (13-18) in the area are not attending school?")),
                 Field("children_1318_not_in_school_male", "integer",
-                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 999999)),
+                      requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, None)),
                       **rat_label_and_tooltip(
                           "Boys 13-18 yrs not attending school",
                           "How many of the secondary school age boys (13-18) in the area are not attending school?")),
@@ -1812,7 +1812,7 @@ define_table(tablename,
              Field("average_family_size", "double"),
              Field("effective_date", "datetime"),
              s3_comments(),
-             *(s3_timestamp() + s3_uid() + s3_deletion_status()))
+             *S3MetaFields.sync_meta_fields())
 
 # CRUD strings
 crud_strings[tablename] = Storage(
@@ -1964,64 +1964,64 @@ def rat():
 
     # Subheadings in forms:
     configure("assess_section2",
-              subheadings = {T("Population and number of households"): "population_total",
-                             T("Fatalities"): "dead_women",
-                             T("Casualties"): "injured_women",
-                             T("Missing Persons"): "missing_women",
-                             T("General information on demographics"): "household_head_elderly",
-                             T("Comments"): "comments"
+              subheadings = {"population_total": T("Population and number of households"),
+                             "dead_women": T("Fatalities"),
+                             "injured_women": T("Casualties"),
+                             "missing_women": T("Missing Persons"),
+                             "household_head_elderly": T("General information on demographics"),
+                             "comments": T("Comments"),
                              })
     configure("assess_section3",
-        subheadings = {
-            T("Access to Shelter"): "houses_total",
-            T("Water storage containers in households"): "water_containers_available",
-            T("Other non-food items"): "cooking_equipment_available",
-            T("Shelter/NFI Assistance"): "nfi_assistance_available",
-            T("Comments"): "comments"})
+              subheadings = {"houses_total": T("Access to Shelter"),
+                             "water_containers_available": T("Water storage containers in households"),
+                             "cooking_equipment_available": T("Other non-food items"),
+                             "nfi_assistance_available": T("Shelter/NFI Assistance"),
+                             "comments": T("Comments"),
+                             })
     configure("assess_section4",
-        subheadings = {
-            T("Water supply"): "water_source_pre_disaster_type",
-            T("Water collection"): "water_coll_time",
-            T("Places for defecation"): "defec_place_type",
-            T("Environment"): "close_industry",
-            T("Latrines"): "latrines_number",
-            T("Comments"): "comments"})
+              subheadings = {"water_source_pre_disaster_type": T("Water supply"),
+                             "water_coll_time": T("Water collection"),
+                             "defec_place_type": T("Places for defecation"),
+                             "close_industry": T("Environment"),
+                             "latrines_number": T("Latrines"),
+                             "comments": T("Comments"),
+                             })
     configure("assess_section5",
-        subheadings = {
-            T("Health services status"): "health_services_pre_disaster",
-            T("Current health problems"): "health_problems_adults",
-            T("Nutrition problems"): "malnutrition_present_pre_disaster",
-            T("Comments"): "comments"})
+              subheadings = {"health_services_pre_disaster": T("Health services status"),
+                             "health_problems_adults": T("Current health problems"),
+                             "malnutrition_present_pre_disaster": T("Nutrition problems"),
+                             "comments": T("Comments"),
+                             })
     configure("assess_section6",
-        subheadings = {
-            T("Existing food stocks"): "food_stocks_main_dishes",
-            T("food_sources") : "Food sources",
-            T("Food assistance"): "food_assistance_available",
-            T("Comments"): "comments"})
+              subheadings = {"food_stocks_main_dishes": T("Existing food stocks"),
+                             "Food sources": T("food_sources"),
+                             "food_assistance_available": T("Food assistance"),
+                             "comments": T("Comments"),
+                             })
     configure("assess_section7",
-        subheadings = {
-            "%s / %s" % (T("Sources of income"),
-                         T("Major expenses")): "income_sources_pre_disaster",
-            T("Business Damaged"): "Access to cash",
-            T("Current community priorities"): "rank_reconstruction_assistance",
-            T("Comments"): "comments"})
+              subheadings = {"income_sources_pre_disaster": "%s / %s" % \
+                                (T("Sources of income"), T("Major expenses")),
+                             "business_damaged": T("Access to cash"),
+                             "rank_reconstruction_assistance": T("Current community priorities"),
+                             "comments": T("Comments"),
+                             })
     configure("assess_section8",
-        subheadings = {
-            T("Access to education services"): "schools_total",
-            T("Alternative places for studying"): "alternative_study_places_available",
-            T("School activities"): "schools_open_pre_disaster",
-            T("School attendance"): "children_0612_female",
-            T("School assistance"): "school_assistance_available",
-            T("Comments"): "comments"})
+              subheadings = {"schools_total": T("Access to education services"),
+                             "alternative_study_places_available": T("Alternative places for studying"),
+                             "schools_open_pre_disaster": T("School activities"),
+                             "children_0612_female": T("School attendance"),
+                             "school_assistance_available": T("School assistance"),
+                             "comments": T("Comments"),
+                             })
     configure("assess_section9",
-        subheadings = {
-            T("Physical Safety"): "vulnerable_groups_safe_env",
-            T("Separated children, caregiving arrangements"): "children_separated",
-            T("Persons in institutions"): "children_in_disabled_homes",
-            T("Activities of children"): "child_activities_u12f_pre_disaster",
-            T("Coping Activities"): "coping_activities_elderly",
-            T("Current general needs"): "current_general_needs",
-            T("Comments"): "comments"})
+              subheadings = {"vulnerable_groups_safe_env": T("Physical Safety"),
+                             "children_separated": T("Separated children, caregiving arrangements"),
+                             "children_in_disabled_homes": T("Persons in institutions"),
+                             "child_activities_u12f_pre_disaster": T("Activities of children"),
+                             "coping_activities_elderly": T("Coping Activities"),
+                             "current_general_needs": T("Current general needs"),
+                             "comments": T("Comments"),
+                             })
 
     # @ToDo  Generalize this and make it available as a function that other
     # component prep methods can call to set the default for a join field.
@@ -2066,7 +2066,8 @@ def rat():
             (T("Nutrition"), "section6"),
             (T("Livelihood"), "section7"),
             (T("Education"), "section8"),
-            (T("Protection"), "section9") ]
+            (T("Protection"), "section9"),
+            ]
 
     rheader = lambda r: rat_rheader(r,
                                     tabs)
@@ -2180,13 +2181,12 @@ def assess():
     #                                _title="%s|%s" % (T("Incident"),
     #                                                  T("Optional link to an Incident which this Assessment was triggered by.")))
 
-    tabs = [
-            (T("Edit Details"), None),
+    tabs = [(T("Edit Details"), None),
             (T("Baselines"), "baseline"),
             (T("Impacts"), "impact"),
             (T("Summary"), "summary"),
             #(T("Requested"), "ritem"),
-           ]
+            ]
 
     rheader = lambda r: assess_rheader(r, tabs)
 
@@ -2256,8 +2256,7 @@ def basic_assess():
         else:
             irs_location_id = None
             location = None
-        custom_assess_fields = (
-                                ("impact", 1),
+        custom_assess_fields = (("impact", 1),
                                 ("impact", 2),
                                 ("impact", 3),
                                 ("impact", 4),
@@ -2265,13 +2264,12 @@ def basic_assess():
                                 ("impact", 6),
                                 ("impact", 7),
                                 ("assess", "comments"),
-                            )
+                                )
         form, form_accepted, assess_id = custom_assess(custom_assess_fields,
                                                        location_id=irs_location_id)
     else:
         location = None
-        custom_assess_fields = (
-                                ("assess", "location_id", "selector"),
+        custom_assess_fields = (("assess", "location_id", "selector"),
                                 ("impact", 1),
                                 ("impact", 2),
                                 ("impact", 3),
@@ -2280,7 +2278,7 @@ def basic_assess():
                                 ("impact", 6),
                                 ("impact", 7),
                                 ("assess", "comments"),
-                            )
+                                )
         form, form_accepted, assess_id = custom_assess(custom_assess_fields)
 
     if form_accepted:
@@ -2302,8 +2300,7 @@ def mobile_basic_assess():
     assess_tables()
     impact_tables()
 
-    custom_assess_fields = (
-                            ("assess", "location_id", "auto"),
+    custom_assess_fields = (("assess", "location_id", "auto"),
                             ("impact", 1),
                             ("impact", 2),
                             ("impact", 3),
@@ -2312,7 +2309,7 @@ def mobile_basic_assess():
                             ("impact", 6),
                             ("impact", 7),
                             ("assess", "comments"),
-                        )
+                            )
 
     form, form_accepted, assess_id = custom_assess(custom_assess_fields)
 

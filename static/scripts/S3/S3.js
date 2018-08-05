@@ -16,12 +16,12 @@ if (typeof String.prototype.startsWith != 'function') {
 }
 
 // Global variable to store all of our variables inside
-var S3 = Object();
-S3.gis = Object();
-S3.gis.options = Object();
-S3.timeline = Object();
-S3.JSONRequest = Object(); // Used to store and abort JSON requests
-//S3.TimeoutVar = Object(); // Used to store and abort JSON requests
+var S3 = {};
+S3.gis = {};
+S3.gis.options = {};
+S3.timeline = {};
+S3.JSONRequest = {}; // Used to store and abort JSON requests
+//S3.TimeoutVar = {}; // Used to store and abort JSON requests
 
 S3.queryString = {
     // From https://github.com/sindresorhus/query-string
@@ -101,23 +101,24 @@ S3.Utf8 = {
         return utftext;
     },
     decode: function(utftext) {
-        var string = '';
-        var i = 0;
-        var c1, c2;
-        var c = c1 = c2 = 0;
+        var string = '',
+            i = 0,
+            c = 0,
+            c1 = 0,
+            c2 = 0;
         while ( i < utftext.length ) {
             c = utftext.charCodeAt(i);
             if (c < 128) {
                 string += String.fromCharCode(c);
                 i++;
             } else if ((c > 191) && (c < 224)) {
-                c2 = utftext.charCodeAt(i+1);
-                string += String.fromCharCode(((c & 31) << 6) | (c2 & 63));
+                c1 = utftext.charCodeAt(i+1);
+                string += String.fromCharCode(((c & 31) << 6) | (c1 & 63));
                 i += 2;
             } else {
-                c2 = utftext.charCodeAt(i+1);
-                c3 = utftext.charCodeAt(i+2);
-                string += String.fromCharCode(((c & 15) << 12) | ((c2 & 63) << 6) | (c3 & 63));
+                c1 = utftext.charCodeAt(i+1);
+                c2 = utftext.charCodeAt(i+2);
+                string += String.fromCharCode(((c & 15) << 12) | ((c1 & 63) << 6) | (c2 & 63));
                 i += 3;
             }
         }
@@ -183,7 +184,7 @@ S3.addModals = function() {
         }
         return url_out;
     });
-    $('.s3_add_resource_link, .s3_modal').unbind('click.S3Modal')
+    $('.s3_add_resource_link, .s3_modal').off('.S3Modal')
                                          .on('click.S3Modal', function() {
         var title = this.title;
         var url = this.href;
@@ -212,8 +213,11 @@ S3.addModals = function() {
                 'src': '',
                 // Set initial 'loading' class to show spinner until contents loaded
                 'class': 'loading',
-                'load': function(event, ui) {
-                    S3.popup_loaded(id);
+                'load': function() {
+                    // Call popup_loaded only once we have a src
+                    if ($(this).attr('src')) {
+                        S3.popup_loaded(id);
+                    }
                 },
                 'marginWidth': '0',
                 'marginHeight': '0',
@@ -221,6 +225,7 @@ S3.addModals = function() {
             }).appendTo('body');
 
         // Create jQuery UI dialog
+        var self = this;
         dialog.dialog({
             autoOpen: false,
             title: title,
@@ -228,13 +233,13 @@ S3.addModals = function() {
             minWidth: 320,
             modal: true,
             closeText: '',
-            open: function(event, ui) {
+            open: function( /* event, ui */ ) {
                 // Clicking outside of the popup closes it
                 $('.ui-widget-overlay').bind('click', function() {
                     dialog.dialog('close');
                 });
             },
-            close: function(event, ui) {
+            close: function( /* event, ui */ ) {
                 if (self.parent) {
                     // There is a parent modal: refresh it to fix layout
                     var iframe = self.parent.$('iframe.ui-dialog-content');
@@ -273,9 +278,9 @@ S3.popup_loaded = function(id) {
         parent_iframe.height(parent_iframe_height + 41);
     }
     var width = $('.ui-dialog').width();
-    $('#' + id).width(width)
-               // Display the hidden form
-               .contents().find('#popup form').show();
+
+    // Adjust iframe width, then un-hide popup contents
+    $('#' + id).width(width).contents().find('#popup').show();
 };
 S3.popup_remove = function() {
     // Close jQueryUI Dialog Modal Popup
@@ -365,27 +370,62 @@ S3.autoTotals = function(sumField, sourceFields, tablename) {
         tablename = tablename + '_';
     }
     sumField = $('#' + tablename + sumField);
-    var field,
+    var fieldname,
         value,
         total;
     for (var i = 0; i < sourceFields.length; i++) {
-        field = sourceFields[i];
-        $('#' + tablename + field).change(function() {
+        fieldname = sourceFields[i];
+        $('#' + tablename + fieldname).change(function() {
              total = 0;
              for (var j = 0; j < sourceFields.length; j++) {
-                field = sourceFields[j];
-                value = $('#' + tablename + field).val();
+                fieldname = sourceFields[j];
+                value = $('#' + tablename + fieldname).val();
                 if (value) {
                     total += parseInt(value);
                 }
              }
              sumField.val(total)
                      .trigger('change'); // Cascade onwards
-        })
+        });
     }
     // @ToDo?: Clear the sourceFields when the sumField is entered manually?
     // @ToDo?: Flag to show that the sumField has been set manually & so shouldn't be over-ridden by the source_fields
     //sumField.data('manual', true);
+};
+
+// ============================================================================
+// Show Hiddens
+// - allow a field to hide/unhide a set of other fields
+S3.showHidden = function(controlField, affectedFields, tablename) {
+    if (tablename === undefined) {
+        // Assume that fieldnames include the tablename
+        tablename = '';
+    } else {
+        // Prepend fieldnames with the tablename
+        tablename = tablename + '_';
+    }
+    controlField = $('#' + tablename + controlField);
+    controlField.change(function() {
+        var fieldname,
+            selector,
+            i;
+        if (controlField.prop('checked')) {
+            // Show
+            for (i = 0; i < affectedFields.length; i++) {
+                fieldname = affectedFields[i];
+                selector = '#' + tablename + fieldname;
+                $(selector + '__row, ' + selector + '__subheading, ' + selector + '__subheading1, ' + selector + '__subheading2').show();
+            }
+        } else {
+            // Hide
+            for (i = 0; i < affectedFields.length; i++) {
+                fieldname = affectedFields[i];
+                selector = '#' + tablename + fieldname;
+                $(selector + '__row, ' + selector + '__subheading, ' + selector + '__subheading1, ' + selector + '__subheading2').hide();
+            }
+        }
+    });
+    controlField.trigger('change');
 };
 
 // ============================================================================
@@ -397,7 +437,7 @@ S3.trunk8 = function(selector, lines, more) {
         //parseHTML: true
     };
     if (lines) {
-        settings['lines'] = lines;
+        settings.lines = lines;
     }
     $(selector).trunk8(settings);
     // Attach to any new items after Ajax-listUpdate (dataLists)
@@ -430,7 +470,7 @@ S3.maxLength = {
             // Apply current settings
             apply(id, maxLength);
             input.unbind('keyup.maxLength')
-                 .bind('keyup.maxLength', function(evt) {
+                 .bind('keyup.maxLength', function() {
                 // Apply new settings
                 apply(id, maxLength);
             });
@@ -443,9 +483,9 @@ S3.maxLength = {
     },
 
     apply: function(id, maxLength) {
-        message = i18n.characters_left || 'characters left';
-        var input = $('#' + id);
-        var currentLength = input.val().length;
+        var message = i18n.characters_left || 'characters left',
+            input = $('#' + id),
+            currentLength = input.val().length;
         if (currentLength >= maxLength) {
             // Add the notification class
             input.addClass('maxLength');
@@ -535,6 +575,7 @@ var S3EnableNavigateAwayConfirm = function() {
 
         // Alerts
         this.alerts = [];
+        this.ignoreStatus = options.ignoreStatus || [];
     }
 
     /**
@@ -592,11 +633,19 @@ var S3EnableNavigateAwayConfirm = function() {
             return;
         }
 
-        if (textStatus == 'abort') {
+        var readyState = jqXHR.readyState,
+            httpStatus = jqXHR.status,
+            navigateAway = !httpStatus && readyState === 0;
 
-            // Request aborted...don't show nasty messages
+        if (textStatus == 'abort' || navigateAway) {
+
+            // Request aborted, or navigating away...don't show nasty messages
             self.tryCount = 0;
             self.xhr = null;
+
+            if (navigateAway) {
+                return;
+            }
 
         } else if (textStatus == 'timeout') {
 
@@ -624,15 +673,26 @@ var S3EnableNavigateAwayConfirm = function() {
             message = i18n.ajax_wht + ' ' + tryCount + ' ' + i18n.ajax_gvn;
             S3.showAlert(message, 'error');
 
-        } else if (jqXHR.status == 500) {
+        } else if (httpStatus == 500) {
             // Internal server error
             S3.showAlert(i18n.ajax_500, 'error');
         } else {
             // Other error or server unreachable
-            S3.showAlert(i18n.ajax_dwn, 'error');
+            if (self.ignoreStatus.indexOf(httpStatus) != -1) {
+                // Status handled by caller => do not display alert
+            } else {
+                var responseJSON = jqXHR.responseJSON;
+                if (responseJSON && responseJSON.message) {
+                    // A json_message with a specific error text
+                    S3.showAlert(responseJSON.message, 'error');
+                } else {
+                    // HTTP status code only
+                    S3.showAlert(i18n.ajax_dwn, 'error');
+                }
+            }
         }
 
-        // Apply the caller's error callback
+        // Apply the caller's error callback (except when navigating away)
         var errorCallback = self.errorCallback;
         if (errorCallback) {
             errorCallback.apply(this, arguments);
@@ -714,13 +774,10 @@ var S3EnableNavigateAwayConfirm = function() {
             callback = data;
             data = null;
         }
-        if (sync) {
-            var async = false;
-        }
         return $.ajaxS3({
             type: 'GET',
             url: url,
-            async: async,
+            async: !sync,
             data: data,
             dataType: type,
             message: message,
@@ -880,7 +937,7 @@ var s3_viewMap = function(feature_id, iframe_height, popup) {
             $map.append($('<div style="margin-bottom:10px" />').append(closelink));
         }
         else {
-            fid = $iframe_map.attr('data-feature');
+            var fid = $iframe_map.attr('data-feature');
             if (fid==feature_id) {
                 // Same feature request. Display Map
                 $iframe_map.slideToggle('medium', toggleButton);
@@ -920,7 +977,9 @@ S3.openPopup = function(url, center) {
                 ',top=' + (screen.height - 480)/2;
         }
         S3.popupWin = window.open(url, 'popupWin', params);
-    } else S3.popupWin.focus();
+    } else {
+        S3.popupWin.focus();
+    }
 };
 
 // ============================================================================
@@ -931,8 +990,6 @@ S3.openPopup = function(url, center) {
  *
  * @todo: fix updateAddResourceLink
  * @todo: move into separate file and load only when needed?
- * @todo: S3SQLInlineComponentCheckboxes not supported (but to be
- *        deprecated itself anyway, so just remove the case?)
  */
 
 (function() {
@@ -949,9 +1006,7 @@ S3.openPopup = function(url, center) {
      * @param {string} setting.name - the field name
      * @param {string} setting.inlineType - the inline form type, 'link' (for S3SQLInlineLink),
      *                                      or 'sub' (for other S3SQLInlineComponent types)
-     * @param {string} setting.inlineRows - the inline form has multiple rows, default: true,
-     *                                      should be set to false for e.g.
-     *                                      S3SQLInlineComponentMultiSelectWidget
+     * @param {string} setting.inlineRows - the inline form has multiple rows, default: true
      */
     var getSelector = function(setting) {
 
@@ -1089,7 +1144,8 @@ S3.openPopup = function(url, center) {
                 fncRepresent = settings.fncRepresent,
                 record,
                 value,
-                name;
+                name,
+                title;
 
             for (var i = 0; i < data.length; i++) {
                 record = data[i];
@@ -1102,7 +1158,7 @@ S3.openPopup = function(url, center) {
                 if (record._tooltip) {
                     title = ' title="' + record._tooltip + '"';
                 } else {
-                    title = ''
+                    title = '';
                 }
                 options.push('<option' + title + ' value="' + value + '">' + name + '</option>');
             }
@@ -1222,8 +1278,8 @@ S3.openPopup = function(url, center) {
             }
 
             // Store selected value before replacing the widget HTML
+            var widgetValue;
             if (is_groupedopts || is_multiselect) {
-                var widgetValue = null;
                 if (widget.prop('tagName').toLowerCase() == 'select') {
                     widgetValue = widget.val();
                 }
@@ -1311,6 +1367,8 @@ S3.openPopup = function(url, center) {
                 target.multiselect('refresh')
                       .multiselect('disable');
             }
+            // Trigger change-event on target for filter cascades
+            target.change();
             updateAddResourceLink(lookupResource, lookupKey);
             return;
         }
@@ -1461,7 +1519,7 @@ S3.openPopup = function(url, center) {
                     // Show the widget if it was visible before, remove throbber
                     if (show_widget) {
                         if (widget.hasClass('groupedopts-widget')) {
-                            if (!empty) {
+                            if (widget.find('option').length) {
                                 widget.groupedopts('show');
                             }
                         } else {
@@ -1495,13 +1553,13 @@ S3.openPopup = function(url, center) {
         var triggerField = trigger,
             triggerValue = '';
         if (triggerField.attr('type') == 'checkbox') {
-            checkboxesWidget = triggerField.closest('.checkboxes-widget-s3');
+            var checkboxesWidget = triggerField.closest('.checkboxes-widget-s3');
             if (checkboxesWidget) {
                 triggerField = checkboxesWidget;
             }
         }
         if (triggerField.hasClass('checkboxes-widget-s3')) {
-            triggerValue = new Array();
+            triggerValue = [];
             triggerField.find('input:checked').each(function() {
                 triggerValue.push($(this).val());
             });
@@ -1580,7 +1638,6 @@ S3.openPopup = function(url, center) {
             triggerSelector = getSelector(settings.trigger),
             targetSelector = getSelector(settings.target),
             triggerField,
-            triggerForm,
             targetField,
             targetForm;
 
@@ -1670,7 +1727,7 @@ S3.openPopup = function(url, center) {
     var stripQuery = function(url) {
         var newurl = url.split('?')[0].split('#')[0];
         return newurl;
-    }
+    };
 
     /**
      * Main entry point
@@ -1718,7 +1775,7 @@ S3.slider = function(fieldname, min, max, step, value) {
             // Set the value of the real input
             real_input.val(ui.value);
         },
-        change: function(event, ui) {
+        change: function( /* event, ui */ ) {
             if (value == null) {
                 // Set a default value
                 // - halfway between min & max
@@ -1777,6 +1834,9 @@ S3.range_slider = function(fieldname, min, max, step, values) {
             real_input2.val(ui.values[1]);
         },
         change: function(event, ui) {
+            var value = ui.value,
+                index = ui.handleIndex,
+                real_input = $('#' + fieldname + '_' + (index + 1));
             if (value == null) {
                 // Set a default value
                 // - halfway between min & max
@@ -1792,7 +1852,7 @@ S3.range_slider = function(fieldname, min, max, step, values) {
                         value = value + modulo;
                     }
                 }
-                $(selector).slider('option', 'values', values);
+                $(selector).slider('option', 'values', index, value);
                 // Show the control
                 $(selector + ' .ui-slider-handle').show();
                 // Show the value
@@ -1867,7 +1927,7 @@ S3.reloadWithQueryStringVars = function(queryStringVars) {
                     data: {},
                     dataType: 'JSON',
                     // gets moved to .done() inside .ajaxS3
-                    success: function(data) {
+                    success: function( /* data */ ) {
                         $('.mark-deduplicate, .unmark-deduplicate, .deduplicate').toggleClass('hide');
                     }
                 });
@@ -1882,7 +1942,7 @@ S3.reloadWithQueryStringVars = function(queryStringVars) {
                     data: {},
                     dataType: 'JSON',
                     // gets moved to .done() inside .ajaxS3
-                    success: function(data) {
+                    success: function( /* data */ ) {
                         $('.mark-deduplicate, .unmark-deduplicate, .deduplicate').toggleClass('hide');
                     }
                 });
@@ -1998,7 +2058,7 @@ S3.reloadWithQueryStringVars = function(queryStringVars) {
         });
         $("input[type='checkbox'].delete").click(function() {
             if ((this.checked) && (!confirm(i18n.delete_confirmation))) {
-                    this.checked = false;
+                this.checked = false;
             }
         });
 
@@ -2015,9 +2075,9 @@ S3.reloadWithQueryStringVars = function(queryStringVars) {
         // the window to the first form error message
         var inputErrorId = $('form .error[id]').eq(0).attr('id');
         if (inputErrorId != undefined) {
-            inputName = inputErrorId.replace('__error', '');
-            inputId = $('[name=' + inputName + ']').attr('id');
-            inputLabel = $('[for=' + inputId + ']');
+            var inputName = inputErrorId.replace('__error', ''),
+                inputId = $('[name=' + inputName + ']').attr('id'),
+                inputLabel = $('[for=' + inputId + ']');
             try {
                 window.scrollTo(0, inputLabel.offset().top);
                 // Prevent first-field focus from scrolling back to
@@ -2069,7 +2129,7 @@ S3.reloadWithQueryStringVars = function(queryStringVars) {
                 var value = this.value;
                 if (value && (value.charAt(0) != '\u200E')) {
                     this.value = '\u200E' + value;
-                };
+                }
             });
             $('.phone-widget').focusout(function() {
                 var value = this.value;
@@ -2090,7 +2150,7 @@ S3.reloadWithQueryStringVars = function(queryStringVars) {
                     }
                 }
             });
-        };
+        }
 
         // ListCreate Views
         $('#show-add-btn').click(function() {
@@ -2128,7 +2188,7 @@ S3.reloadWithQueryStringVars = function(queryStringVars) {
                 textarea.height(Math.max(32, staticOffset + e.pageY) + 'px');
                 return false;
             }
-            function endDrag(e) {
+            function endDrag( /* e */ ) {
                 $(document).unbind('mousemove', performDrag).unbind('mouseup', endDrag);
                 textarea.css('opacity', 1);
             }
@@ -2185,14 +2245,13 @@ S3.reloadWithQueryStringVars = function(queryStringVars) {
         deduplication();
 
         // UTC Offset
-        now = new Date();
+        var now = new Date();
         $('form').append("<input type='hidden' value=" + now.getTimezoneOffset() + " name='_utc_offset'/>");
 
         // Social Media 'share' buttons
         if ($('#socialmedia_share').length > 0) {
             // DIV exists (deployment_setting on)
             var currenturl = document.location.href;
-            var currenttitle = document.title;
             // Linked-In
             $('#socialmedia_share').append("<div class='socialmedia_element'><script src='//platform.linkedin.com/in.js'></script><script type='IN/Share' data-counter='right'></script></div>");
             // Twitter

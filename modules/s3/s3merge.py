@@ -4,7 +4,7 @@
 
     @requires: U{B{I{gluon}} <http://web2py.com>}
 
-    @copyright: 2012-2017 (c) Sahana Software Foundation
+    @copyright: 2012-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -29,16 +29,16 @@
     OTHER DEALINGS IN THE SOFTWARE.
 """
 
-from gluon import *
-#from gluon.html import BUTTON
+from gluon import current, IS_NOT_IN_DB, \
+                  A, DIV, FORM, H3, INPUT, SPAN, SQLFORM, \
+                  TABLE, TBODY, TD, TFOOT, TH, THEAD, TR
 from gluon.storage import Storage
 
+from s3dal import Field
 from s3data import S3DataTable
 from s3query import FS
 from s3rest import S3Method
-from s3utils import s3_get_foreign_key, s3_represent_value, s3_unicode
-from s3validators import IS_ONE_OF
-from s3widgets import *
+from s3utils import s3_get_foreign_key, s3_represent_value, s3_str
 
 # =============================================================================
 class S3Merge(S3Method):
@@ -205,17 +205,22 @@ class S3Merge(S3Method):
 
         T = current.T
         link = DIV(A(T("Mark as duplicate"),
-                       _class=mark),
+                     _class=mark,
+                     ),
                    A(T("Unmark as duplicate"),
-                       _class=unmark),
+                     _class=unmark,
+                     ),
                    A("",
                      _href=r.url(method="deduplicate", vars={}),
                      _id="markDuplicateURL",
-                     _class="hide"),
+                     _class="hide",
+                     ),
                    A(T("De-duplicate"),
                      _href=r.url(method="deduplicate", target=0, vars={}),
-                     _class=deduplicate),
-                   _id="markDuplicate")
+                     _class=deduplicate,
+                     ),
+                   _id="markDuplicate",
+                   )
 
         return link
 
@@ -437,6 +442,9 @@ class S3Merge(S3Method):
 
         trs = []
         init_requires = self.init_requires
+        index = 1
+        num_fields = len(formfields)
+        
         for f in formfields:
 
             # Render the widgets
@@ -445,26 +453,27 @@ class S3Merge(S3Method):
             sid = "swap_%s" % f.name
             init_requires(f, original[f], duplicate[f])
             if keep_o or not any((keep_o, keep_d)):
-                owidget = self.widget(f, original[f], _name=oid, _id=oid)
+                owidget = self.widget(f, original[f], _name=oid, _id=oid, _tabindex=index)
             else:
                 try:
                     owidget = s3_represent_value(f, value=original[f])
                 except:
-                    owidget = s3_unicode(original[f])
+                    owidget = s3_str(original[f])
             if keep_d or not any((keep_o, keep_d)):
                 dwidget = self.widget(f, duplicate[f], _name=did, _id=did)
             else:
                 try:
                     dwidget = s3_represent_value(f, value=duplicate[f])
                 except:
-                    dwidget = s3_unicode(duplicate[f])
+                    dwidget = s3_str(duplicate[f])
 
             # Swap button
             if not any((keep_o, keep_d)):
                 swap = INPUT(_value="<-->",
                              _class="swap-button",
                              _id=sid,
-                             _type="button")
+                             _type="button",
+                             _tabindex = index+num_fields)
             else:
                 swap = DIV(_class="swap-button")
 
@@ -481,7 +490,8 @@ class S3Merge(S3Method):
             trs.append(TR(TD(owidget, _class="mwidget"),
                           TD(swap),
                           TD(dwidget, _class="mwidget")))
-
+            
+            index = index + 1
         # Show created_on/created_by for each record
         if "created_on" in table:
             original_date = original.created_on
@@ -554,7 +564,9 @@ class S3Merge(S3Method):
                                      _name="reset", _id="form-reset"),
                                A(T("Cancel"), _href=r.url(id=0, vars={}), _class="action-lnk"),
                                hidden = {"mode": mode,
-                                         "selected": ",".join(ids)})
+                                         "selected": ",".join(ids),
+                                         },
+                               )
 
         # Process the merge form
         formname = "merge_%s_%s_%s" % (tablename,
@@ -590,7 +602,7 @@ class S3Merge(S3Method):
                 r.unauthorized()
             except KeyError:
                 r.error(404, current.ERROR.BAD_RECORD)
-            except:
+            except Exception:
                 import sys
                 r.error(424,
                         T("Could not merge records. (Internal Error: %s)") %
@@ -716,26 +728,13 @@ class S3Merge(S3Method):
         elif ftype == "upload":
             inp = None
             #if field.widget:
-                #inp = field.widget(field, value,
-                                   #download_url=download_url, **attr)
+            #    inp = field.widget(field, value,
+            #                       download_url=download_url, **attr)
             #else:
-                #inp = widgets.upload.widget(field, value,
-                                            #download_url=download_url, **attr)
+            #    inp = widgets.upload.widget(field, value,
+            #                                download_url=download_url, **attr)
         elif field.widget:
-            if isinstance(field.widget, S3LocationSelectorWidget):
-                # Workaround - location selector does not support
-                # renaming of the fields => switch to dropdown
-                level = None
-                if value:
-                    try:
-                        level = s3db.gis_location[value].level
-                    except:
-                        pass
-                widget = S3LocationDropdownWidget(level, value)
-                field.requires = IS_EMPTY_OR(IS_ONE_OF(current.db, "gis_location.id"))
-                inp = widget(field, value, **attr)
-            else:
-                inp = field.widget(field, value, **attr)
+            inp = field.widget(field, value, **attr)
         elif ftype == "boolean":
             inp = widgets.boolean.widget(field, value, **attr)
         elif widgets.options.has_options(field):
@@ -784,16 +783,16 @@ class S3RecordMerger(object):
         raise error(msg)
 
     # -------------------------------------------------------------------------
-    def update_record(self, table, id, row, data):
+    def update_record(self, table, record_id, row, data):
 
         form = Storage(vars = Storage([(f, row[f])
                               for f in table.fields if f in row]))
         form.vars.update(data)
         try:
             current.db(table._id==row[table._id]).update(**data)
-        except Exception, e:
+        except Exception:
             self.raise_error("Could not update %s.%s" %
-                            (table._tablename, id))
+                            (table._tablename, record_id))
         else:
             s3db = current.s3db
             s3db.update_super(table, form.vars)
@@ -802,18 +801,18 @@ class S3RecordMerger(object):
         return form.vars
 
     # -------------------------------------------------------------------------
-    def delete_record(self, table, id, replaced_by=None):
+    def delete_record(self, table, record_id, replaced_by=None):
 
         s3db = current.s3db
 
         if replaced_by is not None:
-            replaced_by = {str(id): replaced_by}
-        resource = s3db.resource(table, id=id)
+            replaced_by = {str(record_id): replaced_by}
+        resource = s3db.resource(table, id=record_id)
         success = resource.delete(replaced_by=replaced_by,
                                   cascade=True)
         if not success:
             self.raise_error("Could not delete %s.%s (%s)" %
-                            (resource.tablename, id, resource.error))
+                            (resource.tablename, record_id, resource.error))
         return success
 
     # -------------------------------------------------------------------------
@@ -958,8 +957,15 @@ class S3RecordMerger(object):
         #    than the one merge is being run from, those components may
         #    be treated as multiple instead!
         single = {}
-        for component in resource.components.values():
-            if not component.multiple:
+        hooks = s3db.get_hooks(table)[1]
+        if hooks:
+            for alias, hook in hooks.items():
+                if hook.multiple:
+                    continue
+                component = resource.components.get(alias)
+                if not component:
+                    # E.g. module disabled
+                    continue
                 ctablename = component.tablename
                 if ctablename in single:
                     single[ctablename].append(component)
@@ -1041,7 +1047,7 @@ class S3RecordMerger(object):
                             # No original => re-link the duplicate
                             dsub_id = dsub[ctable_id]
                             data = {lkey: original[pkey]}
-                            success = update_record(ctable, dsub_id, dsub, data)
+                            update_record(ctable, dsub_id, dsub, data)
 
                         elif component.linked is not None:
 

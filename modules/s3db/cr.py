@@ -2,7 +2,7 @@
 
 """ Shelter (Camp) Registry, model
 
-    @copyright: 2009-2017 (c) Sahana Software Foundation
+    @copyright: 2009-2018 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -70,7 +70,10 @@ class CRShelterModel(S3Model):
         s3 = current.response.s3
 
         settings = current.deployment_settings
+
         messages = current.messages
+        NONE = messages["NONE"]
+        OBSOLETE = messages.OBSOLETE
 
         add_components = self.add_components
         configure = self.configure
@@ -90,6 +93,8 @@ class CRShelterModel(S3Model):
                      Field("name", notnull=True,
                            label = NAME,
                            requires = [IS_NOT_EMPTY(),
+                                       # @todo: add unique-constraint, otherwise
+                                       # IS_NOT_ONE_OF blocks reference imports
                                        IS_NOT_ONE_OF(db,
                                                      "%s.name" % tablename,
                                                      ),
@@ -245,7 +250,12 @@ class CRShelterModel(S3Model):
         # Shelters
         #
         cr_shelter_opts = {1 : T("Closed"),
-                           2 : T("Open"),
+                           # In many languages, translations of "Open" differ
+                           # between the verb and the adjective, as well as
+                           # between grammatical moods or genders etc - so
+                           # adding a context-comment for T() here to clarify
+                           # which "Open" we mean (will not be rendered):
+                           2 : T("Open##the_shelter_is"),
                            }
 
         day_and_night = settings.get_cr_day_and_night()
@@ -398,8 +408,7 @@ class CRShelterModel(S3Model):
                      Field("obsolete", "boolean",
                            default = False,
                            label = T("Obsolete"),
-                           represent = lambda opt: \
-                            (opt and [T("Obsolete")] or [messages["NONE"]])[0],
+                           represent = lambda opt: OBSOLETE if opt else NONE,
                            readable = False,
                            writable = False,
                            ),
@@ -433,7 +442,7 @@ class CRShelterModel(S3Model):
 
         # Text filter fields
         text_fields = ["name",
-                       "code",
+                       #"code",
                        "comments",
                        "organisation_id$name",
                        "organisation_id$acronym",
@@ -1027,7 +1036,7 @@ class CRShelterModel(S3Model):
 
         if hasattr(row, "id"):
             # Reload the record
-            s3_debug("Reloading cr_shelter_unit record")
+            current.log.debug("Reloading cr_shelter_unit record")
             table = current.s3db.cr_shelter_unit
             r = current.db(table.id == row.id).select(table.status,
                                                       table.capacity_day,
@@ -1378,9 +1387,8 @@ class CRShelterInspectionModel(S3Model):
             # Automatic task creation disabled
             return
 
-        formvars = form.vars
         try:
-            record_id = formvars.id
+            record_id = form.vars.id
         except AttributeError:
             # Nothing we can do
             return
@@ -1884,7 +1892,7 @@ class CRShelterRegistrationModel(S3Model):
 
     # -------------------------------------------------------------------------
     @staticmethod
-    def shelter_population_onaccept(form, tablename=None, unit_id = None):
+    def shelter_population_onaccept(form, tablename=None, unit_id=None):
         """
             Update the shelter population, onaccept
 
@@ -2421,7 +2429,7 @@ def cr_notification_dispatcher(r, **attr):
         return output
 
     else:
-        raise HTTP(501, current.messages.BADMETHOD)
+        r.error(405, current.messages.BAD_METHOD)
 
 # =============================================================================
 class cr_AssignUnit(S3CRUD):
@@ -2441,7 +2449,7 @@ class cr_AssignUnit(S3CRUD):
         try:
             person_id = int(r.get_vars["person_id"])
         except:
-            raise HTTP(400, current.messages.BAD_REQUEST)
+            r.error(400, current.messages.BAD_REQUEST)
 
         self.settings = current.response.s3.crud
         sqlform = self._config("crud_form")
@@ -2520,7 +2528,7 @@ class ShelterInspectionFlagRepresent(S3Represent):
         return "%(unit)s (%(date)s): %(flag)s" % details
 
     # ---------------------------------------------------------------------
-    def lookup_rows(self, key, values, fields=[]):
+    def lookup_rows(self, key, values, fields=None):
         """
             Lookup all rows referenced by values.
 
@@ -2608,7 +2616,7 @@ class ShelterInspectionRepresent(S3Represent):
         return "%(date)s: %(unit)s" % details
 
     # ---------------------------------------------------------------------
-    def lookup_rows(self, key, values, fields=[]):
+    def lookup_rows(self, key, values, fields=None):
         """
             Lookup all rows referenced by values.
 

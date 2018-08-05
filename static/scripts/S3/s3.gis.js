@@ -344,7 +344,7 @@ OpenLayers.ProxyHost = S3.Ap.concat('/gis/proxy?url=');
                 layer = layers[i];
                 if (layer && (layer.s3_layer_id == layer_id)) {
                     // Apply any URL filters
-                    if (queries.length) {
+                    if (queries && queries.length) {
                         url = layer.protocol.url;
                         url = S3.search.filterURL(url, queries);
                         //layer.protocol.options.url = url;
@@ -5737,7 +5737,7 @@ OpenLayers.ProxyHost = S3.Ap.concat('/gis/proxy?url=');
             url = S3.Ap.concat('/gis/config.url/create');
         }
         $.ajaxS3({
-            async: false,
+            async: false, // @ToDo: Rewrite to allow this to be async
             url: url,
             type: 'POST',
             data: json_data,
@@ -5773,10 +5773,10 @@ OpenLayers.ProxyHost = S3.Ap.concat('/gis/proxy?url=');
                     var url = S3.Ap.concat('/gis/config/', config_id, '/layer_entity');
                     $('#gis_menu_config').attr('href', url);
                 }
+                // Hide the Throbber
+                hideThrobber(null, map);
             }
         });
-        // Hide the Throbber
-        hideThrobber(null, map);
         // Pass the created config_id back (e.g. for loading the screenshot)
         return config_id;
     };
@@ -6140,7 +6140,7 @@ OpenLayers.ProxyHost = S3.Ap.concat('/gis/proxy?url=');
                             // Activate Help Tooltips
                             S3.addTooltips();
                             // Activate RoleRequired autocomplete
-                            S3.autocomplete('role', 'admin', 'group', 'gis_layer_' + layer_type + '_role_required');
+                            S3.autocomplete.normal('role', 'admin', 'group', 'gis_layer_' + layer_type + '_role_required');
                         }
                     });
                 }

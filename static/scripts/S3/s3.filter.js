@@ -7,6 +7,8 @@ S3.search = {};
 // Module pattern to hide internal vars
 (function() {
 
+    "use strict";
+
     /**
      * Rewrite the Ajax options for a filtered GET, converting into a POST
      *
@@ -222,8 +224,8 @@ S3.search = {};
         if (!value) {
             return value;
         }
-        var values = [];
-        var quote = false;
+        var values = [],
+            quote = false;
         for (var idx=0, i=0; i < value.length; i++) {
             var c = value[i];
             values[idx] = values[idx] || '';
@@ -249,14 +251,17 @@ S3.search = {};
     var clearFilters = function(form) {
 
         // If no form has been specified, find the first one
-        form = typeof form !== 'undefined' ? form : $('body').find('form.filter-form').first();
+        if (undefined === form) {
+            form = $('body').find('form.filter-form').first();
+        }
 
         // Temporarily disable auto-submit
         form.data('noAutoSubmit', 1);
 
-        form.find('.text-filter').each(function() {
-            $(this).val('');
-        });
+        // Clear text filters
+        form.find('.text-filter').val('');
+
+        // Clear option/location filters
         form.find('.options-filter, .location-filter').each(function() {
             var $this = $(this);
             if (this.tagName.toLowerCase() == 'select') {
@@ -279,6 +284,8 @@ S3.search = {};
                 hierarchical_location_change(this);
             }
         });
+
+        // Clear map filters
         form.find('.map-filter').each(function() {
             var $this = $(this);
             $this.val('');
@@ -291,9 +298,11 @@ S3.search = {};
                 polygonButton.items[0].btnEl.dom.click();
             }
         });
-        form.find('.range-filter-input').each(function() {
-            $(this).val('');
-        });
+
+        // Clear range filters
+        form.find('.range-filter-input').val('');
+
+        // Clear date filters
         form.find('.date-filter-input').each(function() {
             var $this = $(this);
             $this.calendarWidget('clear');
@@ -303,10 +312,14 @@ S3.search = {};
                 $(this).trigger('clear');
             });
         });
-        // Hierarchy filter widget (experimental)
+
+        // Clear hierarchy filters
         form.find('.hierarchy-filter').each(function() {
             $(this).hierarchicalopts('reset');
         });
+
+        // Clear age filters
+        form.find('.age-filter-input').val('');
 
         // Other widgets go here
 
@@ -324,6 +337,11 @@ S3.search = {};
         // Fire optionChanged event
         form.trigger('optionChanged');
     };
+
+    /**
+     * Regex for the operator in a filter expression
+     */
+    var FILTEROP = /__(?!link\.)([a-z_]+)$/;
 
     /**
      * getCurrentFilters: retrieve all current filters
@@ -376,7 +394,7 @@ S3.search = {};
                     }
                 }
                 if (match == "any") {
-                    queries.push([urlVar, anyValue.join(',')])
+                    queries.push([urlVar, anyValue.join(',')]);
                 }
             } else {
                 queries.push([urlVar, null]);
@@ -397,15 +415,20 @@ S3.search = {};
             $this = $(this);
             id = $this.attr('id');
             urlVar = $('#' + id + '-data').val();
-            operator = $("input:radio[name='" + id + "_filter']:checked").val();
 
-            var contains = /__contains$/;
-            var anyof = /__anyof$/;
-            if (operator == 'any' && urlVar.match(contains)) {
-                urlVar = urlVar.replace(contains, '__anyof');
-            } else if (operator == 'all' && urlVar.match(anyof)) {
-                urlVar = urlVar.replace(anyof, '__contains');
+            // Adjust urlVar for user-selected operator
+            operator = $("input:radio[name='" + id + "_filter']:checked").val();
+            switch(operator) {
+                case 'any':
+                    urlVar = urlVar.replace(/__contains$|__belongs$/, '__anyof');
+                    break;
+                case 'all':
+                    urlVar = urlVar.replace(/__anyof$|__belongs$/, '__contains');
+                    break;
+                default:
+                    break;
             }
+
             if (this.tagName.toLowerCase() == 'select') {
                 // Standard SELECT
                 value = '';
@@ -446,7 +469,7 @@ S3.search = {};
         // Map widgets
         form.find('.map-filter').each(function() {
 
-            $this = $(this),
+            $this = $(this);
             id = $this.attr('id');
             urlVar = $('#' + id + '-data').val();
             value = $this.val();
@@ -461,7 +484,7 @@ S3.search = {};
         // Numerical range widgets -- each widget has two inputs.
         form.find('.range-filter-input:visible').each(function() {
 
-            $this = $(this),
+            $this = $(this);
             id = $this.attr('id');
             urlVar = $('#' + id + '-data').val();
             value = $this.val();
@@ -476,8 +499,8 @@ S3.search = {};
         // Date(time) range widgets -- each widget has two inputs.
         form.find('.date-filter-input:visible').each(function() {
 
-            $this = $(this),
-            id = $this.attr('id'),
+            $this = $(this);
+            id = $this.attr('id');
             urlVar = $('#' + id + '-data').val();
             value = $this.val();
 
@@ -511,9 +534,9 @@ S3.search = {};
                     urlValue = isoFormat(jsDate);
                 if (end && $this.hasClass('end_date')) {
                     // end_date
-                    urlVar = urlVar.split('__')[0];
+                    var selector = urlVar.replace(FILTEROP, '');
                     // @ToDo: filterURL should AND multiple $filter into 1 (will be required when we have multiple $filter in a single page)
-                    queries.push(['$filter', '(' + urlVar + ' ' + operator + ' "' + urlValue + '") or (' + urlVar + ' eq None)']);
+                    queries.push(['$filter', '(' + selector + ' ' + operator + ' "' + urlValue + '") or (' + selector + ' eq None)']);
                 } else {
                     // Single field or start_date
                     queries.push([urlVar, urlValue]);
@@ -599,6 +622,35 @@ S3.search = {};
             }
         });
 
+        // Age filter widgets -- each widget has two inputs.
+        form.find('.age-filter-input:visible').each(function() {
+
+            $this = $(this);
+            id = $this.attr('id');
+            urlVar = $('#' + id + '-data').val();
+            value = $this.val();
+
+            var years = value - 0;
+            if (value && !isNaN(years)) {
+                var m = urlVar.match(FILTEROP);
+                if (m && m[1] == 'gt') {
+                    // Age in years is the same until one day before
+                    // the next birthday, so must add one year here:
+                    years += 1;
+                }
+                // Convert years (ago) into a date
+                var dt = new Date();
+                dt.setYear(dt.getFullYear() - years);
+                // Convert to ISO format
+                dt = dt.getFullYear() + '-' +
+                       ('0' + (dt.getMonth() + 1)).slice(-2) + '-' +
+                       ('0' + dt.getDate()).slice(-2);
+                queries.push([urlVar, dt]);
+            } else {
+                queries.push([urlVar, null]);
+            }
+        });
+
         // Other widgets go here...
 
         // return queries to caller
@@ -613,7 +665,9 @@ S3.search = {};
      */
     var setCurrentFilters = function(form, queries) {
 
-        form = typeof form !== 'undefined' ? form : $('body').find('form.filter-form').first();
+        if (undefined === form) {
+            form = $('body').find('form.filter-form').first();
+        }
 
         // Temporarily disable auto-submit
         form.data('noAutoSubmit', 1);
@@ -654,6 +708,7 @@ S3.search = {};
                 values = q[expression];
                 value = '';
                 if (values) {
+                    var v;
                     for (i=0, len=values.length; i < len; i++) {
                         v = values[i];
                         if (!v) {
@@ -682,8 +737,8 @@ S3.search = {};
             expression = $('#' + id + '-data').val();
             var operator = $('input:radio[name="' + id + '_filter"]:checked').val();
             if (this.tagName && this.tagName.toLowerCase() == 'select') {
-                var refresh = false;
-                var selector = expression.split('__')[0];
+                var refresh = false,
+                    selector = expression.replace(FILTEROP, '');
                 if (q.hasOwnProperty(selector + '__eq')) {
                     values = q[selector + '__eq'];
                     refresh = true;
@@ -733,14 +788,15 @@ S3.search = {};
                     toggleAdvanced(form);
                 }
                 values = q[expression];
+                var map_id;
                 if (values) {
                     $this.val(values[0]);
-                    var map_id = id + '-map';
+                    map_id = id + '-map';
                     // Display the Polygon
                     S3.gis.maps[map_id].s3.polygonButtonLoaded();
                 } else {
                     $this.val('');
-                    var map_id = id + '-map';
+                    map_id = id + '-map';
                     // Hide the Polygon
                     S3.gis.maps[map_id].s3.layerRefreshed();
                 }
@@ -770,7 +826,7 @@ S3.search = {};
 
             var $this = $(this),
                 expression = $('#' + $this.attr('id') + '-data').val(),
-                selector = expression.split('__')[0],
+                selector = expression.replace(FILTEROP, ''),
                 values = false;
 
             if (q.hasOwnProperty(expression)) {
@@ -809,7 +865,7 @@ S3.search = {};
                     refresh = true;
                 } else
                 if (operator == 'any' || operator == 'all') {
-                    var selector = expression.split('__')[0];
+                    var selector = expression.replace(FILTEROP, '');
                     if (q.hasOwnProperty(selector + '__anyof')) {
                         values = q[selector + '__anyof'];
                         refresh = true;
@@ -885,7 +941,7 @@ S3.search = {};
 
                 var qstr = url_parts[1];
                 var a = qstr.split('&'), b, c;
-                for (i=0; i<a.length; i++) {
+                for (var i=0; i<a.length; i++) {
                     b = a[i].split('=');
                     if (b.length > 1) {
                         c = decodeURIComponent(b[0]);
@@ -1005,9 +1061,15 @@ S3.search = {};
                 if (widget.hasClass('options-filter')) {
                     if (widget[0].tagName.toLowerCase() == 'select') {
                         // Standard SELECT
+                        // (which could be the hidden one in an s3.ui.groupedopts.widget.js)
+
+                        var noopt = widget.siblings('.no-options-available');
 
                         // Update HTML
                         if (newopts.hasOwnProperty('empty')) {
+
+                            // Remove options
+                            widget.html('');
 
                             // Ensure the widget is hidden
                             if (widget.hasClass('multiselect-filter-widget') &&
@@ -1022,7 +1084,6 @@ S3.search = {};
                             }
 
                             // Show the no-opts
-                            var noopt = widget.siblings('.no-options-available');
                             if (noopt.length) {
                                 noopt.html(newopts.empty);
                                 noopt.removeClass('hide').show();
@@ -1031,10 +1092,10 @@ S3.search = {};
                         } else {
 
                             var selected = widget.val(),
-                                s=[], opts='', group, item, value, label, tooltip;
+                                s=[], opts='', group, item, value, label, tooltip, i, len;
 
                             if (newopts.hasOwnProperty('groups')) {
-                                for (var i=0, len=newopts.groups.length; i < len; i++) {
+                                for (i=0, len=newopts.groups.length; i < len; i++) {
                                     group = newopts.groups[i];
                                     if (group.label) {
                                         opts += '<optgroup label="' + group.label + '">';
@@ -1059,9 +1120,14 @@ S3.search = {};
                                 }
 
                             } else {
-                                for (var i=0, len=newopts.length; i < len; i++) {
+                                for (i=0, len=newopts.length; i < len; i++) {
                                     item = newopts[i];
-                                    value = item[0].toString();
+                                    value = item[0];
+                                    if (null === value) {
+                                        value = 'None';
+                                    } else {
+                                        value = value.toString();
+                                    }
                                     label = item[1];
                                     if (selected && $.inArray(value, selected) >= 0) {
                                         s.push(value);
@@ -1077,7 +1143,6 @@ S3.search = {};
                             }
 
                             // Hide the no-opts
-                            var noopt = widget.siblings('.no-options-available');
                             if (noopt.length) {
                                 noopt.hide();
                             }
@@ -1099,18 +1164,18 @@ S3.search = {};
                     }
 
                 } else if (widget.hasClass('date-filter')) {
-                    var min = newopts.min;
-                    var max = newopts.max;
-                    $('#' + filter_id + '-ge').calendarWidget('instance').option('minDateTime', min)
-                                                                         .option('maxDateTime', max)
-                                                                         .refresh();
-                    $('#' + filter_id + '-le').calendarWidget('instance').option('minDateTime', min)
-                                                                         .option('maxDateTime', max)
-                                                                         .refresh();
-                    widget.find('.range-picker').each(function() {
-                        var ts = newopts.ts;
-                        $(this).trigger('resize', [min, max, ts]);
-                    });
+                    var min = newopts.min,
+                        max = newopts.max;
+                    $('#' + filter_id + '-ge').calendarWidget('instance')
+                                              .option('minDateTime', min)
+                                              .option('maxDateTime', max)
+                                              .refresh();
+                    $('#' + filter_id + '-le').calendarWidget('instance')
+                                              .option('minDateTime', min)
+                                              .option('maxDateTime', max)
+                                              .refresh();
+                    widget.find('.range-picker')
+                          .trigger('resize', [min, max, newopts.ts]);
                 } else {
                     // @todo: other filter types (e.g. S3LocationFilter)
                 }
@@ -1122,8 +1187,9 @@ S3.search = {};
      * ajaxUpdateOptions: Ajax-update the options in a filter form
      *
      * In global scope as called from s3.popup.js
+     * - indirectly now, as goes via $('.filter-form').trigger('dataChanged', refresh);
      */
-    S3.search.ajaxUpdateOptions = function(form) {
+    S3.search.ajaxUpdateOptions = function(form, callback) {
 
         // Ajax-load the item
         var $form = $(form);
@@ -1140,7 +1206,11 @@ S3.search = {};
             updateOptions(data);
             // Re-enable
             $form.data('noAutoSubmit', 0);
+            if (callback) {
+                callback.apply();
+            }
         }).fail(function(jqXHR, textStatus, errorThrown) {
+            var msg;
             if (errorThrown == 'UNAUTHORIZED') {
                 msg = i18n.gis_requires_login;
             } else {
@@ -1201,7 +1271,7 @@ S3.search = {};
 
             target_data = targets[target_id];
 
-            needs_reload = target_data['needs_reload'];
+            needs_reload = target_data.needs_reload;
             if (visible) {
                 if (needs_reload) {
                     // reload immediately
@@ -1224,24 +1294,22 @@ S3.search = {};
             target_data = targets[target_id];
             t = $('#' + target_id);
             if (t.hasClass('dl')) {
-                t.datalist('ajaxReload', target_data['queries']);
+                t.datalist('ajaxReload', target_data.queries);
             } else if (t.hasClass('dataTable')) {
                 // Refresh Data
                 var dt = t.dataTable(),
-                    dtAjaxURL = target_data['ajaxurl'];
+                    dtAjaxURL = target_data.ajaxurl;
                 dt.fnReloadAjax(dtAjaxURL);
                 updateFormatURLs(dt, queries);
-                $('#' + dt[0].id + '_dataTable_filterURL').each(function() {
-                    $(this).val(dtAjaxURL);
-                });
+                $('#' + dt[0].id + '_dataTable_filterURL').val(dtAjaxURL);
             } else if (t.hasClass('map_wrapper')) {
                 S3.gis.refreshLayer('search_results');
             } else if (t.hasClass('gi-container')) {
-                t.groupedItems('reload', null, target_data['queries']);
+                t.groupedItems('reload', null, target_data.queries);
             } else if (t.hasClass('pt-container')) {
-                t.pivottable('reload', null, target_data['queries']);
+                t.pivottable('reload', null, target_data.queries);
             } else if (t.hasClass('tp-container')) {
-                t.timeplot('reload', null, target_data['queries']);
+                t.timeplot('reload', null, target_data.queries);
             }
         }
     };
@@ -1277,143 +1345,6 @@ S3.search = {};
     };
 
     /**
-     * Set up the Tabs for an S3Summary page
-     * - in global scope as called from outside
-     *
-     * Parameters:
-     * form - {String} ID of the filter form
-     * active_tab - {Integer} Which Section is active to start with
-     */
-    S3.search.summary_tabs = function(form, active_tab, pending) {
-
-        // Schedule initially hidden widgets to Ajax-load their data
-        // layers, required here because otherwise this happens only
-        // during filter-submit, but the user could also simply switch
-        // tabs without prior filter-submit; list of initially hidden
-        // widgets with ajax-init option is provided by the page
-        // renderer (S3Summary.summary()).
-        if (pending) {
-            var ajaxurl,
-                config,
-                q = getCurrentFilters($('#' + form)),
-                t,
-                target_id,
-                targets = pending.split(',');
-            for (var i=0, len=targets.length; i < len; i++) {
-                target_id = targets[i];
-                if (!pendingTargets.hasOwnProperty(form)) {
-                    pendingTargets[form] = {};
-                }
-                if (pendingTargets[form].hasOwnProperty(target_id)) {
-                    // already scheduled
-                    continue;
-                }
-                t = $('#' + target_id);
-                if (t.hasClass('dl') ||
-                    t.hasClass('gi-container') ||
-                    t.hasClass('pt-container') ||
-                    t.hasClass('tp-container') ||
-                    t.hasClass('map_wrapper')) {
-                    // These targets handle their AjaxURL themselves
-                    ajaxurl = null;
-                } else if (t.hasClass('dataTable')) {
-                    // Lookup and filter the AjaxURL
-                    config = $('input#' + targets[i] + '_configurations');
-                    if (config.length) {
-                        settings = JSON.parse($(config).val());
-                        ajaxurl = settings['ajaxUrl'];
-                        if (typeof ajaxurl != 'undefined') {
-                            ajaxurl = filterURL(ajaxurl, q);
-                        } else {
-                            continue;
-                        }
-                    }
-                } else {
-                    continue;
-                }
-                pendingTargets[form][target_id] = {
-                    needs_reload: false,
-                    ajaxurl: ajaxurl,
-                    queries: q
-                };
-            }
-        }
-
-        /**
-         * Helper method to trigger re-calculation of column width in
-         * responsive data tables after unhiding them
-         *
-         * @param {jQuery} datatable - the datatable
-         */
-        var recalcResponsive = function(datatable) {
-            var dt = $(datatable).DataTable();
-            if (dt && dt.responsive) {
-                dt.responsive.recalc();
-            }
-        };
-
-        // Initialise jQueryUI Tabs
-        $('#summary-tabs').tabs({
-            active: active_tab,
-            activate: function(event, ui) {
-                var newPanel = $(ui.newPanel);
-                // Unhide the section (.ui-tab's display: block overrides anyway but hey ;)
-                newPanel.removeClass('hide');
-                // A New Tab has been selected
-                if (ui.newTab.length) {
-                    // Update the Filter Query URL to show which tab is active
-                    updateFilterSubmitURL(form, 't', $(ui.newTab).index());
-                }
-                // Find any Map widgets in this section
-                var maps = newPanel.find('.map_wrapper');
-                var maps_len = maps.length;
-                if (maps_len) {
-                    // Check that Maps JS is Loaded
-                    $.when(jsLoaded()).then(
-                        function(status) {
-                            // Success: Instantiate Maps
-                            var gis = S3.gis;
-                            for (var i=0; i < maps_len; i++) {
-                                var map_id = maps[i].attributes['id'].value;
-                                if (undefined === gis.maps[map_id]) {
-                                    // Instantiate the map (can't be done when the DIV is hidden)
-                                    var options = gis.options[map_id];
-                                    gis.show_map(map_id, options);
-                                }
-                            }
-                            // Update all just-unhidden widgets which have pending updates
-                            updatePendingTargets(form);
-                        },
-                        function(status) {
-                            // Failed
-                            s3_debug(status);
-                        },
-                        function(status) {
-                            // Progress
-                            s3_debug(status);
-                        }
-                    );
-                } else {
-                    // Update all just-unhidden widgets which have pending updates
-                    updatePendingTargets(form);
-                }
-                newPanel.find('table.dataTable.display.responsive')
-                        .each(function() {
-                    recalcResponsive(this);
-                });
-            }
-        }).css({visibility: 'visible'});
-
-        // Activate not called? Unhide initial section anyway:
-        $('.ui-tabs-panel[aria-hidden="false"]').first()
-                                                .removeClass('hide')
-                                                .find('table.dataTable.display.responsive')
-                                                .each(function() {
-                                                    recalcResponsive(this);
-                                                });
-    };
-
-    /**
      * Check that Map JS is Loaded
      * - e.g. used if a tab containing a Map is unhidden
      */
@@ -1439,6 +1370,185 @@ S3.search = {};
     };
 
     /**
+     * Set up an initially hidden widget
+     * - e.g. for S3Summary page, or similar
+     *
+     * Parameters:
+     * form - {String} ID of the filter form
+     * widget - {String} ID of the widget
+     * queries - key, value tuples
+     */
+    var setup_hidden_widget = function(form, widget, queries) {
+        var ajaxurl;
+        if (undefined === queries) {
+            queries = getCurrentFilters($('#' + form));
+        }
+        if (!pendingTargets.hasOwnProperty(form)) {
+            pendingTargets[form] = {};
+        }
+        if (pendingTargets[form].hasOwnProperty(widget)) {
+            // already scheduled
+            return;
+        }
+        var t = $('#' + widget);
+        if (t.hasClass('dl') ||
+            t.hasClass('gi-container') ||
+            t.hasClass('pt-container') ||
+            t.hasClass('tp-container') ||
+            t.hasClass('map_wrapper')) {
+            // These targets handle their AjaxURL themselves
+            ajaxurl = null;
+        } else if (t.hasClass('dataTable')) {
+            // Lookup and filter the AjaxURL
+            var config = $('input#' + widget + '_configurations');
+            if (config.length) {
+                var settings = JSON.parse($(config).val());
+                ajaxurl = settings.ajaxUrl;
+                if (typeof ajaxurl != 'undefined') {
+                    ajaxurl = filterURL(ajaxurl, queries);
+                } else {
+                    return;
+                }
+            }
+        } else {
+            return;
+        }
+        pendingTargets[form][widget] = {
+            needs_reload: false,
+            ajaxurl: ajaxurl,
+            queries: queries
+        };
+    };
+
+    // Pass to global scope to be called by external scripts (e.g. WACOP)
+    S3.search.setup_hidden_widget = setup_hidden_widget;
+
+    /**
+     * Helper method to trigger re-calculation of column width in
+     * responsive data tables after unhiding them
+     *
+     * @param {jQuery} datatable - the datatable
+     */
+    var recalcResponsive = function(datatable) {
+        var dt = $(datatable).DataTable();
+        if (dt && dt.responsive) {
+            dt.responsive.recalc();
+        }
+    };
+
+    /**
+     * Unhide an initially hidden section
+     * - e.g. for S3Summary page, or similar
+     *
+     * Parameters:
+     * form - {String} ID of the filter form
+     * section - {jQuery} the object just unhidden
+     */
+    var unhide_section = function(form, section) {
+        // Find any Map widgets in this section
+        var maps = section.find('.map_wrapper');
+        var maps_len = maps.length;
+        if (maps_len) {
+            // Check that Maps JS is Loaded
+            $.when(jsLoaded()).then(
+                function() {
+                    // Success: Instantiate Maps
+                    var gis = S3.gis;
+                    for (var i=0; i < maps_len; i++) {
+                        var map_id = maps[i].attributes.id.value;
+                        if (undefined === gis.maps[map_id]) {
+                            // Instantiate the map (can't be done when the DIV is hidden)
+                            var options = gis.options[map_id];
+                            gis.show_map(map_id, options);
+                        }
+                    }
+                    // Update all just-unhidden widgets which have pending updates
+                    updatePendingTargets(form);
+                },
+                function(status) {
+                    // Failed
+                    s3_debug(status);
+                },
+                function(status) {
+                    // Progress
+                    s3_debug(status);
+                }
+            );
+        } else {
+            // Update all just-unhidden widgets which have pending updates
+            updatePendingTargets(form);
+        }
+        // Setup any Responsive dataTables
+        section.find('table.dataTable.display.responsive')
+               .each(function() {
+            recalcResponsive(this);
+        });
+    };
+
+    // Pass to global scope to be called by external scripts (e.g. WACOP)
+    S3.search.unhide_section = unhide_section;
+
+    /**
+     * Set up the (jQueryUI) Tabs for an S3Summary page
+     * - in global scope as called from outside
+     *
+     * Parameters:
+     * form - {String} ID of the filter form
+     * active_tab - {Integer} Which Section is active to start with
+     * pending - {String} comma-separated list of widget IDs which are initially hidden
+     */
+    S3.search.summary_tabs = function(form, active_tab, pending) {
+
+        // Schedule initially hidden widgets to Ajax-load their data
+        // layers, required here because otherwise this happens only
+        // during filter-submit, but the user could also simply switch
+        // tabs without prior filter-submit; list of initially hidden
+        // widgets with ajax-init option is provided by the page
+        // renderer (S3Summary.summary()).
+        if (pending) {
+            var queries = getCurrentFilters($('#' + form)),
+                widget,
+                targets = pending.split(',');
+            for (var i=0, len=targets.length; i < len; i++) {
+                widget = targets[i];
+                setup_hidden_widget(form, widget, queries);
+            }
+        }
+
+        if (active_tab != undefined) {
+            // Initialise jQueryUI Tabs
+            $('#summary-tabs').tabs({
+                active: active_tab,
+                activate: function(event, ui) {
+                    var newPanel = $(ui.newPanel);
+                    // Unhide the section (.ui-tab's display: block overrides anyway but hey ;)
+                    newPanel.removeClass('hide');
+                    // A New Tab has been selected
+                    if (ui.newTab.length) {
+                        // Update the Filter Query URL to show which tab is active
+                        updateFilterSubmitURL(form, 't', $(ui.newTab).index());
+                    }
+                    unhide_section(form, newPanel);
+                }
+            }).css({visibility: 'visible'});
+            // Activate not called? Unhide initial section anyway:
+            $('.ui-tabs-panel[aria-hidden="false"]').first()
+                                                    .removeClass('hide')
+                                                    .find('table.dataTable.display.responsive')
+                                                    .each(function() {
+                                                        recalcResponsive(this);
+                                                    });
+        } else {
+            // Unhide initial section anyway:
+            $('#summary-tabs').css({visibility: 'visible'})
+                              .find('table.dataTable.display.responsive')
+                              .each(function() {
+                                recalcResponsive(this);
+                              });
+        }
+    };
+
+    /**
      * Initialise Maps for an S3Summary page
      * - in global scope as called from callback to Map Loader
      */
@@ -1449,7 +1559,7 @@ S3.search = {};
             var map = maps[i];
             if (!map.hidden) {
                 var gis = S3.gis;
-                var map_id = map.attributes['id'].value;
+                var map_id = map.attributes.id.value;
                 if (undefined === gis.maps[map_id]) {
                     // Instantiate the map (can't be done when the DIV is hidden)
                     var options = gis.options[map_id];
@@ -1488,19 +1598,35 @@ S3.search = {};
      * A Hierarchical Location Filter has changed
      */
     var hierarchical_location_change = function(widget) {
-        var name = widget.name;
-        var base = name.slice(0, -1);
-        var level = parseInt(name.slice(-1));
-        var $widget = $('#' + name);
-        var values = $widget.val();
-        if (values) {
-            // Show the next widget down
-            var fn = base.replace(/-/g, '_') + (level + 1);
-            S3[fn]();
-            $('#' + base + (level + 1)).next('.ui-multiselect').show();
-        } else {
+        var name = widget.name,
+            base = name.slice(0, -1),
+            level = parseInt(name.slice(-1)),
+            $widget = $('#' + name),
+            values = $widget.val(),
+            next_widget,
+            select,
+            l;
+        if (!values) {
+            // Clear the values from all subsequent widgets
+            for (l = level + 1; l <= 5; l++) {
+                select = $('#' + base + l);
+                if (select.length) {
+                    select.html('');
+                    if (select.hasClass('groupedopts-filter-widget') &&
+                        select.groupedopts('instance')) {
+                        try {
+                            select.groupedopts('refresh');
+                        } catch(e) { }
+                    } else
+                    if (select.hasClass('multiselect-filter-widget') &&
+                        select.multiselect('instance')) {
+                        select.multiselect('refresh');
+                    }
+                }
+            }
+            // Hide all subsequent widgets
             // Hide the next widget down
-            var next_widget = $widget.next('.ui-multiselect').next('.location-filter').next('.ui-multiselect');
+            next_widget = $widget.next('.ui-multiselect').next('.location-filter').next('.ui-multiselect');
             if (next_widget.length) {
                 next_widget.hide();
                 // Hide the next widget down
@@ -1524,197 +1650,195 @@ S3.search = {};
                     }
                 }
             }
-        }
-        var hierarchy = S3.location_filter_hierarchy;
-        if (S3.location_name_l10n != undefined) {
-            var translate = true;
-            var location_name_l10n = S3.location_name_l10n;
         } else {
-            var translate = false;
-        }
-        // Initialise vars in a way in which we can access them via dynamic names
-        widget.options1 = [];
-        widget.options2 = [];
-        widget.options3 = [];
-        widget.options4 = [];
-        widget.options5 = [];
-        var new_level, opt, _opt, i, option;
-        if (hierarchy.hasOwnProperty('L' + level)) {
-            // Top-level
-            var _hierarchy = hierarchy['L' + level];
-            for (opt in _hierarchy) {
-                if (_hierarchy.hasOwnProperty(opt)) {
-                    if (values === null) {
-                        // Show all Options
-                        for (option in _hierarchy[opt]) {
-                            if (_hierarchy[opt].hasOwnProperty(option)) {
-                                new_level = level + 1;
-                                if (option && option != 'null') {
-                                    widget['options' + new_level].push(option);
-                                }
-                                if (typeof(_hierarchy[opt][option]) === 'object') {
-                                    var __hierarchy = _hierarchy[opt][option];
-                                    for (_opt in __hierarchy) {
-                                        if (__hierarchy.hasOwnProperty(_opt)) {
-                                            new_level = level + 2;
-                                            if (_opt && _opt != 'null') {
-                                                widget['options' + new_level].push(_opt);
-                                            }
-                                            // @ToDo: Greater recursion
-                                            //if (typeof(__hierarchy[_opt]) === 'object') {
-                                            //}
-                                        }
-                                    }
-                                }
-                            }
+            var new_level = level + 1,
+                next = base + new_level,
+                $next = $('#' + next);
+            if (!$next.length) {
+                // Missing level or the end of the widgets
+                new_level = level + 2;
+                next = base + new_level;
+                $next = $('#' + next);
+            }
+            if (!$next.length) {
+                // End of the widgets
+                return;
+            }
+            // Show the next widget down
+            var fn = next.replace(/-/g, '_');
+            S3[fn]();
+            $next.next('.ui-multiselect').show();
+
+            var hierarchy = S3.location_filter_hierarchy,
+                location_name_l10n,
+                translate;
+            if (S3.location_name_l10n != undefined) {
+                translate = true;
+                location_name_l10n = S3.location_name_l10n;
+            } else {
+                translate = false;
+            }
+            // Initialise vars in a way in which we can access them via dynamic names
+            widget.options1 = [];
+            widget.options2 = [];
+            widget.options3 = [];
+            widget.options4 = [];
+            widget.options5 = [];
+            // Find the level at which the hierarchy is defined
+            var hierarchy_level;
+            for (hierarchy_level = level; hierarchy_level >= 0; hierarchy_level--) {
+                if (hierarchy.hasOwnProperty('L' + hierarchy_level)) {
+                    break;
+                }
+            }
+            // Support Function to populate the lists which will populate the widget options
+            var showSubOptions = function(thisHierarchy) {
+                var thisOpt,
+                    thatOpt,
+                    thatHierarchy;
+                for (thisOpt in thisHierarchy) {
+                    if (thisHierarchy.hasOwnProperty(thisOpt)) {
+                        if (thisOpt && thisOpt != 'null') {
+                            widget['options' + new_level].push(thisOpt);
                         }
-                    } else {
-                        for (i in values) {
-                            if (values[i] === opt) {
-                                for (option in _hierarchy[opt]) {
-                                    if (_hierarchy[opt].hasOwnProperty(option)) {
-                                        new_level = level + 1;
-                                        if (option && option != 'null') {
-                                            widget['options' + new_level].push(option);
+                        thatHierarchy = thisHierarchy[thisOpt];
+                        if (typeof(thatHierarchy) === 'object') {
+                            next = new_level + 1;
+                            if (!$('#' + base + next).length) {
+                                // Missing level
+                                next = new_level + 2;
+                            }
+                            if ($('#' + base + next).length) {
+                                for (thatOpt in thatHierarchy) {
+                                    if (thatHierarchy.hasOwnProperty(thatOpt)) {
+                                        if (thatOpt && thatOpt != 'null') {
+                                            widget['options' + next].push(thatOpt);
                                         }
-                                        if (typeof(_hierarchy[opt][option]) === 'object') {
-                                            var __hierarchy = _hierarchy[opt][option];
-                                            for (_opt in __hierarchy) {
-                                                if (__hierarchy.hasOwnProperty(_opt)) {
-                                                    new_level = level + 2;
-                                                    if (_opt && _opt != 'null') {
-                                                        widget['options' + new_level].push(_opt);
-                                                    }
-                                                    // @ToDo: Greater recursion
-                                                    //if (typeof(__hierarchy[_opt]) === 'object') {
-                                                    //}
-                                                }
-                                            }
-                                        }
+                                        // @ToDo: Greater recursion?
+                                        //if (typeof(thatHierarchy[thatOpt]) === 'object') {
+                                        //}
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
-        } else if (hierarchy.hasOwnProperty('L' + (level - 1))) {
-            // Nested 1 in
-            var _hierarchy = hierarchy['L' + (level - 1)];
-            // Read higher level
-            var _values = $('#' + base + (level - 1)).val();
-            for (opt in _hierarchy) {
-                if (_hierarchy.hasOwnProperty(opt)) {
-                    if (_values === null) {
-                        // We can't be hiding
-                        // Read this level
-                        _values = $('#' + base + level).val();
-                        for (option in _hierarchy[opt]) {
-                            for (i in _values) {
-                                if (_values[i] === option) {
-                                    new_level = level + 1;
-                                    // Read the options for this level
-                                    var __hierarchy = _hierarchy[opt][option];
-                                    for (_opt in __hierarchy) {
-                                        if (__hierarchy.hasOwnProperty(_opt)) {
-                                            if (_opt && _opt != 'null') {
-                                                widget['options' + new_level].push(_opt);
-                                            }
-                                        }
-                                    }
-                                    // @ToDo: Read the options for subsequent levels
+            };
+            // Recursive Function to populate the lists which will populate the widget options
+            var showOptions = function(thisHierarchy, thisLevel) {
+                var i,
+                    nextLevel,
+                    thisOpt,
+                    theseValues = $('#' + base + thisLevel).val();
+                for (thisOpt in thisHierarchy) {
+                    if (thisHierarchy.hasOwnProperty(thisOpt)) {
+                        if (theseValues === null) {
+                            if (thisLevel === level) {
+                                // Show all Options
+                                showSubOptions(thisHierarchy[thisOpt]);
+                            } else {
+                                // Recurse
+                                nextLevel = thisLevel + 1;
+                                if (!$('#' + base + nextLevel).length) {
+                                    // Missing level
+                                    nextLevel++;
                                 }
+                                showOptions(thisHierarchy[thisOpt], nextLevel);
                             }
-                        }
-                    } else {
-                        for (i in _values) {
-                            if (_values[i] === opt) {
-                                for (option in _hierarchy[opt]) {
-                                    if (_hierarchy[opt].hasOwnProperty(option)) {
-                                        if (values === null) {
-                                            // Show all subsequent Options
-                                            for (option in _hierarchy[opt]) {
-                                                if (_hierarchy[opt].hasOwnProperty(option)) {
-                                                    new_level = level + 1;
-                                                    var __hierarchy = _hierarchy[opt][option];
-                                                    for (_opt in __hierarchy) {
-                                                        if (__hierarchy.hasOwnProperty(_opt)) {
-                                                            if (_opt && _opt != 'null') {
-                                                                widget['options' + new_level].push(_opt);
-                                                            }
-                                                            // @ToDo: Greater recursion
-                                                            //if (typeof(__hierarchy[_opt]) === 'object') {
-                                                            //}
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        } else {
-                                            for (i in values) {
-                                                if (values[i] === option) {
-                                                    new_level = level + 1;
-                                                    var __hierarchy = _hierarchy[opt][option];
-                                                    for (_opt in __hierarchy) {
-                                                        if (__hierarchy.hasOwnProperty(_opt)) {
-                                                            if (_opt && _opt != 'null') {
-                                                                widget['options' + new_level].push(_opt);
-                                                            }
-                                                            // @ToDo: Greater recursion
-                                                            //if (typeof(__hierarchy[_opt]) === 'object') {
-                                                            //}
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } else if (hierarchy.hasOwnProperty('L' + (level - 2))) {
-            // @ToDo
-        }
-        var name, name_l10n, options, _options;
-        for (var l = level + 1; l <= 5; l++) {
-            var select = $('#' + base + l);
-            if (typeof(select) != 'undefined') {
-                options = widget['options' + l];
-                // @ToDo: Sort by name_l10n not by name
-                options.sort();
-                _options = '';
-                for (i in options) {
-                    if (options.hasOwnProperty(i)) {
-                        name = options[i];
-                        if (translate) {
-                            name_l10n = location_name_l10n[name] || name;
                         } else {
-                            name_l10n = name;
+                            // Show only selected options
+                            for (i in theseValues) {
+                                if (theseValues[i] === thisOpt) {
+                                    if (thisLevel === level) {
+                                        showSubOptions(thisHierarchy[thisOpt]);
+                                    } else {
+                                        // Recurse
+                                        nextLevel = thisLevel + 1;
+                                        if (!$('#' + base + nextLevel).length) {
+                                            // Missing level
+                                            nextLevel++;
+                                        }
+                                        showOptions(thisHierarchy[thisOpt], nextLevel);
+                                    }
+                                }
+                            }
                         }
-                        _options += '<option value="' + name + '">' + name_l10n + '</option>';
                     }
                 }
-                select.html(_options);
-                if (select.hasClass('groupedopts-filter-widget') &&
-                    select.groupedopts('instance')) {
-                    try {
-                        select.groupedopts('refresh');
-                    } catch(e) { }
-                } else
-                if (select.hasClass('multiselect-filter-widget') &&
-                    select.multiselect('instance')) {
-                    select.multiselect('refresh');
-                }
-                if (l === (level + 1)) {
-                    if (values) {
-                        // Show next level down (if hidden)
-                        select.next('button').removeClass('hidden').show();
-                        // @ToDo: Hide subsequent levels (if configured to do so)
-                    } else {
-                        // @ToDo: Hide next levels down (if configured to do so)
-                        //select.next('button').hide();
+            };
+            // Start with the base Hierarchy level
+            var _hierarchy = hierarchy['L' + hierarchy_level];
+            showOptions(_hierarchy, hierarchy_level);
+
+            // Populate the widget options from the lists
+            var name_l10n,
+                options,
+                htmlOptions;
+            for (l = new_level; l <= 5; l++) {
+                select = $('#' + base + l);
+                if (select.length) {
+                    options = widget['options' + l];
+                    // @ToDo: Sort by name_l10n not by name
+                    options.sort();
+                    htmlOptions = '';
+                    for (var i in options) {
+                        if (options.hasOwnProperty(i)) {
+                            name = options[i];
+                            if (translate) {
+                                name_l10n = location_name_l10n[name] || name;
+                            } else {
+                                name_l10n = name;
+                            }
+                            htmlOptions += '<option value="' + name + '">' + name_l10n + '</option>';
+                        }
+                    }
+                    select.html(htmlOptions);
+                    if (select.hasClass('groupedopts-filter-widget') &&
+                        select.groupedopts('instance')) {
+                        try {
+                            select.groupedopts('refresh');
+                        } catch(e) { }
+                    } else
+                    if (select.hasClass('multiselect-filter-widget') &&
+                        select.multiselect('instance')) {
+                        select.multiselect('refresh');
+                    }
+                    if (l === (new_level)) {
+                        //if (values) {
+                            // Show next level down (if hidden)
+                            select.next('button').removeClass('hidden').show();
+                            // Hide all subsequent widgets
+                            // Select the next widget down
+                            next_widget = $widget.next('.ui-multiselect').next('.location-filter').next('.ui-multiselect');
+                            if (next_widget.length) {
+                                // Don't hide the immediate next one
+                                //next_widget.hide();
+                                // Hide the next widget down
+                                next_widget = next_widget.next('.location-filter').next('.ui-multiselect');
+                                if (next_widget.length) {
+                                    next_widget.hide();
+                                    // Hide the next widget down
+                                    next_widget = next_widget.next('.location-filter').next('.ui-multiselect');
+                                    if (next_widget.length) {
+                                        next_widget.hide();
+                                        // Hide the next widget down
+                                        next_widget = next_widget.next('.location-filter').next('.ui-multiselect');
+                                        if (next_widget.length) {
+                                            next_widget.hide();
+                                            // Hide the next widget down
+                                            next_widget = next_widget.next('.location-filter').next('.ui-multiselect');
+                                            if (next_widget.length) {
+                                                next_widget.hide();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        /*
+                        } else {
+                            // @ToDo: Hide next levels down (if configured to do so)
+                            //select.next('button').hide();
+                        }*/
                     }
                 }
             }
@@ -1773,7 +1897,7 @@ S3.search = {};
                     config = $('input#' + targets[i] + '_configurations');
                     if (config.length) {
                         settings = JSON.parse($(config).val());
-                        ajaxurl = settings['ajaxUrl'];
+                        ajaxurl = settings.ajaxUrl;
                         if (typeof ajaxurl != 'undefined') {
                             ajaxurl = filterURL(ajaxurl, queries);
                         } else {
@@ -1836,9 +1960,7 @@ S3.search = {};
                         dtAjaxURL = dt_ajaxurl[target_id];
                     dt.fnReloadAjax(dtAjaxURL);
                     updateFormatURLs(dt, queries);
-                    $('#' + dt[0].id + '_dataTable_filterURL').each(function() {
-                        $(this).val(dtAjaxURL);
-                    });
+                    $('#' + dt[0].id + '_dataTable_filterURL').val(dtAjaxURL);
                 } else if (t.hasClass('map_wrapper')) {
                     S3.gis.refreshLayer('search_results', queries);
                 } else if (t.hasClass('gi-container')) {
@@ -1869,7 +1991,7 @@ S3.search = {};
                 widget.removeClass('hide')
                         .show()
                         .find(selectors).each( function() {
-                            selector = $(this);
+                            var selector = $(this);
                             // Mark them as Active
                             selector.addClass('active');
                             // Refresh the contents
@@ -1910,16 +2032,17 @@ S3.search = {};
      * target have changed => update filter options accordingly
      *
      * @param {string} targetID - the filter target ID
+     * @param {function} callback - optional callback function
      */
-    var dataChanged = function(targetID) {
+    var dataChanged = function(targetID, callback) {
 
         if (targetID) {
 
             var target = $(this).find('input.filter-submit-target').val();
             if (target) {
-                targets = target.split(' ');
+                var targets = target.split(' ');
                 if (targets.length && $.inArray(targetID + '', targets) != -1) {
-                    S3.search.ajaxUpdateOptions(this);
+                    S3.search.ajaxUpdateOptions(this, callback);
                 }
             }
         }
@@ -1971,8 +2094,8 @@ S3.search = {};
 
         // Handle external target data updates
         // (e.g. add/update popups, or jeditable-Ajax)
-        $('.filter-form').on('dataChanged', function(e, targetID) {
-            dataChanged.call(this, targetID);
+        $('.filter-form').on('dataChanged', function(e, targetID, callback) {
+            dataChanged.call(this, targetID, callback);
             // No need (currently) to let this bubble up:
             return false;
         });
@@ -1991,7 +2114,10 @@ S3.search = {};
         $('.text-filter, .range-filter-input').on('input.autosubmit', function () {
             $(this).closest('form').trigger('optionChanged');
         });
-        $('.options-filter, .location-filter, .date-filter-input, .map-filter').on('change.autosubmit', function () {
+        $('.options-filter, .location-filter, .date-filter-input, .age-filter-input, .map-filter').on('change.autosubmit', function () {
+            $(this).closest('form').trigger('optionChanged');
+        });
+        $('.s3-options-filter-anyall input[type="radio"]').on('change.autosubmit', function() {
             $(this).closest('form').trigger('optionChanged');
         });
         $('.hierarchy-filter').on('select.s3hierarchy', function() {
@@ -2000,7 +2126,7 @@ S3.search = {};
         $('.map-filter').each(function() {
             var $this = $(this);
             $.when(jsLoaded()).then(
-                function(status) {
+                function() {
                     // Success: Add Callbacks
                     var widget_name = $this.attr('id'),
                         widget = $('#' + widget_name),
@@ -2017,14 +2143,14 @@ S3.search = {};
                         wkt = new OpenLayers.Format.WKT(out_options).write(feature);
                         // Store the data & trigger the autosubmit
                         widget.val('"' + wkt + '"').trigger('change');
-                    }
+                    };
                     s3.polygonButtonOff = function() {
                         // Clear the data & trigger the autosubmit
                         widget.val('').trigger('change');
-                    }
-                    s3.layerRefreshed = function(layer) {
+                    };
+                    s3.layerRefreshed = function() {
                         var polygonButton = s3.polygonButton;
-                        if (polygonButton.getIconClass() == 'drawpolygonclear-off') {
+                        if (polygonButton && polygonButton.getIconClass() == 'drawpolygonclear-off') {
                             // Hide the Polygon
                             if (s3.lastDraftFeature) {
                                 s3.lastDraftFeature.destroy();
@@ -2036,7 +2162,7 @@ S3.search = {};
                             polygonButton.control.deactivate();
                             polygonButton.items[0].pressed = true;
                         }
-                    }
+                    };
                     s3.polygonButtonLoaded = function() {
                         wkt = widget.val();
                         if (wkt) {
@@ -2055,7 +2181,7 @@ S3.search = {};
                             s3.lastDraftFeature = feature;
                             map.zoomToExtent(draftLayer.getDataExtent());
                         }
-                    }
+                    };
                     s3.polygonButtonLoaded();
                 },
                 function(status) {
@@ -2076,17 +2202,19 @@ S3.search = {};
             var $this = $(this);
             var fmt = $this.data('fmt');
             var minValue = $this.data('min');
+            var minDate;
             if (minValue) {
-                var minDate = moment(minValue);
+                minDate = moment(minValue);
             } else {
-                var minDate = moment().subtract(5, 'minutes');
+                minDate = moment().subtract(5, 'minutes');
                 $this.data('min', minDate.format());
             }
-            var maxValue = $this.data('max');
+            var maxValue = $this.data('max'),
+                maxDate;
             if (maxValue) {
-                var maxDate = moment(maxValue);
+                maxDate = moment(maxValue);
             } else {
-                var maxDate = moment().subtract(5, 'minutes');
+                maxDate = moment().subtract(5, 'minutes');
                 $this.data('max', maxDate.format());
             }
             var widget_name = $this.parent().attr('id');
@@ -2114,13 +2242,13 @@ S3.search = {};
                     year = new_year;
                     i++;
                 }
-                years[i]['months'].push(optDate.format(cfmt));
+                years[i].months.push(optDate.format(cfmt));
                 optDate.add(1, 'month');
             }
             for (i = 0; i < years.length; i++) {
                 year = years[i];
-                months = year['months'];
-                year = year['year'];
+                months = year.months;
+                year = year.year;
                 optgroups += '<optgroup label="' + year + '">';
                 for (j = 0; j < months.length; j++) {
                     optgroups += '<option value="' + months[j] + '">' + months[j] + '</option>';
@@ -2211,7 +2339,7 @@ S3.search = {};
                               '<div class="pt-tooltip-text">' + point.y + '</div>' +
                               '</div>';
                 return tooltip;
-            }
+            };
             rangePicker.graph = function() {
                 nv.addGraph(function() {
                     var chart = nv.models.lineChart()
@@ -2240,7 +2368,7 @@ S3.search = {};
                       .call(chart);          // Finally, render the chart!
 
                     // Update the chart when window resizes.
-                    nv.utils.windowResize(function() { chart.update() });
+                    nv.utils.windowResize(function() { chart.update(); });
                     return chart;
                 });
             };
@@ -2259,11 +2387,11 @@ S3.search = {};
                 endDate;
 
             // If the slider is updated then update the INPUTs & trigger a form refresh
-            $this.on('update', function(e) {
+            $this.on('update', function() {
                 values = rangePicker.getSelectValue();
-                totalPosition = values['totalWidth'];
-                startValue = values['start'];
-                endValue = values['end'];
+                totalPosition = values.totalWidth;
+                startValue = values.start;
+                endValue = values.end;
                 minDate = new Date($this.data('min'));
                 maxDate = new Date($this.data('max'));
                 offset = maxDate - minDate;
@@ -2277,7 +2405,7 @@ S3.search = {};
             });
 
             // If the Coarse Filters are updated then update the slider min/max & the INPUTs & trigger a form refresh
-            coarseStart.on('change', function(e) {
+            coarseStart.on('change', function() {
                 minDate = moment($(this).val(), cfmt);
                 $this.data('min', minDate.format());
                 startDate = minDate.format(fmt);
@@ -2286,7 +2414,7 @@ S3.search = {};
                 startField.val(startDate);
                 $this.closest('form').trigger('optionChanged');
             });
-            coarseEnd.on('change', function(e) {
+            coarseEnd.on('change', function() {
                 maxDate = moment($(this).val(), cfmt).endOf('month');
                 $this.data('max', maxDate.format());
                 endDate = maxDate.format(fmt);
@@ -2318,16 +2446,16 @@ S3.search = {};
                     endValue = '100%';
                 }
                 rangePicker.updatePosition(endValue, startValue);
-            };
-            startField.on('change', function(e) {
+            }
+            startField.on('change', function() {
                 updatePosition();
             });
-            endField.on('change', function(e) {
+            endField.on('change', function() {
                 updatePosition();
             });
 
             // Handle clear
-            $this.on('clear', function(e) {
+            $this.on('clear', function() {
                 rangePicker.updatePosition('100%', '0%');
             });
 
@@ -2358,12 +2486,13 @@ S3.search = {};
                 slot_wait = 0,    // 1st will happen immediately
                 timers = [];
             function playSlot(slot) {
-                var start = slots[slot].x;
+                var start = slots[slot].x,
+                    end;
                 try {
-                    var end = slots[slot + 1].x;
+                    end = slots[slot + 1].x;
                 } catch(e) {
                     // Final slot
-                    var end =  moment($this.data('max'));
+                    end =  moment($this.data('max'));
                 }
                 var timeout = slot_wait;
                 slot_wait = slot_wait + slot_speed;
@@ -2784,7 +2913,7 @@ S3.search = {};
                 id: id
             };
 
-            var url = new String(this.options.ajaxURL);
+            var url = '' + this.options.ajaxURL;
             if (url.search(/.*\?.*/) != -1) {
                 url += '&delete=1';
             } else {
