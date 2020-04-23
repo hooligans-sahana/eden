@@ -4,7 +4,7 @@
 
     @requires: U{B{I{gluon}} <http://web2py.com>}
 
-    @copyright: (c) 2010-2018 Sahana Software Foundation
+    @copyright: (c) 2010-2019 Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -36,8 +36,6 @@ import os
 import re
 import sys
 import time
-import urlparse
-import HTMLParser
 
 from collections import OrderedDict
 
@@ -48,13 +46,14 @@ from gluon.storage import Storage
 from gluon.languages import lazyT
 from gluon.tools import addrow
 
+from s3compat import HTMLParser, INTEGER_TYPES, PY2, STRING_TYPES, \
+                     basestring, long, unichr, unicodeT, urlparse
 from s3dal import Expression, Field, Row, S3DAL
-from s3datetime import ISOFORMAT, s3_decode_iso_datetime, s3_relative_datetime
-
-URLSCHEMA = re.compile(r"((?:(())(www\.([^/?#\s]*))|((http(s)?|ftp):)"
-                       r"(//([^/?#\s]*)))([^?#\s]*)(\?([^#\s]*))?(#([^\s]*))?)")
+from .s3datetime import ISOFORMAT, s3_decode_iso_datetime, s3_relative_datetime
 
 RCVARS = "rcvars"
+URLSCHEMA = re.compile(r"((?:(())(www\.([^/?#\s]*))|((http(s)?|ftp):)"
+                       r"(//([^/?#\s]*)))([^?#\s]*)(\?([^#\s]*))?(#([^\s]*))?)")
 
 # =============================================================================
 def s3_get_last_record_id(tablename):
@@ -241,14 +240,14 @@ def s3_represent_value(field,
     # Get text representation
     if field.represent:
         try:
-            key = "%s_repr_%s" % (field, val)
-            unicode(key)
+            key = s3_str("%s_repr_%s" % (field, val))
         except (UnicodeEncodeError, UnicodeDecodeError):
             text = field.represent(val)
         else:
             text = cache.ram(key,
                              lambda: field.represent(val),
-                             time_expire=60)
+                             time_expire = 60,
+                             )
             if isinstance(text, DIV):
                 text = str(text)
             elif not isinstance(text, basestring):
@@ -259,7 +258,7 @@ def s3_represent_value(field,
         elif fname == "comments" and not extended_comments:
             ur = s3_unicode(text)
             if len(ur) > 48:
-                text = "%s..." % ur[:45].encode("utf8")
+                text = s3_str("%s..." % ur[:45])
         else:
             text = s3_unicode(text)
 
@@ -310,7 +309,7 @@ def s3_dev_toolbar():
     dbstats = []
     dbtables = {}
     infos = DAL.get_instances()
-    for k, v in infos.iteritems():
+    for k, v in infos.items():
         dbstats.append(TABLE(*[TR(PRE(row[0]), "%.2fms" %
                                       (row[1] * 1000))
                                        for row in v["dbstats"]]))
@@ -326,6 +325,16 @@ def s3_dev_toolbar():
     request.update(vars=current.request.vars,
                    get_vars=current.request.get_vars,
                    post_vars=current.request.post_vars)
+
+    # Filter out sensitive session details
+    def no_sensitives(key):
+        if key in ("hmac_key", "password") or \
+           key[:8] == "_formkey" or \
+           key[-4:] == "_key" or \
+           key[-5:] == "token":
+            return None
+        return key
+
     return DIV(
         #BUTTON("design", _onclick="document.location='%s'" % admin),
         BUTTON("request",
@@ -342,7 +351,7 @@ def s3_dev_toolbar():
             _class="hide", _id="request-%s" % u),
         #DIV(BEAUTIFY(current.response), backtotop,
         #    _class="hide", _id="response-%s" % u),
-        DIV(BEAUTIFY(current.session), backtotop,
+        DIV(BEAUTIFY(current.session, keyfilter=no_sensitives), backtotop,
             _class="hide", _id="session-%s" % u),
         DIV(BEAUTIFY(dbtables), backtotop,
             _class="hide", _id="db-tables-%s" % u),
@@ -482,7 +491,7 @@ def s3_truncate(text, length=48, nice=True):
 
 
     if len(text) > length:
-        if type(text) is unicode:
+        if type(text) is unicodeT:
             encode = False
         else:
             # Make sure text is multi-byte-aware before truncating it
@@ -493,7 +502,7 @@ def s3_truncate(text, length=48, nice=True):
         else:
             truncated = "%s..." % text[:length-3]
         if encode:
-            truncated = truncated.encode("utf-8")
+            truncated = s3_str(truncated)
         return truncated
     else:
         return text
@@ -511,7 +520,7 @@ def s3_datatable_truncate(string, maxlength=40):
         @param string: the string
         @param maxlength: the maximum string length
 
-        @note: the JS click-event will be attached by S3.datatables.js
+        @note: the JS click-event will be attached by s3.ui.datatable.js
     """
 
     # Make sure text is multi-byte-aware before truncating it
@@ -656,7 +665,7 @@ def s3_fullname(person=None, pe_id=None, truncate=True):
     record = None
     query = None
 
-    if isinstance(person, (int, long)) or str(person).isdigit():
+    if isinstance(person, INTEGER_TYPES) or str(person).isdigit():
         db = current.db
         ptable = db.pr_person
         query = (ptable.id == person)
@@ -759,7 +768,7 @@ def s3_phone_represent(value):
 
     if not value:
         return current.messages["NONE"]
-    return ("%s%s" % (unichr(8206), s3_unicode(value))).encode("utf-8")
+    return s3_str("%s%s" % (unichr(8206), s3_unicode(value)))
 
 # =============================================================================
 def s3_url_represent(url):
@@ -872,6 +881,8 @@ def s3_avatar_represent(user_id, tablename="auth_user", gravatar=False, **attr):
 def s3_auth_user_represent(user_id, row=None):
     """
         Represent a user as their email address
+
+        @ToDo: Deprecate (replace with auth_UserRepresent)
     """
 
     if row:
@@ -894,6 +905,8 @@ def s3_auth_user_represent(user_id, row=None):
 def s3_auth_user_represent_name(user_id, row=None):
     """
         Represent users by their names
+
+        @ToDo: Deprecate (replace with auth_UserRepresent)
     """
 
     if not row:
@@ -925,6 +938,22 @@ def s3_yes_no_represent(value):
         return current.messages["NONE"]
 
 # =============================================================================
+def s3_keep_messages():
+    """
+        Retain user messages from previous request - prevents the messages
+        from being swallowed by overhanging Ajax requests or intermediate
+        pages with mandatory redirection (see s3_redirect_default)
+    """
+
+    response = current.response
+    session = current.session
+
+    session.flash = response.flash
+    session.confirmation = response.confirmation
+    session.error = response.error
+    session.warning = response.warning
+
+# =============================================================================
 def s3_redirect_default(location="", how=303, client_side=False, headers=None):
     """
         Redirect preserving response messages, useful when redirecting from
@@ -938,13 +967,7 @@ def s3_redirect_default(location="", how=303, client_side=False, headers=None):
         @param headers: response headers
     """
 
-    response = current.response
-    session = current.session
-
-    session.error = response.error
-    session.warning = response.warning
-    session.confirmation = response.confirmation
-    session.flash = response.flash
+    s3_keep_messages()
 
     redirect(location,
              how=how,
@@ -961,7 +984,7 @@ def s3_include_debug_css():
 
     request = current.request
 
-    location = current.response.s3.theme_styles
+    location = current.response.s3.theme_config
     filename = "%s/modules/templates/%s/css.cfg" % (request.folder, location)
     if not os.path.isfile(filename):
         raise HTTP(500, "Theme configuration file missing: modules/templates/%s/css.cfg" % location)
@@ -999,7 +1022,7 @@ def s3_include_debug_js():
     configFilename = "%s/tools/sahana.js.cfg"  % scripts_dir
     files = mergejsmf.getFiles(configDictCore, configFilename)[1]
 
-    script_template = '<script src="/%s/static/scripts/%%s" type="text/javascript"></script>' % \
+    script_template = '<script src="/%s/static/scripts/%%s"></script>' % \
                       request.application
 
     scripts = "\n".join(script_template % scriptname for scriptname in files)
@@ -1181,7 +1204,7 @@ def s3_populate_browser_compatibility(request):
         current.log.warning("pywurfl python module has not been installed, browser compatibility listing will not be populated. Download pywurfl from http://pypi.python.org/pypi/pywurfl/")
         return False
     import wurfl
-    device = wurfl.devices.select_ua(unicode(request.env.http_user_agent),
+    device = wurfl.devices.select_ua(s3_unicode(request.env.http_user_agent),
                                      search=TwoStepAnalysis(wurfl.devices))
 
     browser = Storage()
@@ -1212,7 +1235,7 @@ def s3_filename(filename):
 
     validFilenameChars = "-_.() %s%s" % (string.ascii_letters, string.digits)
 
-    filename = unicode(filename)
+    filename = s3_unicode(filename)
     cleanedFilename = unicodedata.normalize("NFKD",
                                             filename).encode("ASCII", "ignore")
 
@@ -1287,52 +1310,74 @@ def s3_get_foreign_key(field, m2m=True):
     return (rtablename, key, multiple)
 
 # =============================================================================
-def s3_unicode(s, encoding="utf-8"):
-    """
-        Convert an object into an unicode instance, to be used instead of
-        unicode(s)
+if PY2:
 
-        @param s: the object
-        @param encoding: the character encoding
-    """
+    def s3_unicode(s, encoding="utf-8"):
+        """
+            Convert an object into an unicode instance, to be used
+            instead of unicode(s)
 
-    if type(s) is unicode:
-        return s
-    try:
-        if not isinstance(s, basestring):
-            if hasattr(s, "__unicode__"):
-                s = unicode(s)
+            @param s: the object
+            @param encoding: the character encoding
+        """
+
+        if type(s) is unicode:
+            return s
+        try:
+            if not isinstance(s, basestring):
+                if hasattr(s, "__unicode__"):
+                    s = unicode(s)
+                else:
+                    try:
+                        s = unicode(str(s), encoding, "strict")
+                    except UnicodeEncodeError:
+                        if not isinstance(s, Exception):
+                            raise
+                        s = " ".join([s3_unicode(arg, encoding) for arg in s])
             else:
-                try:
-                    s = unicode(str(s), encoding, "strict")
-                except UnicodeEncodeError:
-                    if not isinstance(s, Exception):
-                        raise
-                    s = " ".join([s3_unicode(arg, encoding) for arg in s])
-        else:
-            s = s.decode(encoding)
-    except UnicodeDecodeError:
-        if not isinstance(s, Exception):
-            raise
-        s = " ".join([s3_unicode(arg, encoding) for arg in s])
-    return s
-
-def s3_str(s):
-    """
-        Unicode-safe conversion of an object s into a utf-8 encoded str,
-        to be used instead of str(s)
-
-        @param s: the object
-
-        @note: assumes utf-8, for other character encodings use explicit:
-
-                - s3_unicode(s, encoding=<in>).encode(<out>)
-    """
-
-    if type(s) is str:
+                s = s.decode(encoding)
+        except UnicodeDecodeError:
+            if not isinstance(s, Exception):
+                raise
+            s = " ".join([s3_unicode(arg, encoding) for arg in s])
         return s
-    else:
-        return s3_unicode(s).encode("utf-8", "strict")
+
+    def s3_str(s):
+        """
+            Unicode-safe conversion of an object s into a utf-8 encoded str,
+            to be used instead of str(s)
+
+            @param s: the object
+
+            @note: assumes utf-8, for other character encodings use explicit:
+
+                    - s3_unicode(s, encoding=<in>).encode(<out>)
+        """
+
+        if type(s) is str:
+            return s
+        else:
+            return s3_unicode(s).encode("utf-8", "strict")
+
+else:
+
+    def s3_unicode(s, encoding="utf-8"):
+        """
+            Convert an object into a str, for backwards-compatibility
+
+            @param s: the object
+            @param encoding: the character encoding
+        """
+
+        if type(s) is str:
+            return s
+        elif type(s) is bytes:
+            return s.decode(encoding, "strict")
+        else:
+            return str(s)
+
+    # In Python-3 this is just an alias:
+    s3_str = s3_unicode
 
 # =============================================================================
 def s3_flatlist(nested):
@@ -1520,22 +1565,22 @@ def search_vars_represent(search_vars):
         @return: HTML as string
     """
 
-    import cPickle
+    from s3compat import pickle
 
     s = ""
     search_vars = search_vars.replace("&apos;", "'")
 
     try:
-        search_vars = cPickle.loads(str(search_vars))
+        search_vars = pickle.loads(str(search_vars))
     except:
         raise HTTP(500, "ERROR RETRIEVING THE SEARCH CRITERIA")
     else:
         s = "<p>"
-        for var in search_vars.iterkeys():
+        for var in search_vars.keys():
             if var == "criteria" :
                 c_dict = search_vars[var]
                 #s = s + crud_string("pr_save_search", "Search Criteria")
-                for j in c_dict.iterkeys():
+                for j in c_dict.keys():
                     st = str(j)
                     if st[0] == '_':
                         continue
@@ -1773,6 +1818,43 @@ def sort_dict_by_values(adict):
     return OrderedDict(sorted(adict.items(), key = lambda item: item[1]))
 
 # =============================================================================
+class S3PriorityRepresent(object):
+    """
+        Color-coded representation of priorities
+    """
+
+    def __init__(self, options, classes=None):
+        """
+            Constructor
+
+            @param options: the options (as dict or anything that can be
+                            converted into a dict)
+            @param classes: a dict mapping keys to CSS class suffixes
+        """
+
+        self.options = dict(options)
+        self.classes = classes
+
+    def represent(self, value, row=None):
+        """
+            Representation function
+
+            @param value: the value to represent
+        """
+
+        css_class = base_class = "prio"
+
+        classes = self.classes
+        if classes:
+            suffix = classes.get(value)
+            if suffix:
+                css_class = "%s %s-%s" % (css_class, base_class, suffix)
+
+        label = self.options.get(value)
+
+        return DIV(label, _class=css_class)
+
+# =============================================================================
 class Traceback(object):
     """ Generate the traceback for viewing error Tickets """
 
@@ -1817,7 +1899,7 @@ class Traceback(object):
         lwords = traceback.split('"')
 
         # Make the short circuit compatible with <= python2.4
-        result = (len(lwords) != 0) and lwords[0] or ""
+        result = lwords[0] if len(lwords) else ""
 
         i = 1
 
@@ -1827,7 +1909,7 @@ class Traceback(object):
             if link == "":
                 result += '"' + lwords[i]
             else:
-                result += link
+                result += s3_str(link)
 
                 if i + 1 < len(lwords):
                     result += lwords[i + 1]
@@ -1869,7 +1951,7 @@ def URL2(a=None, c=None, r=None):
     if c:
         controller = c
     if not (application and controller):
-        raise SyntaxError, "not enough information to build the url"
+        raise SyntaxError("not enough information to build the url")
     #other = ""
     url = "/%s/%s" % (application, controller)
     return url
@@ -1884,8 +1966,8 @@ class S3CustomController(object):
         @ToDo: Add Helper Function for dataLists
     """
 
-    @classmethod
-    def _view(cls, template, filename):
+    @staticmethod
+    def _view(template, filename):
         """
             Use a custom view template
 
@@ -1903,8 +1985,9 @@ class S3CustomController(object):
             # Pass view as file not str to work in compiled mode
             current.response.view = open(view, "rb")
         except IOError:
-            raise HTTP(404, "Unable to open Custom View: %s" % view)
-        return
+            msg = "Unable to open Custom View: %s" % view
+            current.log.error("%s (%s)" % (msg, sys.exc_info()[1]))
+            raise HTTP(404, msg)
 
 # =============================================================================
 class S3TypeConverter(object):
@@ -1925,7 +2008,7 @@ class S3TypeConverter(object):
         if b is None:
             return None
         if type(a) is type:
-            if a in (str, unicode):
+            if a in STRING_TYPES:
                 return cls._str(b)
             if a is int:
                 return cls._int(b)
@@ -1942,7 +2025,7 @@ class S3TypeConverter(object):
             if a is datetime.time:
                 return cls._time(b)
             raise TypeError
-        if type(b) is type(a) or isinstance(b, type(a)):
+        if isinstance(b, type(a)):
             return b
         if isinstance(a, (list, tuple, set)):
             if isinstance(b, (list, tuple, set)):
@@ -1992,7 +2075,7 @@ class S3TypeConverter(object):
                 return True
             elif b.lower() in ("false", "0"):
                 return False
-        if isinstance(b, (int, long)):
+        if isinstance(b, INTEGER_TYPES):
             if b == 0:
                 return False
             else:
@@ -2031,7 +2114,7 @@ class S3TypeConverter(object):
     def _float(b):
         """ Convert into float """
 
-        if isinstance(b, long):
+        if isinstance(b, float):
             return b
         return float(b)
 
@@ -2060,19 +2143,15 @@ class S3TypeConverter(object):
                 else:
                     dt = datetime.datetime(y, m, d, hh, mm, ss)
                 # Validate and convert to UTC (assuming local timezone)
-                from s3validators import IS_UTC_DATETIME
-                dt, error = IS_UTC_DATETIME()(dt)
+                from .s3validators import IS_UTC_DATETIME
+                validator = IS_UTC_DATETIME()
+                dt, error = validator(dt)
                 if error:
                     # dateutil as last resort
                     # NB: this can process ISOFORMAT with time zone specifier,
                     #     returning a timezone-aware datetime, which is then
                     #     properly converted by IS_UTC_DATETIME
-                    try:
-                        dt = s3_decode_iso_datetime(b)
-                    except:
-                        raise ValueError
-                    else:
-                        dt, error = IS_UTC_DATETIME()(dt)
+                    dt, error = validator(s3_decode_iso_datetime(b))
             return dt
         else:
             raise TypeError
@@ -2092,7 +2171,7 @@ class S3TypeConverter(object):
                 if dt:
                     value = dt.date()
             if value is None:
-                from s3validators import IS_UTC_DATE
+                from .s3validators import IS_UTC_DATE
                 # Try ISO format first (e.g. S3DateFilter)
                 value, error = IS_UTC_DATE(format="%Y-%m-%d")(b)
                 if error:
@@ -2370,9 +2449,8 @@ class S3MultiPath:
 
             @param path: the path as a list of node IDs
         """
-        seq = map(str, path)
-        l = zip(seq, seq[1:])
-        if not l:
+        seq = [str(item) for item in path]
+        if len(seq) < 2:
             return [path]
         seq = S3MultiPath.__resolve(seq)
         pop = seq.pop
@@ -2634,11 +2712,12 @@ class StringTemplateParser(object):
         return parser._keys
 
 # =============================================================================
-class S3MarkupStripper(HTMLParser.HTMLParser):
+class S3MarkupStripper(HTMLParser, object): # enforce new-style class in Py2
     """ Simple markup stripper """
 
     def __init__(self):
-        self.reset()
+        super(S3MarkupStripper, self).__init__()
+        #self.reset() # Included in super-init
         self.result = []
 
     def handle_data(self, d):

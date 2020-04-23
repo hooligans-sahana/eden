@@ -38,7 +38,7 @@ def index2():
     # Need CRUD String
     table = s3db.table("cr_shelter", None)
 
-    module_name = settings.modules[module].name_nice
+    module_name = settings.modules[module].get("name_nice")
     response.title = module_name
     response.view = "inv/index.html"
     if s3.debug:
@@ -190,7 +190,7 @@ def index2():
                                                      },
                                         #dt_text_maximum_len = 10,
                                         #dt_text_condense_len = 8,
-                                        #dt_group_space = "true",
+                                        #dt_group_space = True,
                                         dt_shrink_groups = "accordion",
                                         #dt_shrink_groups = "individual",
                                         )
@@ -266,14 +266,15 @@ def index2():
                                        )
                 return supply_items
         r = s3_request(prefix = "inv", name = "inv_item")
-        return dict(module_name=module_name,
-                    warehouses = warehouses,
-                    inventory = inventory,
-                    supply_items = supply_items,
-                    r = r,
-                    )
+        return {"module_name": module_name,
+                "warehouses": warehouses,
+                "inventory": inventory,
+                "supply_items": supply_items,
+                "r": r,
+                }
         # End of TEST CODE
-    return dict(module_name=module_name)
+    return {"module_name": module_name,
+            }
 
 # -----------------------------------------------------------------------------
 def warehouse():
@@ -381,17 +382,17 @@ def warehouse():
                 read_url = URL(f="warehouse", args=["[id]", "inv_item"])
                 update_url = URL(f="warehouse", args=["[id]", "inv_item"])
                 s3_action_buttons(r,
-                                  read_url=read_url,
-                                  update_url=update_url)
+                                  read_url = read_url,
+                                  update_url = update_url)
         else:
             cname = r.component_name
             if cname == "human_resource":
                 # Modify action button to open staff instead of human_resource
                 read_url = URL(c="hrm", f="staff", args=["[id]"])
                 update_url = URL(c="hrm", f="staff", args=["[id]", "update"])
-                s3_action_buttons(r, read_url=read_url,
-                                  #delete_url=delete_url,
-                                  update_url=update_url)
+                s3_action_buttons(r, read_url = read_url,
+                                  #delete_url = delete_url,
+                                  update_url = update_url)
 
         if "add_btn" in output:
             del output["add_btn"]
@@ -590,7 +591,7 @@ def inv_item():
     output = s3_rest_controller(#csv_extra_fields = [dict(label="Organisation",
                                 #                         field=s3db.org_organisation_id(comment=None))
                                 #                    ],
-                                pdf_paper_alignment = "Landscape",
+                                pdf_orientation = "Landscape",
                                 pdf_table_autogrow = "B",
                                 pdf_groupby = "site_id, item_id",
                                 pdf_orderby = "expiry_date, supply_org_id",
@@ -637,7 +638,7 @@ def track_movement():
 # -----------------------------------------------------------------------------
 def inv_item_quantity():
     """
-        
+
 
         Access via the .json representation to avoid work rendering menus, etc
     """
@@ -741,6 +742,7 @@ def send_returns():
     tracktable = s3db.inv_track_item
 
     # Okay no error so far, change the status to Returning
+    ADMIN = auth.get_system_roles().ADMIN
     stable[send_id] = dict(status = inv_ship_status["RETURNING"],
                            owned_by_user = None,
                            owned_by_group = ADMIN)
@@ -808,7 +810,7 @@ def return_process():
         if return_qnty:
             db(invtable.id == send_inv_id).update(quantity = invtable.quantity + return_qnty)
 
-
+    ADMIN = auth.get_system_roles().ADMIN
     stable[send_id] = dict(status = inv_ship_status["RECEIVED"],
                            owned_by_user = None,
                            owned_by_group = ADMIN)
@@ -860,6 +862,7 @@ def send_cancel():
 
     # Okay no error so far, let's delete that baby
     # Change the send and recv status to cancelled
+    ADMIN = auth.get_system_roles().ADMIN
     db(stable.id == send_id).update(status = inv_ship_status["CANCEL"],
                                     owned_by_user = None,
                                     owned_by_group = ADMIN)
@@ -941,7 +944,7 @@ def recv():
                                                limitby=(0, 1)).first()
         try:
             if record.recipient_id is None:
-                db(recvtable.id == id).update(recipient_id=auth.s3_logged_in_person())
+                db(recvtable.id == id).update(recipient_id = auth.s3_logged_in_person())
         except:
             pass
 
@@ -1237,6 +1240,7 @@ def recv_process():
         redirect(URL(c="inv", f="recv", args=[recv_id]))
 
     # Update Receive record & lock for editing
+    ADMIN = auth.get_system_roles().ADMIN
     data = {"status": inv_ship_status["RECEIVED"],
             "owned_by_user": None,
             "owned_by_group": ADMIN,
@@ -1365,7 +1369,9 @@ def recv_cancel():
                                                   )
             db(ritable.id == req_id).update(quantity_fulfil = quantity_fulfil)
             s3db.req_update_status(req_id)
+
     # Now set the recv record to cancelled and the send record to sent
+    ADMIN = auth.get_system_roles().ADMIN
     db(rtable.id == recv_id).update(date = request.utcnow,
                                     status = inv_ship_status["CANCEL"],
                                     owned_by_user = None,

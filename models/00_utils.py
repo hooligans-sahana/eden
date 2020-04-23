@@ -45,7 +45,7 @@ if not auth.permission.has_permission("read"):
 # =============================================================================
 # Initialize Date/Time Settings
 #
-s3base.s3_get_utc_offset()
+s3base.s3_get_tzinfo()
 
 # =============================================================================
 # Menus
@@ -211,8 +211,8 @@ def s3_rest_controller(prefix=None, resourcename=None, **attr):
     set_handler("compose", s3base.S3Compose)
     # @ToDo: Make work in Component Tabs:
     set_handler("copy", lambda r, **attr: \
-                               redirect(URL(args="create",
-                                            vars={"from_record":r.id})))
+                               redirect(URL(args = "create",
+                                            vars = {"from_record":r.id})))
     set_handler("deduplicate", s3base.S3Merge)
     set_handler("filter", s3base.S3Filter)
     set_handler("grouped", s3base.S3GroupedItemsReport)
@@ -220,6 +220,7 @@ def s3_rest_controller(prefix=None, resourcename=None, **attr):
     set_handler("import", s3base.S3Importer)
     set_handler("map", s3base.S3Map)
     set_handler("mform", s3base.S3MobileCRUD, representation="json")
+    set_handler("organize", s3base.S3Organizer)
     set_handler("profile", s3base.S3Profile)
     set_handler("report", s3base.S3Report) # For HTML, JSON
     set_handler("report", s3base.S3Report, transform=True) # For GeoJSON
@@ -234,7 +235,8 @@ def s3_rest_controller(prefix=None, resourcename=None, **attr):
         from s3.s3pdf import S3PDF
         set_handler("import", S3PDF(),
                     http = ("GET", "POST"),
-                    representation="pdf")
+                    representation = "pdf"
+                    )
 
     # Plugin OrgRoleManager when appropriate
     s3base.S3OrgRoleManager.set_method(r)
@@ -248,13 +250,14 @@ def s3_rest_controller(prefix=None, resourcename=None, **attr):
                   "search",
                   "datatable",
                   "datatable_f",
-                  "summary"):
+                  "summary",
+                  ):
 
         if s3.actions is None:
 
             # Add default action buttons
             prefix, name, table, tablename = r.target()
-            authorised = s3_has_permission("update", tablename)
+            authorised = auth.s3_has_permission("update", tablename)
 
             # If a component has components itself, then action buttons
             # can be forwarded to the native controller by setting native=True
@@ -266,41 +269,62 @@ def s3_rest_controller(prefix=None, resourcename=None, **attr):
             # Get table config
             get_config = s3db.get_config
             listadd = get_config(tablename, "listadd", True)
-            editable = get_config(tablename, "editable", True) and \
-                       not auth.permission.ownership_required("update", table)
+
+            # Which is the standard open-action?
+            if settings.get_ui_open_read_first():
+                # Always read, irrespective permissions
+                editable = False
+            else:
+                editable = get_config(tablename, "editable", True)
+                if editable and \
+                   auth.permission.ownership_required("update", table):
+                    # User cannot edit all records in the table
+                    if settings.get_ui_auto_open_update():
+                        # Decide automatically per-record (implicit method)
+                        editable = "auto"
+                    else:
+                        # Always open read first (explicit read)
+                        editable = False
+
             deletable = get_config(tablename, "deletable", True)
             copyable = get_config(tablename, "copyable", False)
 
             # URL to open the resource
             open_url = r.resource.crud._linkto(r,
-                                               authorised=authorised,
-                                               update=editable,
-                                               native=native)("[id]")
+                                               authorised = authorised,
+                                               update = editable,
+                                               native = native)("[id]")
 
             # Add action buttons for Open/Delete/Copy as appropriate
             s3_action_buttons(r,
-                              deletable=deletable,
-                              copyable=copyable,
-                              editable=editable,
-                              read_url=open_url,
-                              update_url=open_url
+                              deletable = deletable,
+                              copyable = copyable,
+                              editable = editable,
+                              read_url = open_url,
+                              update_url = open_url
                               # To use modals
-                              #update_url="%s.popup?refresh=list" % open_url
+                              #update_url = "%s.popup?refresh=list" % open_url
                               )
 
             # Override Add-button, link to native controller and put
             # the primary key into get_vars for automatic linking
             if native and not listadd and \
-               s3_has_permission("create", tablename):
+               auth.s3_has_permission("create", tablename):
                 label = s3base.S3CRUD.crud_string(tablename,
                                                   "label_create")
                 component = r.resource.components[name]
                 fkey = "%s.%s" % (name, component.fkey)
                 get_vars_copy = get_vars.copy()
                 get_vars_copy.update({fkey: r.record[component.fkey]})
-                url = URL(prefix, name, args=["create"], vars=get_vars_copy)
-                add_btn = A(label, _href=url, _class="action-btn")
-                output.update(add_btn=add_btn)
+                url = URL(prefix, name,
+                          args = ["create"],
+                          vars = get_vars_copy,
+                          )
+                add_btn = A(label,
+                            _href = url,
+                            _class = "action-btn",
+                            )
+                output.update(add_btn = add_btn)
 
     elif method not in ("import",
                         "review",

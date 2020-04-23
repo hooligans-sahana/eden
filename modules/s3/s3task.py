@@ -16,7 +16,7 @@
 
     @requires: U{B{I{gluon}} <http://web2py.com>}
 
-    @copyright: 2011-2018 (c) Sahana Software Foundation
+    @copyright: 2011-2019 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -46,12 +46,13 @@ __all__ = ("S3Task",)
 import datetime
 import json
 
-from gluon import current, HTTP, IS_EMPTY_OR
+from gluon import current, HTTP
 from gluon.storage import Storage
 
-from s3datetime import S3DateTime
-from s3validators import IS_TIME_INTERVAL_WIDGET, IS_UTC_DATETIME
-from s3widgets import S3CalendarWidget, S3TimeIntervalWidget
+from s3compat import INTEGER_TYPES, basestring
+from .s3datetime import S3DateTime
+from .s3validators import IS_TIME_INTERVAL_WIDGET, IS_UTC_DATETIME
+from .s3widgets import S3CalendarWidget, S3TimeIntervalWidget
 
 # -----------------------------------------------------------------------------
 class S3Task(object):
@@ -68,20 +69,22 @@ class S3Task(object):
         # Instantiate Scheduler
         try:
             from gluon.scheduler import Scheduler
-        except:
+        except ImportError:
             # Warning should already have been given by eden_update_check.py
             self.scheduler = None
         else:
             self.scheduler = Scheduler(current.db,
                                        tasks,
-                                       migrate=migrate)
+                                       migrate = migrate,
+                                       #use_spawn = True # Possible subprocess method with Py3
+                                       )
 
     # -------------------------------------------------------------------------
     def configure_tasktable_crud(self,
-                                 task=None,
-                                 function=None,
-                                 args=None,
-                                 vars=None,
+                                 task = None,
+                                 function = None,
+                                 args = None,
+                                 vars = None,
                                  period = 3600, # seconds, so 1 hour
                                  ):
         """
@@ -223,7 +226,7 @@ class S3Task(object):
     # -------------------------------------------------------------------------
     # API Function run within the main flow of the application
     # -------------------------------------------------------------------------
-    def async(self, task, args=None, vars=None, timeout=300):
+    def run_async(self, task, args=None, vars=None, timeout=300):
         """
             Wrapper to call an asynchronous task.
             - run from the main request
@@ -253,7 +256,7 @@ class S3Task(object):
             # Run the task synchronously
             _args = []
             for arg in args:
-                if isinstance(arg, (int, long, float)):
+                if isinstance(arg, INTEGER_TYPES + (float,)):
                     _args.append(str(arg))
                 elif isinstance(arg, basestring):
                     _args.append("%s" % str(json.dumps(arg)))
@@ -269,7 +272,9 @@ class S3Task(object):
             else:
                 statement = "tasks['%s'](%s)" % (task, _vars)
             # Handle JSON
+            false = False
             null = None
+            true = True
             exec(statement)
             return None
 
@@ -295,19 +300,20 @@ class S3Task(object):
     # -------------------------------------------------------------------------
     def schedule_task(self,
                       task,
-                      args=None, # args to pass to the task
-                      vars=None, # vars to pass to the task
-                      function_name=None,
-                      start_time=None,
-                      next_run_time=None,
-                      stop_time=None,
-                      repeats=None,
-                      period=None,
-                      timeout=None,
-                      enabled=None, # None = Enabled
-                      group_name=None,
-                      ignore_duplicate=False,
-                      sync_output=0):
+                      args = None, # args to pass to the task
+                      vars = None, # vars to pass to the task
+                      function_name = None,
+                      start_time = None,
+                      next_run_time = None,
+                      stop_time = None,
+                      repeats = None,
+                      retry_failed = None,
+                      period = None,
+                      timeout = None,
+                      enabled = None, # None = Enabled
+                      group_name = None,
+                      ignore_duplicate = False,
+                      sync_output = 0):
         """
             Schedule a task in web2py Scheduler
 
@@ -319,6 +325,7 @@ class S3Task(object):
             @param next_run_time: next_run_time for the the scheduled task
             @param stop_time: stop_time for the the scheduled task
             @param repeats: number of times the task to be repeated (0=unlimited)
+            @param retry_failed: number of times the task to be retried (-1=unlimited)
             @param period: time period between two consecutive runs (seconds)
             @param timeout: set timeout for a running task
             @param enabled: enabled flag for the scheduled task
@@ -363,6 +370,9 @@ class S3Task(object):
         if repeats is not None:
             kwargs["repeats"] = repeats
 
+        if retry_failed is not None:
+            kwargs["retry_failed"] = retry_failed
+
         if period:
             kwargs["period"] = period
 
@@ -396,7 +406,8 @@ class S3Task(object):
         return task_id
 
     # -------------------------------------------------------------------------
-    def _duplicate_task_exists(self, task, args, vars):
+    @staticmethod
+    def _duplicate_task_exists(task, args, vars):
         """
             Checks if given task already exists in the Scheduler and both coincide
             with their execution time
@@ -409,10 +420,10 @@ class S3Task(object):
         db = current.db
         ttable = db.scheduler_task
 
-        _args = json.dumps(args)
+        args_json = json.dumps(args)
 
         query = ((ttable.function_name == task) & \
-                 (ttable.args == _args) & \
+                 (ttable.args == args_json) & \
                  (ttable.status.belongs(["RUNNING", "QUEUED", "ALLOCATED"])))
         jobs = db(query).select(ttable.vars)
         for job in jobs:
@@ -422,7 +433,8 @@ class S3Task(object):
         return False
 
     # -------------------------------------------------------------------------
-    def _is_alive(self):
+    @staticmethod
+    def _is_alive():
         """
             Returns True if there is at least 1 active worker to run scheduled tasks
             - run from the main request
@@ -437,19 +449,19 @@ class S3Task(object):
         #    return False
 
         db = current.db
-        cache = current.response.s3.cache
-        now = datetime.datetime.now()
-
-        offset = datetime.timedelta(minutes=1)
         table = db.scheduler_worker
+
+        now = datetime.datetime.now()
+        offset = datetime.timedelta(minutes=1)
+
         query = (table.last_heartbeat > (now - offset))
+        cache = current.response.s3.cache
         worker_alive = db(query).select(table.id,
-                                        limitby=(0, 1),
-                                        cache=cache).first()
-        if worker_alive:
-            return True
-        else:
-            return False
+                                        limitby = (0, 1),
+                                        cache = cache,
+                                        ).first()
+
+        return True if worker_alive else False
 
     # -------------------------------------------------------------------------
     @staticmethod
@@ -472,7 +484,8 @@ class S3Task(object):
     # =========================================================================
     # Functions run within the Task itself
     # =========================================================================
-    def authenticate(self, user_id):
+    @staticmethod
+    def authenticate(user_id):
         """
             Activate the authentication passed from the caller to this new request
             - run from within the task

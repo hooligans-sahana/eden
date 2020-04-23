@@ -19,7 +19,7 @@
 }
 
 #intro {
-    background: url(img/intro.png) left center no-repeat !important;
+    background: url(img/intro.jpg) left center no-repeat !important;
     min-height: 500px;
     h1 {
         color: white;
@@ -63,6 +63,13 @@
     p {
         font-size: 0.8rem;
     }
+    a {
+        color: #afefef;
+        text-decoration: underline;
+        &:hover {
+            color: #7fefef;
+        }
+    }
     hr {
         border-top: 2px dashed white;
         margin: 0.5rem 0;
@@ -90,6 +97,15 @@
 
 .last-stats-update {
     font-size: 0.7rem;
+}
+
+.filter-form .ui-multiselect.ui-widget.ui-state-default.ui-corner-all,
+.form-container .ui-multiselect.ui-widget.ui-state-default.ui-corner-all {
+    min-width: 0;
+}
+
+#filter-form.mapview {
+    margin-bottom: 1rem;
 }
 
 // END ========================================================================

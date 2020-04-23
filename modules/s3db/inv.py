@@ -2,7 +2,7 @@
 
 """ Sahana Eden Inventory Model
 
-    @copyright: 2009-2018 (c) Sahana Software Foundation
+    @copyright: 2009-2019 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -49,13 +49,13 @@ __all__ = ("S3WarehouseModel",
            )
 
 import datetime
-import itertools
 
 from gluon import *
 from gluon.sqlhtml import RadioWidget
 from gluon.storage import Storage
 
 from ..s3 import *
+from s3compat import zip_longest
 from s3layouts import S3PopupLink
 
 SHIP_STATUS_IN_PROCESS = 0
@@ -416,8 +416,9 @@ class S3InventoryModel(S3Model):
         UNKNOWN_OPT = messages.UNKNOWN_OPT
 
         settings = current.deployment_settings
-        WAREHOUSE = T(settings.get_inv_facility_label())
+        direct_stock_edits = settings.get_inv_direct_stock_edits()
         track_pack_values = settings.get_inv_track_pack_values()
+        WAREHOUSE = T(settings.get_inv_facility_label())
 
         inv_source_type = {0: None,
                            1: T("Donated"),
@@ -463,7 +464,7 @@ class S3InventoryModel(S3Model):
                                 represent = lambda v: \
                                     IS_FLOAT_AMOUNT.represent(v, precision=2),
                                 requires = IS_FLOAT_AMOUNT(minimum=0.0),
-                                writable = False,
+                                writable = direct_stock_edits,
                                 ),
                           Field("bin", length=16,
                                 label = T("Bin"),
@@ -678,7 +679,6 @@ $.filterOptionsS3({
                            ]
 
         # Configuration
-        direct_stock_edits = settings.get_inv_direct_stock_edits()
         self.configure(tablename,
                        # Lock the record so that it can't be meddled with
                        # - unless explicitly told to allow this
@@ -724,11 +724,11 @@ $.filterOptionsS3({
         # ---------------------------------------------------------------------
         # Pass names back to global scope (s3.*)
         #
-        return dict(inv_item_id = inv_item_id,
-                    inv_item_represent = inv_item_represent,
-                    inv_remove = self.inv_remove,
-                    inv_prep = self.inv_prep,
-                    )
+        return {"inv_item_id": inv_item_id,
+                "inv_item_represent": inv_item_represent,
+                "inv_remove": self.inv_remove,
+                "inv_prep": self.inv_prep,
+                }
 
     # -------------------------------------------------------------------------
     @staticmethod
@@ -945,12 +945,13 @@ class S3InventoryTrackingLabels(S3Model):
         # Overwrite the label until we have a better way to do this
         itn_label = T("CTN")
 
-        settings = current.deployment_settings
-        return dict(inv_tracking_status_labels = tracking_status,
-                    inv_shipment_status_labels = shipment_status,
-                    inv_itn_label = itn_label,
-                    inv_item_status_opts = settings.get_inv_item_status()
-                    )
+        inv_item_status_opts = current.deployment_settings.get_inv_item_status()
+
+        return {"inv_tracking_status_labels": tracking_status,
+                "inv_shipment_status_labels": shipment_status,
+                "inv_itn_label": itn_label,
+                "inv_item_status_opts": inv_item_status_opts,
+                }
 
     # -------------------------------------------------------------------------
     def defaults(self):
@@ -1944,15 +1945,24 @@ $.filterOptionsS3({
     def inv_track_item_total_value(row):
         """ Total value of a track item """
 
+        # Default
+        total = current.messages["NONE"]
+
         if hasattr(row, "inv_track_item"):
             row = row.inv_track_item
         try:
-            v = row.quantity * row.pack_value
+            if row.quantity and row.pack_value:
+                total = row.quantity * row.pack_value
+            else:
+                # Item lacks quantity, or value per pack, or both
+                # => default
+                pass
         except AttributeError:
-            # Not available
-            return current.messages["NONE"]
+            # Columns needed to compute total not available
+            # => default
+            pass
 
-        return v
+        return total
 
     # -------------------------------------------------------------------------
     @staticmethod
@@ -2646,7 +2656,7 @@ $.filterOptionsS3({
                         pdf_hide_comments = True,
                         pdf_header_padding = 12,
                         pdf_footer = inv_send_pdf_footer,
-                        pdf_paper_alignment = "Landscape",
+                        pdf_orientation = "Landscape",
                         pdf_table_autogrow = "B",
                         **attr
                         )
@@ -2798,7 +2808,7 @@ $.filterOptionsS3({
                         pdf_header_padding = 12,
                         pdf_footer = inv_recv_pdf_footer,
                         pdf_table_autogrow = "B",
-                        pdf_paper_alignment = "Landscape",
+                        pdf_orientation = "Landscape",
                         **attr
                         )
 
@@ -3507,11 +3517,11 @@ $.filterOptionsS3({
             now = request.utcnow
             tl_start = tl_end = now
             events = []
-            if r.name is "send":
+            if r.name == "send":
                 rr = (rows, rows2)
             else:
                 rr = (rows1, rows)
-            for (row_send, row_recv) in itertools.izip_longest(rr[0], rr[0]):
+            for (row_send, row_recv) in zip_longest(rr[0], rr[0]):
                 # send  Dates
                 start = row_send.date  or ""
                 if start:
@@ -3926,7 +3936,8 @@ def inv_send_rheader(r):
                 address = s3db.gis_LocationRepresent(address_only=True)(site.location_id)
             else:
                 address = current.messages["NONE"]
-            rData = TABLE(TR(TD(T(current.deployment_settings.get_inv_send_form_name().upper()),
+            shipment_details = TABLE(
+                          TR(TD(T(current.deployment_settings.get_inv_send_form_name().upper()),
                                 _colspan=2, _class="pdf_title"),
                              TD(logo, _colspan=2),
                              ),
@@ -4089,12 +4100,11 @@ def inv_send_rheader(r):
             #       msg = T("One item is attached to this shipment")
             #    elif cnt > 1:
             #        msg = T("%s items are attached to this shipment") % cnt
-            #    rData.append(TR(TH(action, _colspan=2),
-            #                    TD(msg)))
-                rData.append(TR(TH(action, _colspan=2)))
+            #    shipment_details.append(TR(TH(action, _colspan=2), TD(msg)))
+                shipment_details.append(TR(TH(action, _colspan=2)))
 
             s3.rfooter = rfooter
-            rheader = DIV(rData,
+            rheader = DIV(shipment_details,
                           rheader_tabs,
                           #rSubdata
                           )
@@ -4184,7 +4194,8 @@ def inv_recv_rheader(r):
             except AttributeError:
                 org_id = None
             logo = s3db.org_organisation_logo(org_id)
-            rData = TABLE(TR(TD(T(current.deployment_settings.get_inv_recv_form_name()),
+            shipment_details = TABLE(
+                          TR(TD(T(current.deployment_settings.get_inv_recv_form_name()),
                                 _colspan=2, _class="pdf_title"),
                              TD(logo, _colspan=2),
                              ),
@@ -4269,13 +4280,10 @@ def inv_recv_rheader(r):
                 msg = T("This shipment contains one line item")
             elif cnt > 1:
                 msg = T("This shipment contains %s items") % cnt
-            rData.append(TR(TH(action,
-                               _colspan=2),
-                            TD(msg)
-                            ))
+            shipment_details.append(TR(TH(action, _colspan=2), TD(msg)))
 
             current.response.s3.rfooter = rfooter
-            rheader = DIV(rData,
+            rheader = DIV(shipment_details,
                           rheader_tabs,
                           )
             return rheader
@@ -4740,11 +4748,9 @@ def inv_item_total_weight(row):
         query = (itable.id == inv_item.id) & \
                 (itable.item_id == stable.id)
         supply_item = current.db(query).select(stable.weight,
-                                                limitby=(0, 1)).first()
-        if not supply_item:
-            return
-        else:
-            weight = supply_item.weight
+                                               limitby = (0, 1),
+                                               ).first()
+        weight = supply_item.weight if supply_item else None
 
     if weight is None:
         return current.messages["NONE"]
@@ -4778,11 +4784,9 @@ def inv_item_total_volume(row):
         query = (itable.id == inv_item.id) & \
                 (itable.item_id == stable.id)
         supply_item = current.db(query).select(stable.volume,
-                                               limitby=(0, 1)).first()
-        if not supply_item:
-            return
-        else:
-            volume = supply_item.volume
+                                               limitby = (0, 1),
+                                               ).first()
+        volume = supply_item.volume if supply_item else None
 
     if volume is None:
         return current.messages["NONE"]

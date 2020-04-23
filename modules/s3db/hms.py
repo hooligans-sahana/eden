@@ -2,7 +2,7 @@
 
 """ Sahana Eden Hospital Management System Model
 
-    @copyright: 2009-2018 (c) Sahana Software Foundation
+    @copyright: 2009-2019 (c) Sahana Software Foundation
     @license: MIT
 
     Permission is hereby granted, free of charge, to any person
@@ -106,6 +106,27 @@ class HospitalDataModel(S3Model):
             98: T("Other"),
             99: T("None"),
         } #: Power Supply Type Options
+
+        hms_bed_type_opts = {
+            1: T("Adult ICU"),
+            2: T("Pediatric ICU"),
+            3: T("Neonatal ICU"),
+            4: T("Emergency Department"),
+            5: T("Nursery Beds"),
+            6: T("General Medical/Surgical"),
+            7: T("Rehabilitation/Long Term Care"),
+            8: T("Burn ICU"),
+            9: T("Pediatrics"),
+            10: T("Adult Psychiatric"),
+            11: T("Pediatric Psychiatric"),
+            12: T("Negative Flow Isolation"),
+            13: T("Other Isolation"),
+            14: T("Operating Rooms"),
+            15: T("Cholera Treatment"),
+            16: T("Ebola Treatment"),
+            17: T("Respirator"),
+            99: T("Other")
+        } #: Bed Type Options
 
         tablename = "hms_hospital"
         define_table(tablename,
@@ -265,29 +286,35 @@ class HospitalDataModel(S3Model):
                               "location_id$L1",
                               "location_id$L2",
                               ],
-                             label=T("Name"),
-                             _class="filter-search",
+                             label = T("Name"),
+                             _class = "filter-search",
                              ),
                 S3OptionsFilter("facility_type",
                                 label = T("Type"),
-                                #hidden=True,
+                                #hidden = True,
                                 ),
                 S3LocationFilter("location_id",
                                  label = T("Location"),
                                  levels = ("L0", "L1", "L2"),
-                                 #hidden=True,
+                                 #hidden = True,
                                  ),
                 S3OptionsFilter("status.facility_status",
                                 label = T("Status"),
                                 options = hms_facility_status_opts,
-                                #represent="%(name)s",
-                                #hidden=True,
+                                #represent = "%(name)s",
+                                #hidden = True,
                                 ),
                 S3OptionsFilter("status.power_supply_type",
                                 label = T("Power"),
                                 options = hms_power_supply_type_opts,
                                 #represent = "%(name)s",
-                                #hidden=True,
+                                #hidden = True,
+                                ),
+                S3OptionsFilter("bed_capacity.bed_type",
+                                label = T("Bed Type"),
+                                options = hms_bed_type_opts,
+                                #represent = "%(name)s",
+                                #hidden = True,
                                 ),
                 S3RangeFilter("total_beds",
                               label = T("Total Beds"),
@@ -330,13 +357,13 @@ class HospitalDataModel(S3Model):
                                  ],
                   onaccept = self.hms_hospital_onaccept,
                   report_options = Storage(
-                        rows=report_fields,
-                        cols=report_fields,
-                        fact=report_fields,
-                        defaults=Storage(rows="location_id$L2",
-                                         cols="status.facility_status",
-                                         fact="count(name)",
-                                         totals=True)
+                        rows = report_fields,
+                        cols = report_fields,
+                        fact = report_fields,
+                        defaults = Storage(rows = "location_id$L2",
+                                           cols = "status.facility_status",
+                                           fact = "count(name)",
+                                           totals = True)
                         ),
                   super_entity = ("org_site", "doc_entity", "pr_pentity"),
                   )
@@ -366,18 +393,22 @@ class HospitalDataModel(S3Model):
         single = dict(joinby="hospital_id", multiple=False)
         multiple = "hospital_id"
         add_components(tablename,
-                       hms_status=single,
-                       hms_contact=multiple,
-                       hms_bed_capacity=multiple,
-                       hms_services=single,
-                       hms_resources=multiple,
+                       hms_status = single,
+                       hms_contact = multiple,
+                       hms_bed_capacity = multiple,
+                       hms_services = single,
+                       hms_resources = multiple,
                        )
 
         # Optional components
         if settings.get_hms_track_ctc():
-            add_components(tablename, hms_ctc=single)
+            add_components(tablename,
+                           hms_ctc = single,
+                           )
         if settings.get_hms_activity_reports():
-            add_components(tablename, hms_activity=multiple)
+            add_components(tablename,
+                           hms_activity = multiple,
+                           )
 
         # Custom Method to Assign HRs
         self.set_method("hms", "hospital",
@@ -712,25 +743,6 @@ class HospitalDataModel(S3Model):
         # ---------------------------------------------------------------------
         # Bed Capacity
         #
-        hms_bed_type_opts = {
-            1: T("Adult ICU"),
-            2: T("Pediatric ICU"),
-            3: T("Neonatal ICU"),
-            4: T("Emergency Department"),
-            5: T("Nursery Beds"),
-            6: T("General Medical/Surgical"),
-            7: T("Rehabilitation/Long Term Care"),
-            8: T("Burn ICU"),
-            9: T("Pediatrics"),
-            10: T("Adult Psychiatric"),
-            11: T("Pediatric Psychiatric"),
-            12: T("Negative Flow Isolation"),
-            13: T("Other Isolation"),
-            14: T("Operating Rooms"),
-            15: T("Cholera Treatment"),
-            16: T("Ebola Treatment"),
-            99: T("Other")
-        }
 
         tablename = "hms_bed_capacity"
         define_table(tablename,
@@ -1102,7 +1114,7 @@ class CholeraTreatmentCapabilityModel(S3Model):
                      Field("problem_types", "list:integer",
                            label = T("Current problems, categories"),
                            represent = lambda optlist: \
-                                       optlist and ", ".join(map(str,optlist)) or T("N/A"),
+                                       optlist and ", ".join(str(o) for o in optlist) or T("N/A"),
                            requires = IS_EMPTY_OR(
                                         IS_IN_SET(hms_problem_types,
                                                   zero=None,
@@ -1299,14 +1311,8 @@ def hms_hospital_rheader(r, tabs=None):
                        permit("create", "hrm_human_resource_site"):
                         tabs.append((T("Assign %(staff)s") % dict(staff=STAFF), "assign"))
 
-                try:
-                    tabs = tabs + s3db.req_tabs(r, match=False)
-                except:
-                    pass
-                try:
-                    tabs = tabs + s3db.inv_tabs(r)
-                except:
-                    pass
+                tabs.extend(s3db.req_tabs(r, match=False))
+                tabs.extend(s3db.inv_tabs(r))
 
                 tabs.append((T("User Roles"), "roles"))
 

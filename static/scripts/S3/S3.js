@@ -213,16 +213,17 @@ S3.addModals = function() {
                 'src': '',
                 // Set initial 'loading' class to show spinner until contents loaded
                 'class': 'loading',
-                'load': function() {
-                    // Call popup_loaded only once we have a src
-                    if ($(this).attr('src')) {
-                        S3.popup_loaded(id);
-                    }
-                },
                 'marginWidth': '0',
                 'marginHeight': '0',
                 'frameBorder': '0'
             }).appendTo('body');
+
+        dialog.on('load', function() {
+            // Call popup_loaded only once we have a src
+            if ($(this).attr('src')) {
+                S3.popup_loaded(id);
+            }
+        });
 
         // Create jQuery UI dialog
         var self = this;
@@ -280,7 +281,7 @@ S3.popup_loaded = function(id) {
     var width = $('.ui-dialog').width();
 
     // Adjust iframe width, then un-hide popup contents
-    $('#' + id).width(width).contents().find('#popup').show();
+    $('#' + id).removeClass('loading').width(width).contents().find('#popup').show();
 };
 S3.popup_remove = function() {
     // Close jQueryUI Dialog Modal Popup
@@ -504,11 +505,26 @@ S3.maxLength = {
 };
 
 // ============================================================================
-// Code to warn on exit without saving
-var S3SetNavigateAwayConfirm = function() {
-    window.onbeforeunload = function() {
-        return i18n.unsaved_changes;
-    };
+/**
+ * Activate warning on exit without saving form data
+ *
+ * @param {Event} event - the event triggering the activation
+ * @param {string} trigger - event parameter indicating the trigger
+ *
+ * Use element.trigger('change', 'implicit') instead of element.change()
+ * to prevent activation if the event must be triggered for other reasons
+ * than user input
+ */
+var S3SetNavigateAwayConfirm = function(event, trigger) {
+    if (trigger !== 'implicit') {
+        // The pseudo element isn't added unless the form is visible (although the change event still fires)
+        //var $this = $(this);
+        //if (!$this.is(':-internal-autofill-selected') && !$this.is(':-webkit-autofill')) {
+            window.onbeforeunload = function() {
+                return i18n.unsaved_changes;
+            };
+        //}
+    }
 };
 
 var S3ClearNavigateAwayConfirm = function() {
@@ -521,13 +537,13 @@ var S3EnableNavigateAwayConfirm = function() {
             // If there are errors, ensure the unsaved form is still protected
             S3SetNavigateAwayConfirm();
         }
-        var form = 'form:not(form.filter-form)',
-            input = 'input:not(input[id=gis_location_advanced_checkbox])',
-            select = 'select';
-        $(form + ' ' + input).keypress(S3SetNavigateAwayConfirm);
-        $(form + ' ' + input).change(S3SetNavigateAwayConfirm);
-        $(form + ' ' + select).change(S3SetNavigateAwayConfirm);
-        $('form').submit(S3ClearNavigateAwayConfirm);
+        var form = $('form:not(.filter-form,.pt-form)');
+
+        $('input, textarea', form).on('keypress', S3SetNavigateAwayConfirm);
+                                  // This gets triggered by browsers' Autofill:
+                                  //.on('change', S3SetNavigateAwayConfirm);
+        $('select', form).change(S3SetNavigateAwayConfirm);
+        form.submit(S3ClearNavigateAwayConfirm);
     });
 };
 
@@ -633,8 +649,8 @@ var S3EnableNavigateAwayConfirm = function() {
             return;
         }
 
-        var readyState = jqXHR.readyState,
-            httpStatus = jqXHR.status,
+        var httpStatus = jqXHR.status,
+            readyState = jqXHR.readyState,
             navigateAway = !httpStatus && readyState === 0;
 
         if (textStatus == 'abort' || navigateAway) {
@@ -808,10 +824,11 @@ var S3EnableNavigateAwayConfirm = function() {
  * @param {string} message - the message to display
  * @param {string} type - the alert type:
  *                        'error', 'info', 'success', 'warning'
+ * @param {function} callback - optional callback to run when the message is closed
  *
  * @returns {jQuery} - the DOM node of the new alert
  */
-S3.showAlert = function(message, type) {
+S3.showAlert = function(message, type, callback) {
 
     if (!type) {
         type = 'success';
@@ -821,6 +838,9 @@ S3.showAlert = function(message, type) {
 
     alertSpace.append(alert).undelegate('.s3').delegate('.alert', 'click.s3', function() {
         $(this).fadeOut('slow').remove();
+        if (callback) {
+            callback();
+        }
         return false;
     });
     return alert;
@@ -881,28 +901,35 @@ S3.unmask = function(table, field) {
     }
 };
 // ============================================================================
-var s3_viewMap = function(feature_id, iframe_height, popup) {
+var s3_viewMap = function(location_id, iframe_height, popup, controller, func) {
     // Display a Feature on a BaseMap within an iframe
-    var url = S3.Ap.concat('/gis/display_feature/') + feature_id,
+    var url = S3.Ap.concat('/gis/display_feature/') + location_id,
         $map = $('#map'),
         $iframe_map = $('#iframe-map'),
-        curl = document.location.pathname.split("/"),
-        controller = curl[2],
-        func = curl[3];
+        curl = document.location.pathname.split("/");
 
-    url += '?controller=' + controller + '&function=' + func;
-    if (curl.length > 4) {
-        // Record id
-        if ($.isNumeric(curl[4])) {
-            url += '&rid=' + curl[4];
-        }
+    if (controller === undefined) {
+        // Default to Master Record's Controller
+        controller = curl[2];
+    }
+    if (func === undefined) {
+        // Default to Master Record's Function
+        func = curl[3];
+    }
+    url += '?c=' + controller + '&f=' + func;
+
+    if ((curl.length > 6) && ($.isNumeric(curl[6]))) {
+        // Component Record ID
+        url += '&r=' + curl[6];
+    } else if ((curl.length > 4) && ($.isNumeric(curl[4]))) {
+        // Master Record ID
+        url += '&r=' + curl[4];
     }
 
     if ($map.length == 0 || popup == 'True') {
         url += '&popup=1';
         S3.openPopup(url, true);
-    }
-    else {
+    } else {
         var toggleButton = function() {
             // Hide/Show the 'Close Map' button
             var closeMap = $('#close-iframe-map');
@@ -910,8 +937,7 @@ var s3_viewMap = function(feature_id, iframe_height, popup) {
                 closeMap.css({
                     'display': ''
                 });
-            }
-            else {
+            } else {
                 closeMap.css({
                     'display': 'none'
                 });
@@ -927,7 +953,7 @@ var s3_viewMap = function(feature_id, iframe_height, popup) {
 
         if ($iframe_map.length==0) {
             // 1st iframe to be loaded in 'map'
-            var iframe = $("<iframe id='iframe-map' data-feature='" + feature_id + "' style='border-style:none' width='100%' height='" + iframe_height + "' src='" + url + "' />"),
+            var iframe = $("<iframe id='iframe-map' data-feature='" + location_id + "' style='border-style:none' width='100%' height='" + iframe_height + "' src='" + url + "' />"),
                 closelink = $("<a class='button tiny' id='close-iframe-map'>" + i18n.close_map + "</a>");
 
             closelink.bind('click', closeMap);
@@ -935,17 +961,15 @@ var s3_viewMap = function(feature_id, iframe_height, popup) {
             $map.slideDown('medium');
             $map.append(iframe);
             $map.append($('<div style="margin-bottom:10px" />').append(closelink));
-        }
-        else {
+        } else {
             var fid = $iframe_map.attr('data-feature');
-            if (fid==feature_id) {
+            if (fid == location_id) {
                 // Same feature request. Display Map
                 $iframe_map.slideToggle('medium', toggleButton);
-            }
-            else {
+            } else {
                 $iframe_map.attr({
                     'src': url,
-                    'data-feature': feature_id
+                    'data-feature': location_id
                 });
                 $iframe_map.slideDown('medium', toggleButton);
             }
@@ -1818,63 +1842,36 @@ S3.slider = function(fieldname, min, max, step, value) {
 /**
  * Add a Range Slider to a field - used by S3SliderFilter
  */
-S3.range_slider = function(fieldname, min, max, step, values) {
-    var real_input1 = $('#' + fieldname + '_1');
-    var real_input2 = $('#' + fieldname + '_2');
-    var selector = '#' + fieldname + '_slider';
-    $(selector).slider({
+S3.range_slider = function(selector, min_id, max_id, min_value, max_value, step, values) {
+    var slider_div = $('#' + selector),
+        min_input = $('#' + min_id),
+        max_input = $('#' + max_id);
+    slider_div.slider({
         range: true,
-        min: min,
-        max: max,
+        min: min_value,
+        max: max_value,
         step: step,
         values: values,
-        slide: function (event, ui) {
-            // Set the value of the real inputs
-            real_input1.val(ui.values[0]);
-            real_input2.val(ui.values[1]);
-        },
-        change: function(event, ui) {
-            var value = ui.value,
-                index = ui.handleIndex,
-                real_input = $('#' + fieldname + '_' + (index + 1));
-            if (value == null) {
-                // Set a default value
-                // - halfway between min & max
-                value = (min + max) / 2;
-                // - rounded to nearest step
-                var modulo = value % step;
-                if (modulo != 0) {
-                    if (modulo < (step / 2)) {
-                        // round down
-                        value = value - modulo;
-                    } else {
-                        // round up
-                        value = value + modulo;
-                    }
-                }
-                $(selector).slider('option', 'values', index, value);
-                // Show the control
-                $(selector + ' .ui-slider-handle').show();
-                // Show the value
-                // Hide the help text
-                real_input.show().next().remove();
-            }
+        slide: function(event, ui) {
+            // Set the value of the real inputs & trigger change event
+            min_input.val(ui.values[0]);
+            max_input.val(ui.values[1]).closest('form').trigger('optionChanged');
         }
     });
-    if (values == []) {
-        // Don't show a value until Slider is touched
-        $(selector + ' .ui-slider-handle').hide();
-        // Show help text
-        real_input1.hide();
-        real_input2.hide()
-                   .after('<p>' + i18n.slider_help + '</p>');
-    }
-    // Enable the fields before form is submitted
-    real_input1.closest('form').submit(function() {
-        real_input1.prop('disabled', false);
-        real_input2.prop('disabled', false);
-        // Normal Submit
-        return true;
+    // Update Slider if INPUTs change
+    min_input.on('change.slider', function() {
+        var value = min_input.val()
+        if (value == '') {
+            value = min_value;
+        }
+        slider_div.slider('values', 0, value);
+    });
+    max_input.on('change.slider', function() {
+        var value = max_input.val()
+        if (value == '') {
+            value = max_value;
+        }
+        slider_div.slider('values', 1, value);
     });
 };
 
@@ -2244,9 +2241,21 @@ S3.reloadWithQueryStringVars = function(queryStringVars) {
         // De-duplication Event Handlers
         deduplication();
 
-        // UTC Offset
-        var now = new Date();
-        $('form').append("<input type='hidden' value=" + now.getTimezoneOffset() + " name='_utc_offset'/>");
+        // Timezone and UTC Offset
+        var anyform = $('form');
+        if (anyform.length) {
+            var now = new Date(),
+                tz;
+            anyform.append("<input type='hidden' value='" + now.getTimezoneOffset() + "' name='_utc_offset'/>");
+            try {
+                tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            } catch(e) {
+                // not supported
+            }
+            if (tz) {
+                anyform.append("<input type='hidden' value='" + tz + "' name='_timezone'/>");
+            }
+        }
 
         // Social Media 'share' buttons
         if ($('#socialmedia_share').length > 0) {
@@ -2295,6 +2304,72 @@ S3.reloadWithQueryStringVars = function(queryStringVars) {
                     $this.data('status', 'off').text($this.data('off'));
                 });
             }
+        });
+
+        /**
+         * Click-handler for s3-download-buttons:
+         *
+         * - any action item with a class 's3-download-button' and
+         *   a 'url' data property (data-url)
+         *
+         * - for download of server-generated attachments, e.g. XLS or PDF
+         *
+         * - downloads the target document in a hidden iframe, which, if
+         *   the file is sent with content-disposition "attachment", will
+         *   only open the file dialog and nothing else
+         *
+         * - if this fails, the response will be opened in a modal dialog
+         *   (JSON messages will be handled with a simple alert-box, though)
+         */
+        $('.s3-download-button').on('click', function(e) {
+
+            // Do nothing else
+            e.preventDefault();
+            e.stopPropagation();
+
+            var url = $(this).data('url');
+            if (!url) {
+                return;
+            }
+
+            // Re-use it if it already exists
+            var iframe = document.getElementById("s3-download");
+            if (iframe == null) {
+               iframe = document.createElement('iframe');
+               iframe.id = "s3-download";
+               iframe.style.visibility = 'hidden';
+               document.body.appendChild(iframe);
+            }
+
+            $('#s3-download').off('load').on('load', function() {
+                // This event is only fired when contents was loaded into the
+                // hidden iframe rather than downloaded as attachment, which
+                // should only happen if there was some kind of error
+                var message,
+                    self = $(this);
+                try {
+                    // Try to parse the JSON message
+                    message = JSON.parse(this.contentDocument.body.textContent).message;
+                } catch(e) {
+                    // No JSON message => show iframe contents as-is in a modal
+                    self.dialog({
+                        title: 'Download failed',
+                        width: 500,
+                        height: 300,
+                        close: function() {
+                            self.attr('src', '').remove();
+                        }
+                    }).css({
+                        visibility: 'visible',
+                        width: '100%'
+                    });
+                    return;
+                }
+                alert(message);
+            });
+
+            iframe.src = url;
+            return false;
         });
     });
 

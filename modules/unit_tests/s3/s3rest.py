@@ -8,11 +8,9 @@
 import unittest
 from gluon import *
 from gluon.storage import Storage
+
 from s3.s3rest import S3Request
-try:
-    from cStringIO import StringIO
-except ImportError:
-    from StringIO import StringIO
+from s3compat import BytesIO
 
 from unit_tests import run_suite
 
@@ -67,7 +65,7 @@ class POSTFilterTests(unittest.TestCase):
         assertNotIn("$search", get_vars)
 
         # Filter queries from POST vars JSON-decoded and added to GET vars:
-        assertEqual(get_vars.get("~.name|~.comments__like"), ["first","second"])
+        assertEqual(get_vars.get("~.name|~.comments__like"), ["first", "second"])
         assertEqual(get_vars.get("~.other_field__lt"), "1")
 
         # Edge-cases (non-str values) properly converted:
@@ -122,8 +120,8 @@ class POSTFilterTests(unittest.TestCase):
         request = current.request
 
         # Test with valid filter expression JSON
-        jsonstr = '''{"service_organisation.service_id__belongs":"1","~.example__lt":1,"~.other__like":[1,2]}'''
-        request._body = StringIO(jsonstr)
+        jsonstr = '''{"service_organisation.service_id__belongs":"1","~.example__lt":1,"~.other__like":[1,2],"~.name__like":"*Liquiçá*"}'''
+        request._body = BytesIO(jsonstr.encode("utf-8"))
         r = S3Request(prefix = "org",
                       name = "organisation",
                       http = "POST",
@@ -137,16 +135,23 @@ class POSTFilterTests(unittest.TestCase):
         # $search removed from GET vars:
         assertNotIn("$search", get_vars)
 
+        # Verify that parsed $filter vars can safely be re-encoded as GET URL
+        try:
+            r.url()
+        except (UnicodeDecodeError, UnicodeEncodeError):
+            self.fail("r.url raises Unicode exception with non-ASCII characters in $filter")
+
         # Filter queries from JSON body added to GET vars (always str, or list of str):
         assertEqual(get_vars.get("service_organisation.service_id__belongs"), "1")
         assertEqual(get_vars.get("~.example__lt"), "1")
-        assertEqual(get_vars.get("~.other__like"), ["1","2"])
+        assertEqual(get_vars.get("~.other__like"), ["1", "2"])
+        assertEqual(get_vars.get("~.name__like"), "*Liquiçá*")
 
         # Must retain other GET vars:
         assertEqual(get_vars.get("test"), "retained")
 
         # Test without $search
-        request._body = StringIO('{"service_organisation.service_id__belongs":"1"}')
+        request._body = BytesIO(b'{"service_organisation.service_id__belongs":"1"}')
         r = S3Request(prefix = "org",
                       name = "organisation",
                       http = "POST",
@@ -167,7 +172,7 @@ class POSTFilterTests(unittest.TestCase):
         assertEqual(get_vars.get("test"), "retained")
 
         # Test with valid JSON but invalid filter expression
-        request._body = StringIO('[1,2,3]')
+        request._body = BytesIO(b'[1,2,3]')
         r = S3Request(prefix = "org",
                       name = "organisation",
                       http = "POST",
@@ -188,7 +193,7 @@ class POSTFilterTests(unittest.TestCase):
         assertEqual(get_vars.get("test"), "retained")
 
         # Test with empty body
-        request._body = StringIO('')
+        request._body = BytesIO(b'')
         r = S3Request(prefix = "org",
                       name = "organisation",
                       http = "POST",

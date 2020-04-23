@@ -7,7 +7,6 @@
 """
 
 module = request.controller
-resourcename = request.function
 
 if not settings.has_module(module):
     raise HTTP(404, body="Module disabled: %s" % module)
@@ -110,7 +109,7 @@ def post():
     #s3.filter = (table.series_id == None)
 
     # Custom Method to add Comments
-    s3db.set_method(module, resourcename,
+    s3db.set_method("cms", "post",
                     method = "discuss",
                     action = discuss)
 
@@ -245,7 +244,7 @@ def post():
                     for module in _modules:
                         if module in ("appadmin", "errors", "ocr"):
                             continue
-                        modules[module] = _modules[module].name_nice
+                        modules[module] = _modules[module].get("name_nice")
                     s3db.cms_post_module.field.requires = \
                         IS_IN_SET_LAZY(lambda: sort_dict_by_values(modules))
 
@@ -541,8 +540,7 @@ def newsfeed():
             elif r.method == "create":
                 pass
                 # @ToDo: deployment_setting
-                #ADMIN = session.s3.system_roles.ADMIN
-                #if (not auth.s3_has_role(ADMIN)):
+                #if not auth.s3_has_role("ADMIN"):
                 #    represent = S3Represent(lookup="cms_series",
                 #                            translate=settings.get_L10n_translate_cms_series())
                 #    field.requires = IS_ONE_OF(db,

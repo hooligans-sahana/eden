@@ -530,6 +530,7 @@ def open_tasks_for_project():
     return s3_rest_controller(module, "project",
                               hide_filter = False,
                               )
+
 # -----------------------------------------------------------------------------
 def set_theme_requires(sector_ids):
     """
@@ -941,7 +942,8 @@ def demographic_data():
 def location_contact():
     """ RESTful CRUD controller for Community Contacts """
 
-    return s3_rest_controller(hide_filter=False)
+    return s3_rest_controller(hide_filter = False,
+                              )
 
 # -----------------------------------------------------------------------------
 def report():
@@ -1212,17 +1214,17 @@ def indicator():
                      },
                 ]
 
-            data_widget = dict(label = "Data",
-                               label_create = "Add Data",
-                               type = "datatable",
-                               actions = dt_row_actions("indicator_data"),
-                               tablename = "project_indicator_data",
-                               filter = FS("indicator_id") == record.id,
-                               create_controller = "project",
-                               create_function = "indicator",
-                               create_component = "indicator_data",
-                               #icon = "book",
-                               )
+            data_widget = {"label": "Data",
+                           "label_create": "Add Data",
+                           "type": "datatable",
+                           "actions": dt_row_actions("indicator_data"),
+                           "tablename": "project_indicator_data",
+                           "filter": FS("indicator_id") == record.id,
+                           "create_controller": "project",
+                           "create_function": "indicator",
+                           "create_component": "indicator_data",
+                           #"icon": "book",
+                           }
             profile_widgets = [data_widget,
                                ]
             s3db.configure("project_indicator",
@@ -1318,7 +1320,7 @@ def comment_parse(comment, comments, task_id=None):
             person = row.pr_person
             user = row[utable._tablename]
             username = s3_fullname(person)
-            email = user.email.strip().lower()
+            email = user.email.strip().lower().encode("utf-8")
             import hashlib
             hash = hashlib.md5(email).hexdigest()
             url = "http://www.gravatar.com/%s" % hash
@@ -1421,7 +1423,7 @@ $('#submit_record__row input').click(function(){
     #s3.jquery_ready.append(script)
 
     output = DIV(output,
-                 DIV(H4(T("New Post"),
+                 DIV(H4(T("New Comment"),
                         _id="comment-title"),
                      form,
                      _id="comment-form",

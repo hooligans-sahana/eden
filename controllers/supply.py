@@ -7,7 +7,6 @@
 """
 
 module = request.controller
-resourcename = request.function
 
 if not settings.has_module("supply"):
     raise HTTP(404, body="Module disabled: %s" % module)
@@ -18,9 +17,10 @@ def index():
         Application Home page
     """
 
-    module_name = settings.modules[module].name_nice
+    module_name = settings.modules[module].get("name_nice")
     response.title = module_name
-    return dict(module_name=module_name)
+    return {"module_name": module_name,
+            }
 
 # -----------------------------------------------------------------------------
 def brand():
@@ -92,6 +92,17 @@ def item():
 def item_category():
     """ RESTful CRUD controller """
 
+    def prep(r):
+        if r.get_vars.get("assets") == "1":
+            # Category must be one that supports Assets
+            f = s3db.supply_item_category.can_be_asset
+            # Default anyway
+            #f.default = True
+            f.readable = f.writable = False
+
+        return True
+    s3.prep = prep
+
     return s3_rest_controller()
 
 # -----------------------------------------------------------------------------
@@ -113,6 +124,18 @@ def item_pack():
 
 # -----------------------------------------------------------------------------
 def kit_item():
+    """ RESTful CRUD controller """
+
+    return s3_rest_controller()
+
+# -----------------------------------------------------------------------------
+def person_item():
+    """ RESTful CRUD controller """
+
+    return s3_rest_controller()
+
+# -----------------------------------------------------------------------------
+def person_item_status():
     """ RESTful CRUD controller """
 
     return s3_rest_controller()

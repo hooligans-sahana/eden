@@ -4,13 +4,13 @@
 }
 #filter-form.form-container form,
 #filter-form.form-container table {
-  background: #b3d9ff;
+  background-color: #d0e8ff;
 }
-.top-bar-section label {
-  color: #fff;
-  font-size: 1.4em;
-  font-weight: bold;
-  line-height: 2.8125rem;
-  padding-top: 6px;
-  padding-bottom: 6px;
+.cluster_legend {
+    font-size: 0.7rem;
+    padding-bottom: 0.2rem;
+}
+/* SitRep page wants a wider Summary column, which needs fixed layout */
+#sitrep .dataTable {
+    table-layout: fixed;
 }

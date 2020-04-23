@@ -7,9 +7,8 @@ from gluon.storage import Storage
 
 def config(settings):
     """
-        Template settings for a default system
-
-        @ToDo: Rename this as 'Demo'
+        Template settings for the Default template
+        - default settings suitable for a small organisation managing it's own resources
     """
 
     T = current.T
@@ -25,6 +24,8 @@ def config(settings):
     # Unless doing a manual DB migration, where prepopulate = 0
     # In Production, prepopulate = 0 (to save 1x DAL hit every page)
     settings.base.prepopulate.append("default")
+    # Done by enabling the sub-template:
+    #settings.base.prepopulate_demo.append("default/Demo")
 
     # Uncomment this to prefer scalability-optimized strategies globally
     #settings.base.bigtable = True
@@ -33,7 +34,8 @@ def config(settings):
     #settings.base.theme = "default"
 
     # Enable Guided Tours
-    settings.base.guided_tour = True
+    # - defaults to module enabled or not
+    #settings.base.guided_tour = True
 
     # Authentication settings
     # These settings should be changed _after_ the 1st (admin) user is
@@ -41,14 +43,21 @@ def config(settings):
     # Should users be allowed to register themselves?
     #settings.security.self_registration = False
     # Do new users need to verify their email address?
-    #settings.auth.registration_requires_verification = True
+    settings.auth.registration_requires_verification = True
     # Do new users need to be approved by an administrator prior to being able to login?
-    #settings.auth.registration_requires_approval = True
+    settings.auth.registration_requires_approval = True
+    # Disable welcome-emails to newly registered users
+    #settings.auth.registration_welcome_email = False
+
+    # Approval emails get sent to all admins
+    settings.mail.approver = "ADMIN"
 
     # Allow a new user to be linked to a record (and a new record will be created if it doesn't already exist)
-    #settings.auth.registration_link_user_to = {"staff":T("Staff"),
-    #                                           "volunteer":T("Volunteer"),
-    #                                           "member":T("Member")}
+    settings.auth.registration_link_user_to = {"staff": T("Staff"),
+                                               #"volunteer": T("Volunteer"),
+                                               #"member": T("Member"),
+                                               }
+    settings.auth.registration_link_user_to_default = ["staff"]
 
     # Always notify the approver of a new (verified) user, even if the user is automatically approved
     #settings.auth.always_notify_approver = False
@@ -64,7 +73,7 @@ def config(settings):
     # Uncomment this to have the Mobile Phone selection during registration be mandatory
     #settings.auth.registration_mobile_phone_mandatory = True
     # Uncomment this to request the Organisation when a user registers
-    #settings.auth.registration_requests_organisation = True
+    settings.auth.registration_requests_organisation = True
     # Uncomment this to have the Organisation selection during registration be mandatory
     #settings.auth.registration_organisation_required = True
     # Uncomment this to hide the Create-Organisation link in registration forms
@@ -81,8 +90,6 @@ def config(settings):
     #settings.auth.registration_requests_site = True
     # Uncomment this to allow Admin to see Organisations in User Admin even if the Registration doesn't request this
     #settings.auth.admin_sees_organisation = True
-    # Uncomment to hide the UTC Offset in Registration/Profile
-    #settings.auth.show_utc_offset = False
     # Uncomment to set the default role UUIDs assigned to newly-registered users
     # This is a dictionary of lists, where the key is the realm that the list of roles applies to
     # The key 0 implies not realm restricted
@@ -112,12 +119,16 @@ def config(settings):
     # https://termsfeed.com/terms-conditions/generator/
     # uses <template>/views/tos.html
     #settings.auth.terms_of_service = True
+    # Enable options for tracking user consent
+    #settings.auth.consent_tracking = True
     # Uncomment this to allow users to Login using Gmail's SMTP
     #settings.auth.gmail_domains = ["gmail.com"]
     # Uncomment this to allow users to Login using Office365's SMTP
     #settings.auth.office365_domains = ["microsoft.com"]
     # Uncomment this to allow users to Login using OpenID
     #settings.auth.openid = True
+    # Uncomment this to allow users to login using master key
+    #settings.auth.masterkey = True
     # Uncomment this to block password changes since managed externally (OpenID / SMTP / LDAP)
     #settings.auth.password_changes = False
     # Uncomment this to disable password retrieval (e.g. if impractical or unsafe)
@@ -129,53 +140,154 @@ def config(settings):
     # Uncomment this to enable the creation of new locations if a user logs in from an unknown location. Warning: This may lead to many useless location entries
     #settings.auth.create_unknown_locations = True
 
+    # -------------------------------------------------------------------------
+    # Setup
+    settings.setup.wizard_questions += [{"title": "Modules",
+                                         "modules": [# @ToDo: Handle modules which are themselves dependencies for other modules
+                                                     #{"module": "asset",
+                                                     # "label": "Assets",
+                                                     # "description": "Asset Management",
+                                                     # "dependencies": ["supply",
+                                                     #                  ],
+                                                     # },
+                                                     #{"module": "hrm",
+                                                     # "label": "Staff",
+                                                     # "description": "Staff",
+                                                     # },
+                                                     {"module": "project",
+                                                      "label": "Projects",
+                                                      "description": "Projects",
+                                                      },
+                                                     {"module": "cr",
+                                                      "label": "Shelters",
+                                                      "description": "Shelters",
+                                                      },
+                                                     {"module": "hms",
+                                                      "label": "Hospitals",
+                                                      "description": "Hospitals",
+                                                      },
+                                                     {"module": "transport",
+                                                      "label": "Transport",
+                                                      "description": "Airports, Ports, Border Crossings",
+                                                      },
+                                                     {"module": "vehicle",
+                                                      "label": "Vehicles",
+                                                      "description": "Vehicle Management",
+                                                      "dependencies": [{"module": "asset",
+                                                                        "label": "Assets",
+                                                                        },
+                                                                       {"module": "supply",
+                                                                        "label": "Supply",
+                                                                        },
+                                                                       ],
+                                                      },
+                                                     {"module": "vol",
+                                                      "label": "Volunteers",
+                                                      "description": "Volunteer Management",
+                                                      "dependencies": [{"module": "hrm",
+                                                                        "label": "Staff",
+                                                                        },
+                                                                       ],
+                                                      },
+                                                     ],
+                                         },
+                                        {"title": "Organizations",
+                                         "module": "org",
+                                         "questions": [{"question": "Do you need support for Branch Organisations?",
+                                                        "setting": "org.branches",
+                                                        "fn": "get_org_branches",
+                                                        "options": {True: "Yes", False: "No"},
+                                                        },
+                                                       ],
+                                         },
+                                        {"title": "Staff",
+                                         "module": "hrm",
+                                         "questions": [{"question": "Will you record data for multiple Organisations?",
+                                                        "setting": "hrm.multiple_orgs",
+                                                        "fn": "get_hrm_multiple_orgs",
+                                                        "options": {True: "Yes", False: "No"},
+                                                        },
+                                                       {"question": "Do your human resources need to be able to mark their periods of unavailability?",
+                                                        "setting": "hrm.unavailability",
+                                                        "fn": "get_hrm_unavailability",
+                                                        "options": {True: "Yes", None: "No"},
+                                                        },
+                                                       {"question": "Do you want to manage Shifts for your Facilities?",
+                                                        "setting": "org.facility_shifts",
+                                                        "fn": "get_org_facility_shifts",
+                                                        "options": {True: "Yes", False: "No"},
+                                                        },
+                                                       ],
+                                         },
+                                        {"title": "Projects",
+                                         "module": "project",
+                                         "questions": [{"question": "Do you want to categorise Projects by Hazard?",
+                                                        "setting": "project.hazards",
+                                                        "fn": "get_project_hazards",
+                                                        "options": {True: "Yes", False: "No"},
+                                                        },
+                                                       {"question": "Do you want to categorise Projects by Theme?",
+                                                        "setting": "project.themes",
+                                                        "fn": "get_project_themes",
+                                                        "options": {True: "Yes", False: "No"},
+                                                        },
+                                                       ],
+                                         },
+                                        ]
+
+    # -------------------------------------------------------------------------
     # L10n settings
     # Languages used in the deployment (used for Language Toolbar, GIS Locations, etc)
     # http://www.loc.gov/standards/iso639-2/php/code_list.php
     settings.L10n.languages = OrderedDict([
         ("ar", "Arabic"),
         ("bs", "Bosnian"),
-        #("dv", "Divehi"), # Maldives
-        #("dz", "Dzongkha"), # Bhutan
+        ##("crs", "Seychellois Creole"),
+        ##("dv", "Divehi"), # Maldives
+        ##("dz", "Dzongkha"), # Bhutan
         ("en", "English"),
         ("fr", "French"),
         ("de", "German"),
-        ("el", "Greek"),
+        #("el", "Greek"),
         ("es", "Spanish"),
-        #("id", "Bahasa Indonesia"),
+        ##("hu", "Hungarian"),
+        ##("id", "Bahasa Indonesia"),
         ("it", "Italian"),
-        ("ja", "Japanese"),
+        #("ja", "Japanese"),
         ("km", "Khmer"), # Cambodia
-        ("ko", "Korean"),
-        #("lo", "Lao"),
-        #("lt", "Lithuanian"),
-        #("mg", "Malagasy"),
+        #("ko", "Korean"),
+        ##("lo", "Lao"),
+        ##("lt", "Lithuanian"),
+        ##("mg", "Malagasy"),
+        ##("mk", "Macedonian"),
         ("mn", "Mongolian"),
-        #("ms", "Malaysian"),
+        ##("ms", "Malaysian"),
         ("my", "Burmese"), # Myanmar
         ("ne", "Nepali"),
+        ("pl", "Polish"),
         ("prs", "Dari"), # Afghan Persian
         ("ps", "Pashto"), # Afghanistan, Pakistan
         ("pt", "Portuguese"),
-        ("pt-br", "Portuguese (Brazil)"),
-        ("ru", "Russian"),
-        ("tet", "Tetum"),
-        #("si", "Sinhala"), # Sri Lanka
-        #("ta", "Tamil"), # India, Sri Lanka
-        ("th", "Thai"),
-        ("tl", "Tagalog"), # Philippines
-        ("tr", "Turkish"),
-        ("ur", "Urdu"), # Pakistan
+        #("pt-br", "Portuguese (Brazil)"),
+        #("ru", "Russian"),
+        #("tet", "Tetum"),
+        ##("si", "Sinhala"), # Sri Lanka
+        ##("so", "Somali"),
+        ##("ta", "Tamil"), # India, Sri Lanka
+        #("th", "Thai"),
+        #("tl", "Tagalog"), # Philippines
+        #("tr", "Turkish"),
+        #("ur", "Urdu"), # Pakistan
         ("vi", "Vietnamese"),
-        ("zh-cn", "Chinese (Simplified)"), # Mainland China
-        ("zh-tw", "Chinese (Taiwan)"),
+        #("zh-cn", "Chinese (Simplified)"), # Mainland China
+        #("zh-tw", "Chinese (Taiwan)"),
     ])
     # Default language for Language Toolbar (& GIS Locations in future)
     #settings.L10n.default_language = "en"
     # Uncomment to Hide the language toolbar
     #settings.L10n.display_toolbar = False
     # Default timezone for users
-    #settings.L10n.utc_offset = "+0000"
+    #settings.L10n.timezone = "US/Eastern"
     # Uncomment these to use US-style dates in English
     #settings.L10n.date_format = "%m-%d-%Y"
     #settings.L10n.time_format = "%H:%M:%S"
@@ -223,10 +335,14 @@ def config(settings):
     #settings.fin.currency_writable = False # False currently breaks things
 
     # PDF settings
-    # Default page size for reports (defaults to A4)
-    #settings.base.paper_size = T("Letter")
+    # Default page size (defaults to A4)
+    #settings.base.pdf_size = "Letter"
+    # Default page orientation (defaults to "Auto" to auto-adapt for wide tables)
+    #settings.base.pdf_orientation = "Landscape"
     # Location of Logo used in pdfs headers
     #settings.ui.pdf_logo = "static/img/mylogo.png"
+    # Maximum number of records in PDF exports (None for unlimited)
+    #settings.base.pdf_max_rows = 1000
 
     #Uncomment to add a title row to XLS exports
     #settings.base.xls_title_row = True
@@ -300,7 +416,7 @@ def config(settings):
     # Uncomment to have custom folders in the LayerTree use Radio Buttons
     #settings.gis.layer_tree_radio = True
     # Uncomment to display the Map Legend as a floating DIV
-    #settings.gis.legend = "float"
+    settings.gis.legend = "float"
     # Uncomment to use scalability-optimized options lookups in location filters
     #settings.gis.location_filter_bigtable_lookups = True
     # Uncomment to prevent showing LatLon in Location Represents
@@ -372,8 +488,8 @@ def config(settings):
     # 6: Apply Controller, Function, Table ACLs and Entity Realm
     # 7: Apply Controller, Function, Table ACLs and Entity Realm + Hierarchy
     # 8: Apply Controller, Function, Table ACLs, Entity Realm + Hierarchy and Delegations
-    #
-    #settings.security.policy = 7 # Organisation-ACLs
+
+    settings.security.policy = 5 # Controller, Function & Table ACLs
 
     # Ownership-rule for records without owner:
     # True = not owned by any user (strict ownership, default)
@@ -454,10 +570,18 @@ def config(settings):
     #settings.ui.default_cancel_button = True
     # Uncomment to disable responsive behavior of datatables
     #settings.ui.datatables_responsive = False
+    # Uncomment to enable double scroll bars on non-responsive datatables
+    #settings.ui.datatables_double_scroll = True
     # Uncomment to modify the label of the Permalink
     #settings.ui.label_permalink = "Permalink"
     # Uncomment to modify the main menu logo
     #settings.ui.menu_logo = URL(c="static", f="img", args=["S3menulogo.png"])
+    # Configure business hours to indicate in organizer (can be a list)
+    #settings.ui.organizer_business_hours = {"dow": [1,2,3,4,5], "start": "08:00", "end": "18:00"}
+    # Configure a time format for organizer events to override locale default
+    #settings.ui.organizer_time_format = "H:mm"
+    # Configure the snap raster width in organizer (hh:mm:ss)
+    #settings.ui.organizer_snap_duration = "00:15:00"
 
     # -------------------------------------------------------------------------
     # Sync
@@ -468,6 +592,115 @@ def config(settings):
     # Asset
     # Uncomment to have a specific asset type for Telephones
     #settings.asset.telephones = True
+
+    # -------------------------------------------------------------------------
+    # Beneficiary Registry
+
+    # --- Terminology ---
+    # Terminology to use when referring to cases (Beneficiary|Client|Case)
+    #settings.br.case_terminology = "Beneficiary"
+    # Terminology to use when referring to measures of assistance (Counseling|Assistance)
+    #settings.br.assistance_terminology = "Counseling"
+
+    # --- Need Categories ---
+    # Use hierarchical need categories
+    #settings.br.needs_hierarchical = True
+    # Let all orgs use a common set of need categories
+    #settings.br.needs_org_specific = False
+
+    # --- Basic Case Options ---
+    # Show the case organisation even if only one option
+    #settings.br.case_hide_default_org = False
+    # Disable assignment of cases to staff
+    #settings.br.case_manager = False
+    # Expose fields to track home address in case file
+    #settings.br.case_address = True
+    # Disable documentation of language details in case file
+    #settings.br.case_language_details = False
+    # Control household size tracking in case files: False, True or "auto" (=default)
+    #settings.br.household_size = "auto"
+    # Layout class for beneficiary ID cards
+    #settings.br.id_card_layout = IDCardLayout
+    # User roles with permission to export beneficiary ID cards
+    #settings.br.id_card_export_roles = ["ORG_ADMIN", "CASE_MANAGEMENT"]
+
+    # --- Case File Tabs ---
+    # Hide the contact info tab in case files
+    #settings.br.case_contacts_tab = False
+    # Show the ID-tab in case files
+    #settings.br.case_id_tab = True
+    # Hide the family members tab in case files
+    #settings.br.case_family_tab = False
+    # Enable case file tab to track service contacts
+    #settings.br.service_contacts = True
+    # Show tab with notes journal
+    #settings.br.case_notes_tab = True
+    # Show the photos-tab in case files
+    #settings.br.case_photos_tab = True
+    # Hide the documents-tab in case files
+    #settings.br.case_documents_tab = False
+
+    # --- Attachments ---
+    # Hide activity attachments from case documents-tab
+    #settings.br.case_include_activity_docs = False
+    # Hide case group attachments from case documents-tab
+    #settings.br.case_include_group_docs = False
+
+    # --- Case Activities ---
+    # Disable tracking of case activities
+    #settings.br.case_activities = False
+    # Disable assignment of case activities to staff
+    #settings.br.case_activity_manager = False
+    # Expose "urgent" priority for case activities (=emergencies)
+    #settings.br.case_activity_urgent_option = True
+    # Disable need categories in case activities
+    #settings.br.case_activity_need = False
+    # Use a free-text subject line in case activities
+    #settings.br.case_activity_subject = True
+    # Use a free-text field to document need details in case activities
+    #settings.br.case_activity_need_details = True
+    # Disable status and end-date for case activities
+    #settings.br.case_activity_status = False
+    # Show end-date of case activites (True=show, "writable"=allow manual edit)
+    #settings.br.case_activity_end_date = True
+    # Enable inline-updates of case activities
+    #settings.br.case_activity_updates = True
+    # Disable fields for outcome documentation
+    #settings.br.case_activity_outcome = False
+    # Allow documents to be attached to case activities
+    #settings.br.case_activity_documents = True
+
+    # --- Assistance Measures ---
+    # Disable tracking of individual assistance measures
+    #settings.br.manage_assistance = False
+    # Use separate tab to track assistance measures
+    #settings.br.assistance_tab = True
+    # Hide inline assistance measures on case activity tab
+    #settings.br.assistance_inline = False
+    # Document date+time (rather than only date) for assistance measures
+    #settings.br.assistance_measures_use_time = True
+    # Set default status of assistance measures to closed
+    #settings.br.assistance_measure_default_closed = True
+    # Disable assignment of assistance measures to staff
+    #settings.br.assistance_manager = False
+    # Disable types of assistance (e.g. if there is only one type)
+    #settings.br.assistance_types = False
+
+    # --- Assistance Themes ---
+    # Enable assistance themes
+    #settings.br.assistance_themes = True
+    # Use a common set of assistance themes rather than org-specific
+    #settings.br.assistance_themes_org_specific = False
+    # Organize assistance themes by org sector
+    #settings.br.assistance_themes_sectors = True
+    # Organize assistance themes by need type
+    #settings.br.assistance_themes_needs = True
+    # Document assistance details per theme
+    #settings.br.assistance_details_per_theme = True
+    # Enable auto-linking of assistance measure details to case activities
+    #settings.br.assistance_activity_autolink = True
+    # Disable tracking of effort (=hours spent) for assistance measures
+    #settings.br.assistance_track_effort = False
 
     # -------------------------------------------------------------------------
     # CMS
@@ -518,9 +751,6 @@ def config(settings):
     # Uncomment to use the term Beneficiary instead of Case
     #settings.dvr.label = "Beneficiary"
 
-    # Uncomment this to allow cases to belong to multiple case groups ("households")
-    #settings.dvr.multiple_case_groups = True
-
     # Uncomment this to enable tracking of transfer origin/destination sites
     #settings.dvr.track_transfer_sites = True
     # Uncomment this to enable features to manage transferability of cases
@@ -551,6 +781,13 @@ def config(settings):
     #settings.dvr.activity_types_hierarchical = True
     # Uncomment this to use status field in case activities
     #settings.dvr.case_activity_use_status = True
+    # Uncomment this to disable follow-up fields in case activities
+    #settings.dvr.case_activity_follow_up = False
+
+    # Uncomment this to include case activity docs on beneficiary documents-tab
+    #settings.dvr.case_include_activity_docs = True
+    # Uncomment this to include case group docs on beneficiary documents-tab
+    #settings.dvr.case_include_group_docs = True
 
     # Uncomment this if Case activities use multiple Needs
     #settings.dvr.case_activity_needs_multiple = True
@@ -563,6 +800,24 @@ def config(settings):
 
     # Uncomment this to manage individual response actions in case activities
     #settings.dvr.manage_response_actions = True
+    # Uncomment this to not use response action types
+    #settings.dvr.response_types = False
+    # Uncomment this to use response themes
+    #settings.dvr.response_themes = True
+    # Uncomment this to not use org-specific response themes
+    #settings.dvr.response_themes_org_specific = False
+    # Uncomment this to link response themes to org sectors
+    #settings.dvr.response_themes_sectors = True
+    # Uncomment this to link response themes to needs
+    #settings.dvr.response_themes_needs = True
+    # Uncomment this to automatically link responses to case activities
+    #settings.dvr.response_activity_autolink = True
+    # Uncomment this to activate features for response planning
+    #settings.dvr.response_planning = True
+    # Uncomment this to use a separate due-date for responses
+    #settings.dvr.response_due_date = True
+    # Uncomment this to use date+time for responses (instead of just date)
+    #settings.dvr.response_use_time = True
 
     # Configure a regular expression pattern for ID Codes (QR Codes)
     #settings.dvr.id_code_pattern = "(?P<label>[^,]*),(?P<first_name>[^,]*),(?P<last_name>[^,]*),(?P<date_of_birth>[^,]*)"
@@ -634,6 +889,8 @@ def config(settings):
     #settings.pr.use_address = False
     # Show separate Public and Private Contacts Tabs
     #settings.pr.contacts_tabs = ("public", "private")
+    # Uncomment this to allow persons to belong to multiple case groups ("households")
+    #settings.pr.multiple_case_groups = True
 
     # -------------------------------------------------------------------------
     # Organisations
@@ -684,8 +941,6 @@ def config(settings):
     #settings.org.site_inv_req_tabs = False
     # Uncomment to allow Sites to be staffed by Volunteers
     #settings.org.site_volunteers = True
-    # Uncomment to add summary fields for Organisations/Offices for # National/International staff
-    #settings.org.summary = True
     # Enable certain fields just for specific Organisations
     # Requires a call to settings.set_org_dependent_field(field)
     # empty list => disabled for all (including Admin)
@@ -715,7 +970,7 @@ def config(settings):
     #settings.hrm.email_required = False
     # Uncomment to allow Staff & Volunteers to be registered without an Organisation
     #settings.hrm.org_required = False
-    # Uncomment to if their are only Staff & Volunteers from a single Organisation with no Branches
+    # Uncomment if their are only Staff & Volunteers from a single Organisation with no Branches
     #settings.hrm.multiple_orgs = False
     # Uncomment to disable the 'Send Message' action button
     #settings.hrm.compose_button = False
@@ -727,6 +982,8 @@ def config(settings):
     #settings.hrm.multiple_job_titles = True
     # Uncomment to have each root Org use a different Job Title Catalog
     #settings.hrm.org_dependent_job_titles = True
+    # Uncomment to display & search by National ID
+    #settings.hrm.use_national_id = True
     # Uncomment to hide the Staff resource
     #settings.hrm.show_staff = False
     # Uncomment to have Staff use their Home Address as fallback if they have no Site defined
@@ -820,7 +1077,7 @@ def config(settings):
     #settings.inv.recv_shortname = "ARDR"
     # Types common to both Send and Receive
     #settings.inv.shipment_types = {
-    #         0: T("-"),
+    #         0: "-", # current.messages["NONE"] but current.messages is defined only after 000_config.py is executed
     #         1: T("Other Warehouse"),
     #         2: T("Donation"),
     #         3: T("Foreign Donation"),
@@ -836,7 +1093,7 @@ def config(settings):
     #        34: T("Purchase"),
     #    }
     #settings.inv.item_status = {
-    #        0: current.messages["NONE"],
+    #        0: "-", # current.messages["NONE"] but current.messages is defined only after 000_config.py is executed
     #        1: T("Dump"),
     #        2: T("Sale"),
     #        3: T("Reject"),
@@ -940,19 +1197,19 @@ def config(settings):
     # -------------------------------------------------------------------------
     # Projects
     # Uncomment this to use settings suitable for a global/regional organisation (e.g. DRR)
-    #settings.project.mode_3w = True
+    settings.project.mode_3w = True
     # Uncomment this to use DRR (Disaster Risk Reduction) extensions
     #settings.project.mode_drr = True
     # Uncomment this to use settings suitable for detailed Task management
-    #settings.project.mode_task = True
+    settings.project.mode_task = True
     # Uncomment this to use link Projects to Events
     #settings.project.event_projects = True
     # Uncomment this to use Activities for Projects & Tasks
-    #settings.project.activities = True
+    settings.project.activities = True
     # Uncomment this to use link Activities to Events
     #settings.project.event_activities = True
     # Uncomment this to use Activity Types for Activities & Projects
-    #settings.project.activity_types = True
+    settings.project.activity_types = True
     # Uncomment this to filter dates in Activities
     #settings.project.activity_filter_year = True
     # Uncomment this to not use Beneficiaries for Activities
@@ -964,31 +1221,33 @@ def config(settings):
     # Uncomment this to call project locations 'Communities'
     #settings.project.community = True
     # Uncomment this to enable Demographics in 3W projects
-    #settings.project.demographics = True
+    settings.project.demographics = True
     # Uncomment this to enable Hazards in 3W projects
     #settings.project.hazards = True
     # Uncomment this to enable Indicators in projects
-    #settings.project.indicators = True
+    settings.project.indicators = True
+    # Uncomment this to enable Goals in projects
+    #settings.project.goals = True
+    #settings.project.outcomes = True
+    #settings.project.outputs = True
     # Uncomment this to enable Milestones in projects
-    #settings.project.milestones = True
+    settings.project.milestones = True
     # Uncomment this to use Projects for Activities & Tasks
-    #settings.project.projects = True
+    settings.project.projects = True
     # Uncomment this to disable Sectors in projects
     #settings.project.sectors = False
     # Uncomment this to enable Programmes in projects
-    #settings.project.programmes = True
+    settings.project.programmes = True
     # Uncomment this to enable Budgets in Programmes
-    #settings.project.programme_budget = True
-    # Uncomment this to use Tags in Tasks
-    #settings.project.task_tag = True
+    settings.project.programme_budget = True
     # Uncomment this to enable Themes in 3W projects
     #settings.project.themes = True
     # Uncomment this to use Theme Percentages for projects
     #settings.project.theme_percentages = True
     # Uncomment this to use multiple Budgets per project
-    #settings.project.multiple_budgets = True
+    settings.project.multiple_budgets = True
     # Uncomment this to use multiple Organisations per project
-    #settings.project.multiple_organisations = True
+    settings.project.multiple_organisations = True
     # Uncomment this to customise
     # Links to Filtered Components for Donors & Partners
     #settings.project.organisation_roles = {
@@ -1050,22 +1309,19 @@ def config(settings):
     settings.modules = OrderedDict([
         # Core modules which shouldn't be disabled
         ("default", Storage(
-            name_nice = T("Home"),
+            name_nice = T("Default"),
             restricted = False, # Use ACLs to control access to this module
-            access = None,      # All Users (inc Anonymous) can see this module in the default menu & access the controller
             module_type = None  # This item is not shown in the menu
         )),
         ("admin", Storage(
             name_nice = T("Administration"),
             #description = "Site Administration",
-            restricted = True,
             access = "|1|",     # Only Administrators can see this module in the default menu & access the controller
             module_type = None  # This item is handled separately for the menu
         )),
         ("appadmin", Storage(
             name_nice = T("Administration"),
             #description = "Site Administration",
-            restricted = True,
             module_type = None  # No Menu
         )),
         ("errors", Storage(
@@ -1077,155 +1333,141 @@ def config(settings):
         ("setup", Storage(
             name_nice = T("Setup"),
             #description = "WebSetup",
-            restricted = True,
             access = "|1|",     # Only Administrators can see this module in the default menu & access the controller
-             module_type = None  # No Menu
+            module_type = None  # No Menu
         )),
         ("sync", Storage(
             name_nice = T("Synchronization"),
             #description = "Synchronization",
-            restricted = True,
             access = "|1|",     # Only Administrators can see this module in the default menu & access the controller
             module_type = None  # This item is handled separately for the menu
         )),
-        ("tour", Storage(
-            name_nice = T("Guided Tour Functionality"),
-            module_type = None,
-        )),
+        #("tour", Storage(
+        #    name_nice = T("Guided Tour Functionality"),
+        #    module_type = None,
+        #)),
         ("translate", Storage(
-            name_nice = T("Translation Functionality"),
+            name_nice = T("Translation"),
             #description = "Selective translation of strings based on module.",
             module_type = None,
         )),
-        # Uncomment to enable internal support requests
-        #("support", Storage(
-        #        name_nice = T("Support"),
-        #        #description = "Support Requests",
-        #        restricted = True,
-        #        module_type = None  # This item is handled separately for the menu
-        #    )),
         ("gis", Storage(
             name_nice = T("Map"),
             #description = "Situation Awareness & Geospatial Analysis",
-            restricted = True,
             module_type = 6,     # 6th item in the menu
         )),
         ("pr", Storage(
             name_nice = T("Person Registry"),
             #description = "Central point to record details on People",
-            restricted = True,
             access = "|1|",     # Only Administrators can see this module in the default menu (access to controller is possible to all still)
             module_type = 10
         )),
         ("org", Storage(
             name_nice = T("Organizations"),
             #description = 'Lists "who is doing what & where". Allows relief agencies to coordinate their activities',
-            restricted = True,
             module_type = 1
         )),
         # All modules below here should be possible to disable safely
         ("hrm", Storage(
             name_nice = T("Staff"),
             #description = "Human Resources Management",
-            restricted = True,
             module_type = 2,
         )),
         ("vol", Storage(
             name_nice = T("Volunteers"),
             #description = "Human Resources Management",
-            restricted = True,
             module_type = 2,
         )),
         ("cms", Storage(
             name_nice = T("Content Management"),
             #description = "Content Management System",
-            restricted = True,
             module_type = 10,
         )),
         ("doc", Storage(
             name_nice = T("Documents"),
             #description = "A library of digital resources, such as photos, documents and reports",
-            restricted = True,
             module_type = 10,
         )),
         ("msg", Storage(
             name_nice = T("Messaging"),
             #description = "Sends & Receives Alerts via Email & SMS",
-            restricted = True,
             # The user-visible functionality of this module isn't normally required. Rather it's main purpose is to be accessed from other modules.
             module_type = None,
         )),
         ("supply", Storage(
             name_nice = T("Supply Chain Management"),
             #description = "Used within Inventory Management, Request Management and Asset Management",
-            restricted = True,
             module_type = None, # Not displayed
         )),
         ("inv", Storage(
             name_nice = T("Warehouses"),
             #description = "Receiving and Sending Items",
-            restricted = True,
             module_type = 4
         )),
         #("proc", Storage(
-        #        name_nice = T("Procurement"),
-        #        #description = "Ordering & Purchasing of Goods & Services",
-        #        restricted = True,
-        #        module_type = 10
-        #    )),
+        #    name_nice = T("Procurement"),
+        #    #description = "Ordering & Purchasing of Goods & Services",
+        #    module_type = 10
+        #)),
         ("asset", Storage(
             name_nice = T("Assets"),
             #description = "Recording and Assigning Assets",
-            restricted = True,
             module_type = 5,
         )),
         # Vehicle depends on Assets
         ("vehicle", Storage(
             name_nice = T("Vehicles"),
             #description = "Manage Vehicles",
-            restricted = True,
             module_type = 10,
         )),
         ("req", Storage(
             name_nice = T("Requests"),
             #description = "Manage requests for supplies, assets, staff or other resources. Matches against Inventories where supplies are requested.",
-            restricted = True,
             module_type = 10,
         )),
         ("project", Storage(
             name_nice = T("Projects"),
             #description = "Tracking of Projects, Activities and Tasks",
-            restricted = True,
             module_type = 2
         )),
-        ("survey", Storage(
-            name_nice = T("Surveys"),
-            #description = "Create, enter, and manage surveys.",
-            restricted = True,
-            module_type = 5,
+        ("stats", Storage(
+            name_nice = T("Statistics"),
+            #description = "Manages statistics",
+            module_type = None,
         )),
-        #("dc", Storage(
-        #   name_nice = T("Data Collection"),
-        #   #description = "Data collection tool",
-        #   restricted = True,
-        #   module_type = 10
+        #("event", Storage(
+        #    name_nice = T("Events"),
+        #    #description = "Activate Events (e.g. from Scenario templates) for allocation of appropriate Resources (Human, Assets & Facilities).",
+        #    module_type = 10,
         #)),
-        ("cr", Storage(
-            name_nice = T("Shelters"),
-            #description = "Tracks the location, capacity and breakdown of victims in Shelters",
-            restricted = True,
-            module_type = 10
-        )),
-        ("hms", Storage(
-            name_nice = T("Hospitals"),
-            #description = "Helps to monitor status of hospitals",
-            restricted = True,
-            module_type = 10
-        )),
-        #("disease", Storage(
-        #    name_nice = T("Disease Tracking"),
-        #    #description = "Helps to track cases and trace contacts in disease outbreaks",
-        #    restricted = True,
+        #("br", Storage(
+        #    name_nice = T("Beneficiary Registry"),
+        #    #description = "Allow affected individuals & households to register to receive compensation and distributions",
+        #    module_type = 10,
+        #)),
+        #("cr", Storage(
+        #    name_nice = T("Shelters"),
+        #    #description = "Tracks the location, capacity and breakdown of victims in Shelters",
+        #    module_type = 10
+        #)),
+        #("dc", Storage(
+        #   name_nice = T("Assessments"),
+        #   #description = "Data collection tool",
+        #   module_type = 5
+        #)),
+        #("hms", Storage(
+        #    name_nice = T("Hospitals"),
+        #    #description = "Helps to monitor status of hospitals",
+        #    module_type = 10
+        #)),
+        #("member", Storage(
+        #    name_nice = T("Members"),
+        #    #description = "Membership Management System",
+        #    module_type = 10,
+        #)),
+        #("budget", Storage(
+        #    name_nice = T("Budgeting Module"),
+        #    #description = "Allows a Budget to be drawn up",
         #    module_type = 10
         #)),
         ("dvr", Storage(
@@ -1271,83 +1513,97 @@ def config(settings):
         #("deploy", Storage(
         #    name_nice = T("Deployments"),
         #    #description = "Manage Deployments",
-        #    restricted = True,
         #    module_type = 10,
         #)),
-        # Deprecated: Replaced by event
-        #("irs", Storage(
-        #    name_nice = T("Incidents"),
-        #    #description = "Incident Reporting System",
-        #    restricted = True,
+        #("disease", Storage(
+        #    name_nice = T("Disease Tracking"),
+        #    #description = "Helps to track cases and trace contacts in disease outbreaks",
         #    module_type = 10
-        #)),
-        #("dvi", Storage(
-        #   name_nice = T("Disaster Victim Identification"),
-        #   #description = "Disaster Victim Identification",
-        #   restricted = True,
-        #   module_type = 10,
-        #   #access = "|DVI|",      # Only users with the DVI role can see this module in the default menu & access the controller
         #)),
         #("edu", Storage(
         #    name_nice = T("Schools"),
         #    #description = "Helps to monitor status of schools",
-        #    restricted = True,
         #    module_type = 10
         #)),
-        #("mpr", Storage(
-        #   name_nice = T("Missing Person Registry"),
-        #   #description = "Helps to report and search for missing persons",
-        #   restricted = True,
-        #   module_type = 10,
-        #)),
-        #("vulnerability", Storage(
-        #    name_nice = T("Vulnerability"),
-        #    #description = "Manages vulnerability indicators",
-        #    restricted = True,
-        #    module_type = 10,
-        # )),
         #("fire", Storage(
         #   name_nice = T("Fire Stations"),
         #   #description = "Fire Station Management",
-        #   restricted = True,
         #   module_type = 1,
+        #)),
+        #("transport", Storage(
+        #    name_nice = T("Transport"),
+        #    module_type = 10,
         #)),
         #("water", Storage(
         #    name_nice = T("Water"),
         #    #description = "Flood Gauges show water levels in various parts of the country",
-        #    restricted = True,
         #    module_type = 10
         #)),
         #("patient", Storage(
         #    name_nice = T("Patient Tracking"),
         #    #description = "Tracking of Patients",
-        #    restricted = True,
         #    module_type = 10
         #)),
         #("po", Storage(
         #    name_nice = T("Population Outreach"),
         #    #description = "Population Outreach",
-        #    restricted = True,
         #    module_type = 10
         #)),
         #("security", Storage(
         #   name_nice = T("Security"),
         #   #description = "Security Management System",
-        #   restricted = True,
         #   module_type = 10,
+        #)),
+        #("vulnerability", Storage(
+        #    name_nice = T("Vulnerability"),
+        #    #description = "Manages vulnerability indicators",
+        #    module_type = 10,
+        # )),
+        #("work", Storage(
+        #   name_nice = T("Jobs"),
+        #   #description = "Simple Volunteer Jobs Management",
+        #   restricted = False,
+        #   module_type = None,
+        #)),
+        # Deprecated: Replaced by BR
+        #("dvr", Storage(
+        #    name_nice = T("Beneficiary Registry"),
+        #    #description = "Disaster Victim Registry",
+        #    module_type = 10
+        #)),
+        # Deprecated: Replaced by event
+        #("irs", Storage(
+        #    name_nice = T("Incidents"),
+        #    #description = "Incident Reporting System",
+        #    module_type = 10
+        #)),
+        # Deprecated: Replaced by DC
+        #("survey", Storage(
+        #    name_nice = T("Surveys"),
+        #    #description = "Create, enter, and manage surveys.",
+        #    module_type = 5,
         #)),
         # These are specialist modules
         #("cap", Storage(
         #    name_nice = T("CAP"),
         #    #description = "Create & broadcast CAP alerts",
-        #    restricted = True,
         #    module_type = 10,
+        #)),
+        #("dvi", Storage(
+        #   name_nice = T("Disaster Victim Identification"),
+        #   #description = "Disaster Victim Identification",
+        #   module_type = 10,
+        #   #access = "|DVI|",      # Only users with the DVI role can see this module in the default menu & access the controller
+        #)),
+        #("mpr", Storage(
+        #   name_nice = T("Missing Person Registry"),
+        #   #description = "Helps to report and search for missing persons",
+        #   module_type = 10,
         #)),
         # Requires RPy2 & PostgreSQL
         # ("climate", Storage(
         #    name_nice = T("Climate"),
         #    #description = "Climate data portal",
-        #    restricted = True,
         #    module_type = 10,
         # )),
         #("delphi", Storage(
@@ -1360,7 +1616,6 @@ def config(settings):
         #("building", Storage(
         #    name_nice = T("Building Assessments"),
         #    #description = "Building Safety Assessments",
-        #    restricted = True,
         #    module_type = 10,
         #)),
         # Deprecated by Surveys module
@@ -1368,24 +1623,16 @@ def config(settings):
         #("assess", Storage(
         #    name_nice = T("Assessments"),
         #    #description = "Rapid Assessments & Flexible Impact Assessments",
-        #    restricted = True,
         #    module_type = 10,
         #)),
         #("impact", Storage(
         #    name_nice = T("Impacts"),
         #    #description = "Used by Assess",
-        #    restricted = True,
         #    module_type = None,
         #)),
         #("ocr", Storage(
         #   name_nice = T("Optical Character Recognition"),
         #   #description = "Optical Character Recognition for reading the scanned handwritten paper forms.",
-        #   restricted = False,
-        #   module_type = None,
-        #)),
-        #("work", Storage(
-        #   name_nice = T("Jobs"),
-        #   #description = "Simple Volunteer Jobs Management",
         #   restricted = False,
         #   module_type = None,
         #)),
