@@ -310,7 +310,7 @@ def latest_records(resource, layout, list_id, limit, list_fields, orderby):
     """
 
     #orderby = resource.table[orderby]
-    datalist, numrows, ids = resource.datalist(fields=list_fields,
+    datalist, numrows = resource.datalist(fields=list_fields,
                                                start=None,
                                                limit=limit,
                                                list_id=list_id,
