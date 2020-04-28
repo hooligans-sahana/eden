@@ -9,7 +9,7 @@ from gluon import *
 from gluon.storage import Storage
 from s3 import FS, ICON, IS_ONE_OF, S3CustomController, S3Method, \
                S3MultiSelectWidget, S3Profile, S3SQLCustomForm, \
-               s3_avatar_represent, s3_comments_widget, \
+               s3_avatar_represent, s3_comments_widget, s3_fullname, \
                s3_mark_required, s3_phone_requires, s3_str, s3_truncate
 
 SEPARATORS = (",", ":")
@@ -155,6 +155,8 @@ class donor(S3CustomController):
 
     def __call__(self):
 
+        s3 = current.response.s3
+
         output = {}
 
         # Allow editing of page content from browser using CMS module
@@ -191,7 +193,7 @@ class donor(S3CustomController):
             else:
                 item = DIV(XML(item.body))
         elif ADMIN:
-            if current.response.s3.crud.formstyle == "bootstrap":
+            if s3.crud.formstyle == "bootstrap":
                 _class = "btn"
             else:
                 _class = "action-btn"
@@ -207,10 +209,504 @@ class donor(S3CustomController):
             item = ""
         output["item"] = item
 
-        current.response.s3.scripts.append("https://platform.twitter.com/widgets.js")
+        s3.scripts.append("https://platform.twitter.com/widgets.js")
 
         self._view(THEME, "donor.html")
         return output
+
+# =============================================================================
+class organisationApply(S3Method):
+    """
+        Apply to be affiliated with an Org
+    """
+
+    # -------------------------------------------------------------------------
+    def apply_method(self, r, **attr):
+        """
+            Entry point for REST API
+
+            @param r: the S3Request
+            @param attr: controller arguments
+        """
+
+        if r.name == "organisation" and \
+           r.id and \
+           not r.component and \
+           r.representation in ("html", "aadata"):
+
+            T = current.T
+            db = current.db
+            s3db = current.s3db
+            auth = current.auth
+
+            organisation_id = r.id
+
+            # Check that this Org allows Applications
+            ttable = s3db.org_organisation_tag
+            query = (ttable.organisation_id == organisation_id) & \
+                    (ttable.tag == "apply")
+            apply = db(query).select(ttable.value,
+                                     limitby = (0, 1)
+                                     ).first()
+            if not apply or apply.value != "1":
+                current.session.error = T("Not permitted to Apply for this Organization")
+                redirect(URL(args = [organisation_id]))
+
+            requires = IS_IN_SET({"0": T("No"),
+                                  "1": T("Yes"),
+                                  })
+            form = FORM(DIV(DIV(LABEL("Remain visible on the Reserves list as well?",
+                                      SPAN(" *",
+                                           _class = "req",
+                                           ),
+                                      _for = "org_organisation_sub_apply_value",
+                                      ),
+                                DIV(DIV(DIV(DIV(INPUT(requires = requires,
+                                                      _type = "radio",
+                                                      _name = "reserve",
+                                                      _id = "reserve_0",
+                                                      _value = "0",
+                                                      #value = None,
+                                                      ),
+                                                LABEL(T("No"),
+                                                      _for = "reserve_0",
+                                                      ),
+                                                ),
+                                            ),
+                                        DIV(DIV(INPUT(requires = requires,
+                                                      _type = "radio",
+                                                      _name = "reserve",
+                                                      _id = "reserve_1",
+                                                      _value = "1",
+                                                      #value = None,
+                                                      ),
+                                                LABEL(T("Yes"),
+                                                      _for = "reserve_1",
+                                                      ),
+                                                ),
+                                            ),
+                                        _class = "generic-widget web2py_radiowidget",
+                                        _id = "org_organisation_sub_apply_value",
+                                        ),
+                                    _class = "controls",
+                                    ),
+                                _class = "small-12 columns",
+                                ),
+                            _class = "form-row row",
+                            ),
+                        DIV(DIV(DIV(INPUT(_class = "button primary small btn",
+                                          _type = "submit",
+                                          _value = "Apply",
+                                          ),
+                                    _class = "controls",
+                                    ),
+                                _class = "small-12 columns",
+                                ),
+                            _class = "form-row row",
+                            ),
+                        )
+
+            if form.accepts(r.post_vars):
+                # Lookup the Person
+                ltable = s3db.pr_person_user
+                ptable = s3db.pr_person
+                query = (ltable.user_id == auth.user.id) & \
+                        (ltable.pe_id == ptable.pe_id)
+                person = db(query).select(ptable.id,
+                                          ptable.first_name,
+                                          ptable.middle_name,
+                                          ptable.last_name,
+                                          limitby = (0, 1)
+                                          ).first()
+                person_id = person.id
+
+                # Store the Application
+                delegation_id = s3db.hrm_delegation.insert(organisation_id = organisation_id,
+                                                           person_id = person_id,
+                                                           status = "APPL",
+                                                           comments = form.vars.reserve,
+                                                           )
+
+                # Message OrgAdmins
+                # Lookup Emails
+                utable = db.auth_user
+                mtable = db.auth_membership
+                gtable = db.auth_group
+                query = (utable.organisation_id == organisation_id) & \
+                        (mtable.user_id == utable.id) & \
+                        (mtable.group_id == gtable.id) & \
+                        (gtable.uuid == "ORG_ADMIN")
+                admins = db(query).select(utable.email,
+                                          distinct = True)
+
+                # Create Email
+                settings = current.deployment_settings
+                fullname = s3_fullname(person)
+                system_name = settings.get_system_name_short()
+                subject = "%s: New Application from %s" % \
+                            (system_name,
+                             fullname,
+                             )
+                url = "%s%s" % (settings.get_base_public_url(),
+                                URL(c="org", f="organisation",
+                                    args = [organisation_id, "application"],
+                                    vars = {"delegation_id": delegation_id},
+                                    ),
+                                )
+                message = "%s has applied to join your Organisation on %s. Please visit %s to respond." % \
+                            (fullname,
+                             system_name,
+                             url,
+                             )
+
+                # Send Email to each Admin
+                send_email = current.msg.send_email
+                for admin in admins:
+                    send_email(to = admin.email,
+                               subject = subject,
+                               message = message,
+                               )
+                # Redirect
+                current.session.confirmation = T("Application has been submitted")
+                redirect(URL(args = [organisation_id]))
+
+            # Show Form
+            header = P("Your application to join this Organisation will be reviewed by it's Administrator(s) and you will receive an email with the outcome.")
+
+            output = {"form": form,
+                      "header": header,
+                      "title": "Apply to join Organisation: %s" % r.record.name,
+                      }
+            current.response.title = T("Apply")
+            S3CustomController._view(THEME, "apply.html")
+            return output
+
+        else:
+            r.error(405, current.ERROR.BAD_METHOD)
+
+# =============================================================================
+class organisationApplication(S3Method):
+    """
+        Handle Application to be affiliated with an Org
+    """
+
+    # -------------------------------------------------------------------------
+    def apply_method(self, r, **attr):
+        """
+            Entry point for REST API
+
+            @param r: the S3Request
+            @param attr: controller arguments
+        """
+
+        if r.name == "organisation" and \
+           r.id and \
+           not r.component and \
+           r.representation in ("html", "aadata"):
+
+            organisation_id = r.id
+
+            delegation_id = r.get_vars.get("delegation_id")
+            if delegation_id is None:
+                current.session.error = "Can't Approve Application if Delegation not supplied"
+                redirect(URL(args = [organisation_id]))
+
+            T = current.T
+            db = current.db
+            s3db = current.s3db
+            auth = current.auth
+            has_role = auth.s3_has_role
+
+            # Check that this User is permitted to review Applications for this Org
+            if has_role("ADMIN"):
+                # OK
+                pass
+            elif has_role("ORG_ADMIN") and (auth.user.organisation_id == organisation_id): # @ToDo: Ideally (post-CCC) make this realm to allow OG_ADMIN role to be assigned to 1 User for multiple Orgs
+                # OK
+                pass
+            else:
+                current.session.error = "You are not permitted to Approve Applications for this Organisation"
+                redirect(URL(args = [organisation_id]))
+
+            # Read the delegation
+            dtable = s3db.hrm_delegation
+            delegation = db(dtable.id == delegation_id).select(dtable.id, # For update_record
+                                                               dtable.organisation_id,
+                                                               dtable.person_id,
+                                                               dtable.status,
+                                                               dtable.comments,
+                                                               limitby = (0, 1)
+                                                               ).first()
+            if not delegation:
+                current.session.error = "Application not found!"
+                redirect(URL(args = [organisation_id]))
+
+            if delegation.organisation_id != organisation_id:
+                current.session.error = "Application not for this Organisation!"
+                redirect(URL(args = [organisation_id]))
+
+            if delegation.status != "APPL":
+                current.session.error = "Application has incorrect status!"
+                redirect(URL(args = [organisation_id]))
+
+            # Lookup Person
+            person_id = delegation.person_id
+            ptable = s3db.pr_person
+            person = db(ptable.id == person_id).select(ptable.first_name,
+                                                       ptable.middle_name,
+                                                       ptable.last_name,
+                                                       ptable.pe_id,
+                                                       limitby = (0, 1)
+                                                       ).first()
+            pe_id = person.pe_id
+
+            # Lookup User Account
+            ltable = s3db.pr_person_user
+            utable = db.auth_user
+            query = (ltable.pe_id == pe_id) & \
+                    (ltable.user_id == utable.id)
+            user = db(query).select(utable.id,
+                                    utable.organisation_id,
+                                    limitby = (0, 1),
+                                    ).first()
+            if user.organisation_id:
+                current.session.error = "Volunteer has already been accepted to join an Organisation"
+                redirect(URL(args = [organisation_id]))
+
+            user_id = user.id
+
+            record = r.record
+            org_name = record.name
+            realm_entity = record.pe_id
+
+            requires = IS_IN_SET({"0": T("No"),
+                                  "1": T("Yes"),
+                                  })
+            form = FORM(DIV(DIV(LABEL("Should this volunteer become affiliated to this Organisation?",
+                                      SPAN(" *",
+                                           _class = "req",
+                                           ),
+                                      _for = "pr_person_sub_apply_value",
+                                      ),
+                                DIV(DIV(DIV(DIV(INPUT(requires = requires,
+                                                      _type = "radio",
+                                                      _name = "approve",
+                                                      _id = "approve_0",
+                                                      _value = "0",
+                                                      #value = None,
+                                                      ),
+                                                LABEL(T("No"),
+                                                      _for = "approve_0",
+                                                      ),
+                                                ),
+                                            ),
+                                        DIV(DIV(INPUT(requires = requires,
+                                                      _type = "radio",
+                                                      _name = "approve",
+                                                      _id = "approve_1",
+                                                      _value = "1",
+                                                      #value = None,
+                                                      ),
+                                                LABEL(T("Yes"),
+                                                      _for = "approve_1",
+                                                      ),
+                                                ),
+                                            ),
+                                        _class = "generic-widget web2py_radiowidget",
+                                        _id = "pr_person_sub_apply_value",
+                                        ),
+                                    _class = "controls",
+                                    ),
+                                _class = "small-12 columns",
+                                ),
+                            _class = "form-row row",
+                            ),
+                        DIV(DIV(DIV(INPUT(_class = "button primary small btn",
+                                          _type = "submit",
+                                          _value = "Save",
+                                          ),
+                                    _class = "controls",
+                                    ),
+                                _class = "small-12 columns",
+                                ),
+                            _class = "form-row row",
+                            ),
+                        )
+
+            if form.accepts(r.post_vars):
+
+                # Message Applicant
+
+                # Lookup Email
+                ctable = s3db.pr_contact
+                query = (ctable.pe_id == pe_id) & \
+                        (ctable.contact_method == "EMAIL") & \
+                        (ctable.deleted == False)
+                emails = db(query).select(ctable.value,
+                                          distinct = True)
+
+                # Create Email
+                system_name = current.deployment_settings.get_system_name_short()
+                if form.vars.approve == "0":
+                    subject = "%s: Application to %s has been Rejected" % (system_name, org_name)
+
+                    # Update Delegation
+                    delegation.update_record(status = "RJCT")
+                else:
+                    subject = "%s: Application to %s has been Approved" % (system_name, org_name)
+
+                    # Update Delegation
+                    delegation.update_record(status = "ACPT")
+
+                    # Update User Account
+                    user.update_record(organisation_id = organisation_id)
+
+                    # Add Human Resource Record
+                    htable = s3db.hrm_human_resource
+                    hr = {"organisation_id": organisation_id,
+                          "person_id": person_id,
+                          "realm_entity": realm_entity,
+                          }
+                    human_resource_id = htable.insert(**hr)
+                    hr["id"] = human_resource_id
+                    s3db.update_super(htable, hr)
+                    onaccept = s3db.get_config("hrm_human_resource", "create_onaccept") or \
+                               s3db.get_config("hrm_human_resource", "onaccept")
+                    if callable(onaccept):
+                        hform = Storage(vars = hr)
+                        onaccept(hform)
+
+                    # Add VOLUNTEER role
+                    auth.s3_assign_role(user_id, "VOLUNTEER", for_pe=realm_entity)
+
+                    # Remove RESERVE role
+                    auth.s3_withdraw_role(user_id, "RESERVE", for_pe=[])
+
+                    # Set Realm Entity
+                    ttable = s3db.hrm_human_resource_tag
+                    reserve = delegation.comments
+                    if reserve == "1":
+                        ftable = s3db.pr_forum
+                        forum = db(ftable.organisation_id == organisation_id).select(ftable.pe_id,
+                                                                                     limitby = (0, 1)
+                                                                                     ).first()
+
+                        auth.set_realm_entity("pr_person", person_id, entity=forum.pe_id, force_update=True)
+                    else:
+                        auth.set_realm_entity("pr_person", person_id, entity=realm_entity, force_update=True)
+
+                    # Set Reserves Tag
+                    ttable = s3db.hrm_human_resource_tag
+                    ttable.insert(human_resource_id = human_resource_id,
+                                  tag = "reserve",
+                                  value = reserve,
+                                  )
+
+                message = subject
+
+                # Send Email to each of the Person's emails
+                send_email = current.msg.send_email
+                for email in emails:
+                    send_email(to = email.value,
+                               subject = subject,
+                               message = message,
+                               )
+                # Redirect
+                current.session.confirmation = T("Application has been processed")
+                redirect(URL(args = [organisation_id]))
+
+            # Show Form
+            ctable = s3db.hrm_competency
+            stable = s3db.hrm_skill
+            query = (ctable.person_id == person_id) & \
+                    (ctable.deleted == False) & \
+                    (ctable.skill_id == stable.id)
+            offers = db(query).select(stable.name)
+            offers = ", ".join([o.name for o in offers])
+
+            ttable = s3db.pr_person_tag
+            query = (ttable.person_id == person_id) & \
+                    (ttable.tag == "skill_details")
+            tag = db(query).select(ttable.id,
+                                   ttable.value,
+                                   limitby = (0, 1)
+                                   ).first()
+            if tag and tag.value is not None:
+                offer_details = TR(TD("Offer Details:"),
+                                   TD(tag.value),
+                                   )
+            else:
+                offer_details = TR(TD(_colspan = 2))
+
+            ctable = s3db.pr_contact
+            query = (ctable.pe_id == pe_id) & \
+                    (ctable.contact_method == "EMAIL") & \
+                    (ctable.deleted == False)
+            emails = db(query).select(ctable.value)
+            email = ", ".join([e.value for e in emails])
+
+            query = (ctable.pe_id == pe_id) & \
+                    (ctable.contact_method.belongs(("SMS", "HOME_PHONE"))) & \
+                    (ctable.deleted == False)
+            phones = db(query).select(ctable.value)
+            phone = ", ".join([p.value for p in phones])
+
+            atable = s3db.pr_address
+            gtable = s3db.gis_location
+            query = (atable.pe_id == pe_id) & \
+                    (atable.deleted == False) & \
+                    (atable.location_id == gtable.id)
+            location = db(query).select(gtable.L3,
+                                        gtable.L4,
+                                        gtable.addr_street,
+                                        limitby = (0, 1)
+                                        ).first()
+            if location:
+                address = location.addr_street or ""
+                if location.L4:
+                    if address:
+                        address = "%s, %s" % (address, location.L4)
+                    else:
+                        address = location.L4
+                if location.L3:
+                    if address:
+                        address = "%s, %s" % (address, location.L3)
+                    else:
+                        address = location.L3
+                address = TR(TD("Address:"),
+                             TD(address)
+                             )
+            else:
+                address = TR(TD(_colspan = 2))
+
+            header = DIV(P("This volunteer has applied to join this Organisation:"),
+                         TABLE(TR(TD("Name:"),
+                                  TD(s3_fullname(person))
+                                  ),
+                               TR(TD("Volunteer Offer:"),
+                                  TD(offers),
+                                  ),
+                               offer_details,
+                               TR(TD("Telephone:"),
+                                  TD(phone),
+                                  ),
+                               TR(TD("Email:"),
+                                  TD(email),
+                                  ),
+                               address,
+                               ),
+                         )
+
+            output = {"form": form,
+                      "header": header,
+                      "title": "Application to join Organisation: %s" % org_name,
+                      }
+            current.response.title = T("Application")
+            S3CustomController._view(THEME, "apply.html")
+            return output
+
+        else:
+            r.error(405, current.ERROR.BAD_METHOD)
 
 # =============================================================================
 class personAdditional(S3Method):
@@ -237,7 +733,10 @@ class personAdditional(S3Method):
             s3db = current.s3db
 
             # Check if this User is allowed access to this data for this Person
-            if auth.s3_has_role("RESERVE_ADMIN"):
+            if r.controller == "default":
+                # Personal profile: OK
+                pass
+            elif auth.s3_has_role("RESERVE_ADMIN"):
                 # OK
                 pass
             else:
@@ -419,7 +918,9 @@ class personAdditional(S3Method):
                 # Maintain normal rheader for consistency
                 rheader = attr["rheader"]
                 profile_header = TAG[""](H2(response.s3.crud_strings["pr_person"].title_display),
-                                         DIV(rheader(r), _id="rheader"),
+                                         DIV(rheader(r),
+                                             _id = "rheader",
+                                             ),
                                          )
             else:
                 profile_header = None
@@ -440,6 +941,173 @@ class personAdditional(S3Method):
 
         else:
             r.error(405, current.ERROR.BAD_METHOD)
+
+# =============================================================================
+class personAffiliation(S3Method):
+    """
+        Affiliation Tab for unaffiliated Volunteers
+    """
+
+    # -------------------------------------------------------------------------
+    def apply_method(self, r, **attr):
+        """
+            Entry point for REST API
+
+            @param r: the S3Request
+            @param attr: controller arguments
+        """
+
+        if r.name == "person" and \
+           r.id and \
+           not r.component and \
+           r.representation in ("html", "aadata"):
+
+            T = current.T
+            auth = current.auth
+            s3db = current.s3db
+
+            # Check if this User is allowed access to this data for this Person
+            if r.controller == "default":
+                # Personal profile: OK
+                pass
+            elif auth.s3_has_role("RESERVE_ADMIN"):
+                # OK
+                pass
+            else:
+                htable = s3db.hrm_human_resource
+                query = (htable.person_id == r.record.id) & \
+                        (htable.deleted == False)
+                hr = current.db(query).select(htable.organisation_id,
+                                              limitby = (0, 1)
+                                              ).first()
+                if hr and hr.organisation_id == auth.user.organisation_id:
+                    # OK
+                    pass
+                else:
+                    # Not OK
+                    current.session.error = T("Not permitted to access Additional Information for this Volunteer")
+                    redirect(URL(c=r.controller, f="person", args=[r.id]))
+
+            tablename = "pr_person"
+
+            # Filtered components
+            s3db.add_components(tablename,
+                                pr_person_tag = ({"name": "reserve",
+                                                  "joinby": "person_id",
+                                                  "filterby": {"tag": "reserve"},
+                                                  "multiple": False,
+                                                  },
+                                                 ),
+                                )
+
+            # Individual settings for specific tag components
+            components_get = s3db.resource(tablename).components.get
+
+            reserve = components_get("reserve")
+            f = reserve.table.value
+            # Has no effect:
+            #f.default = "1"
+            f.requires = IS_IN_SET({"0": T("No"),
+                                    "1": T("Yes"),
+                                    })
+            f.widget = lambda f, v: \
+                            SQLFORM.widgets.radio.widget(f, v,
+                                                         style="divs")
+
+            form = S3SQLCustomForm((T("Visible on the Reserves list?"), "reserve.value"),
+                                   postprocess = self.affiliation_postprocess,
+                                   )
+
+            form = {"type": "form",
+                    #"label": ,
+                    #"icon": ,
+                    "tablename": tablename,
+                    "sqlform": form,
+                    "filter": FS("id") == r.id,
+                    }
+
+            profile_widgets= [form,
+                              ]
+
+            if r.representation == "html":
+                response = current.response
+                # Maintain normal rheader for consistency
+                rheader = attr["rheader"]
+                profile_header = TAG[""](H2(response.s3.crud_strings["pr_person"].title_display),
+                                         DIV(rheader(r), _id="rheader"),
+                                         )
+            else:
+                profile_header = None
+
+            s3db.configure(tablename,
+                           profile_cols = 1,
+                           profile_header = profile_header,
+                           profile_widgets = profile_widgets,
+                           )
+
+            profile = S3Profile()
+            profile.tablename = tablename
+            profile.request = r
+            output = profile.profile(r, **attr)
+            if r.representation == "html":
+                output["title"] = response.title = T("Affiliation")
+            return output
+
+        else:
+            r.error(405, current.ERROR.BAD_METHOD)
+
+    # -----------------------------------------------------------------------------
+    @staticmethod
+    def affiliation_postprocess(form):
+        """
+            Set Realm to either Reserves Forum or Inactives Forum
+        """
+
+        db = current.db
+        s3db = current.s3db
+        auth = current.auth
+        record = form.record
+        person_id = form.vars.get("id")
+
+        # Find Tag
+        ttable = s3db.pr_person_tag
+        query = (ttable.person_id == person_id) & \
+                (ttable.tag == "reserve")
+        reserve = db(query).select(ttable.value,
+                                   limitby = (0, 1)
+                                   ).first()
+        reserve = reserve.value
+
+        if record is None or \
+           reserve != record.sub_reserve_value:
+
+            # Find User Account
+            #ptable = s3db.pr_person
+            #putable = s3db.pr_person_user
+            #query = (ptable.id == person_id) & \
+            #        (ptable.pe_id == putable.pe_id)
+            #link = db(query).select(putable.user_id,
+            #                        limitby = (0, 1)
+            #                        ).first()
+            #user_id = link.user_id
+
+            # Update Realm Entity
+            ftable = s3db.pr_forum
+            if reserve == "0":
+                FORUM = "Inactives"
+                # Withdraw Old Role
+                #auth.s3_withdraw_role(user_id, "RESERVE", for_pe=[])
+            elif reserve == "1":
+                FORUM = "Reserves"
+            forum = db(ftable.name == FORUM).select(ftable.pe_id,
+                                                    limitby = (0, 1)
+                                                    ).first()
+            realm_entity = forum.pe_id
+            auth.set_realm_entity("pr_person", person_id, entity=realm_entity, force_update=True)
+            
+            #if reserve == "1":
+            #    # Add New Role
+            #    auth.s3_assign_role(user_id, "RESERVE", for_pe=realm_entity)
 
 # =============================================================================
 class register(S3CustomController):
@@ -569,7 +1237,7 @@ class register(S3CustomController):
                                 widget = S3MultiSelectWidget(header="",
                                                              selectedList=3),
                                 ),
-                          Field("travel", "boolean",
+                          Field("travel", "integer",
                                 label = T("Willing to Travel?"),
                                 requires = IS_IN_SET({0: T("No"),
                                                       1: T("Yes"),
@@ -708,13 +1376,14 @@ class register(S3CustomController):
             formfields, required_fields = individual_formfields()
 
         elif get_vars_get("agency"):
-            # Organisation or Agency
+            # Organisation
             agency = True
             title = T("Register as an Organization or Agency")
-            header = P("This is for known CEP/Flood Action Group etc based within Cumbria. Please use ",
-                       A("Volunteer Group", _href=URL(args="register", vars={"vol_group": 1})),
-                       " if you do not fall into these",
-                       )
+            header = P()
+            #header = P("This is for known CEP/Flood Action Group etc based within Cumbria. Please use ",
+            #           A("Volunteer Group", _href=URL(args="register", vars={"vol_group": 1})),
+            #           " if you do not fall into these",
+            #           )
 
             # Instantiate Consent Tracker
             consent = s3db.auth_Consent(processing_types=["STOREPID", "FOCV"])
@@ -725,22 +1394,22 @@ class register(S3CustomController):
                                 requires = IS_NOT_EMPTY(),
                                 ),
                           s3db.org_organisation_type_id(),
-                          Field("addr_L3", "reference gis_location",
-                                label = T("Where Based"),
-                                requires = IS_IN_SET(districts_and_uk),
-                                ),
-                          Field("addr_street",
-                                label = T("Street Address"),
-                                ),
-                          Field("addr_postcode",
-                                label = T("Postcode"),
-                                ),
-                          Field("where_operate", "list:reference gis_location",
-                                label = T("Where would you be willing to operate?"),
-                                requires = IS_IN_SET(districts, multiple=True),
-                                widget = S3MultiSelectWidget(header="",
-                                                             selectedList=3),
-                                ),
+                          #Field("addr_L3", "reference gis_location",
+                          #      label = T("Where Based"),
+                          #      requires = IS_IN_SET(districts_and_uk),
+                          #      ),
+                          #Field("addr_street",
+                          #      label = T("Street Address"),
+                          #      ),
+                          #Field("addr_postcode",
+                          #      label = T("Postcode"),
+                          #      ),
+                          #Field("where_operate", "list:reference gis_location",
+                          #      label = T("Where would you be willing to operate?"),
+                          #      requires = IS_IN_SET(districts, multiple=True),
+                          #      widget = S3MultiSelectWidget(header="",
+                          #                                   selectedList=3),
+                          #      ),
                           # Group Leader 1
                           utable.first_name,
                           utable.last_name,
@@ -772,35 +1441,35 @@ class register(S3CustomController):
                                                    error_message = auth_messages.mismatched_password,
                                                    ),
                                 ),
-                          # Group Leader 2
-                          Field("first_name2",
-                                label = T("First Name"),
-                                ),
-                          Field("last_name2",
-                                label = T("Last Name"),
-                                ),
-                          Field("addr_street2",
-                                label = T("Street Address"),
-                                ),
-                          Field("addr_postcode2",
-                                label = T("Postcode"),
-                                ),
-                          Field("email2",
-                                label = T("Email"),
-                                requires = IS_EMPTY_OR(IS_EMAIL()),
-                                ),
-                          Field("mobile2",
-                                label = T("Contact Number (Preferred)"),
-                                requires = IS_EMPTY_OR(s3_phone_requires),
-                                comment = DIV(_class = "tooltip",
-                                              _title = "%s|%s" % (T("Contact Number (Preferred)"),
-                                                                  T("Ideally a Mobile Number, so that we can send you Text Messages.")),
-                                              ),
-                                ),
-                          Field("home2",
-                                label = T("Contact Number (Secondary)"),
-                                requires = IS_EMPTY_OR(s3_phone_requires),
-                                ),
+                          # Org Admin 2
+                          #Field("first_name2",
+                          #      label = T("First Name"),
+                          #      ),
+                          #Field("last_name2",
+                          #      label = T("Last Name"),
+                          #      ),
+                          #Field("addr_street2",
+                          #      label = T("Street Address"),
+                          #      ),
+                          #Field("addr_postcode2",
+                          #      label = T("Postcode"),
+                          #      ),
+                          #Field("email2",
+                          #      label = T("Email"),
+                          #      requires = IS_EMPTY_OR(IS_EMAIL()),
+                          #      ),
+                          #Field("mobile2",
+                          #      label = T("Contact Number (Preferred)"),
+                          #      requires = IS_EMPTY_OR(s3_phone_requires),
+                          #      comment = DIV(_class = "tooltip",
+                          #                    _title = "%s|%s" % (T("Contact Number (Preferred)"),
+                          #                                        T("Ideally a Mobile Number, so that we can send you Text Messages.")),
+                          #                    ),
+                          #      ),
+                          #Field("home2",
+                          #      label = T("Contact Number (Secondary)"),
+                          #      requires = IS_EMPTY_OR(s3_phone_requires),
+                          #      ),
                           # Consent (GDPR + FOC)
                           Field("consent",
                                 label = T("Consent"),
@@ -811,9 +1480,9 @@ class register(S3CustomController):
             # Generate labels (and mark required fields in the process)
             required_fields = ["first_name",
                                "last_name",
-                               "addr_L3",
-                               "addr_street",
-                               "addr_postcode",
+                               #"addr_L3",
+                               #"addr_street",
+                               #"addr_postcode",
                                "mobile",
                                #"first_name2",
                                #"last_name2",
@@ -1095,8 +1764,10 @@ class register(S3CustomController):
             # Individual Volunteer
             title = T("Register as a Volunteer")
             header = DIV(P("Please use this page if you wish to volunteer as an individual."),
-                         P("If you are registering on behalf of a group please use ",
-                           A("Volunteer Group", _href=URL(args="register", vars={"vol_group": 1})),
+                         P(#"If you are registering on behalf of a group please use ",
+                           #A("Volunteer Group", _href=URL(args="register", vars={"vol_group": 1})),
+                           "If you are registering on behalf of a group please ",
+                           A("Register as Organisation", _href=URL(args="register", vars={"agency": 1})),
                            ".",
                            ),
                          #P("Families with children under 18 should register as a ",
@@ -1147,13 +1818,15 @@ class register(S3CustomController):
 
         # Add Subheadings
         if agency:
-            form[0].insert(6, DIV("Group Leader 1",
-                                  _class = "subheading",
+            form[0].insert(2, DIV(_class = "subheading",
                                   ))
-            form[0].insert(16, DIV("Group Leader 2",
-                                   _class = "subheading",
-                                   ))
-            form[0].insert(24, DIV(_class = "subheading",
+            #form[0].insert(6, DIV("Group Leader 1",
+            #                     _class = "subheading",
+            #                      ))
+            #form[0].insert(16, DIV("Group Leader 2",
+            #                       _class = "subheading",
+            #                       ))
+            form[0].insert(12, DIV(_class = "subheading",
                                    ))
 
         elif donor:
@@ -1244,19 +1917,19 @@ class register(S3CustomController):
                 custom = {"registration_type": "agency",
                           "organisation": form_vars.organisation,
                           "organisation_type_id": form_vars.organisation_type_id,
-                          "addr_L3": form_vars.addr_L3,
-                          "addr_street": form_vars.addr_street,
-                          "addr_postcode": form_vars.addr_postcode,
-                          "where_operate": form_vars.where_operate or [],
+                          #"addr_L3": form_vars.addr_L3,
+                          #"addr_street": form_vars.addr_street,
+                          #"addr_postcode": form_vars.addr_postcode,
+                          #"where_operate": form_vars.where_operate or [],
                           "addr_street1": form_vars.addr_street1,
                           "addr_postcode1": form_vars.addr_postcode1,
-                          "first_name2": form_vars.first_name2,
-                          "last_name2": form_vars.last_name2,
-                          "addr_street2": form_vars.addr_street2,
-                          "addr_postcode2": form_vars.addr_postcode2,
-                          "email2": form_vars.email2,
-                          "mobile2": form_vars.mobile2,
-                          "home2": form_vars.home2,
+                          #"first_name2": form_vars.first_name2,
+                          #"last_name2": form_vars.last_name2,
+                          #"addr_street2": form_vars.addr_street2,
+                          #"addr_postcode2": form_vars.addr_postcode2,
+                          #"email2": form_vars.email2,
+                          #"mobile2": form_vars.mobile2,
+                          #"home2": form_vars.home2,
                           }
             elif donor:
                 custom = {"registration_type": "donor",
@@ -1494,7 +2167,7 @@ class verify_email(S3CustomController):
 
         if not approvers:
             # Agencies are approved by ADMIN(s) with a CVS email
-            # Others approved by ADMIN if no ORG_ADMIN(s) exist
+            # Others approved by these same ADMINs if no ORG_ADMIN(s) exist
             query = (gtable.uuid == "ADMIN") & \
                     (gtable.id == mtable.group_id) & \
                     (mtable.user_id == utable.id)
@@ -1597,6 +2270,49 @@ class volunteer(S3CustomController):
         return output
 
 # =============================================================================
+def org_organisation_create_onaccept(form):
+    """
+        Create a Reserves Forum for this Organisation with dual hierarchy to main Reserves Forum & this Organisation
+    """
+
+    db = current.db
+    s3db = current.s3db
+    ftable = s3db.pr_forum
+
+    # Lookup the Reserves Forum
+    forum = db(ftable.name == "Reserves").select(ftable.pe_id,
+                                                 limitby = (0, 1)
+                                                 ).first()
+    try:
+        reserves_pe_id = forum.pe_id
+    except AttributeError:
+        current.log.error("Unable to link Org Forum to Reserves Forum: Forum not Found")
+        return
+
+    form_vars_get = form.vars.get
+    organisation_id = form_vars_get("id")
+
+    # Lookup the Organisation
+    otable = s3db.org_organisation
+    org = db(otable.id == organisation_id).select(otable.pe_id,
+                                                  limitby = (0, 1)
+                                                  ).first()
+    org_pe_id = org.pe_id
+
+    # Create Forum
+    record = {"organisation_id": organisation_id,
+              "name": "%s Reserves" % form_vars_get("name"),
+              }
+    forum_id = ftable.insert(**record)
+    record["id"] = forum_id
+    s3db.update_super(ftable, record)
+    forum_pe_id = record["pe_id"]
+
+    # Add the Hierarchy links
+    s3db.pr_add_affiliation(org_pe_id, forum_pe_id, role="Realm Hierarchy")
+    s3db.pr_add_affiliation(reserves_pe_id, forum_pe_id, role="Realm Hierarchy")
+
+# =============================================================================
 def auth_user_register_onaccept(user_id):
     """
         Process Custom Fields
@@ -1622,33 +2338,36 @@ def auth_user_register_onaccept(user_id):
 
     # Apply custom fields & Assign correct Roles
     if registration_type == "agency":
-        # Agency
-
-        # Create Home Address
-        gtable = s3db.gis_location
-        record = {"addr_street": custom["addr_street1"],
-                  "addr_postcode": custom["addr_postcode1"],
-                  }
-        location_id = gtable.insert(**record)
-        record["id"] = location_id
-        location_onaccept = get_config("gis_location", "create_onaccept") or \
-                            get_config("gis_location", "onaccept")
-        if callable(location_onaccept):
-            gform = Storage(vars = record)
-            location_onaccept(gform)
+        # New Organisation (& Org Admin)
 
         pe_id = auth.s3_user_pe_id(user_id)
-        atable = s3db.pr_address
-        record = {"pe_id": pe_id,
-                  "location_id": location_id,
-                  }
-        address_id = atable.insert(**record)
-        record["id"] = address_id
-        address_onaccept = get_config("pr_address", "create_onaccept") or \
-                           get_config("pr_address", "onaccept")
-        if callable(address_onaccept):
-            aform = Storage(vars = record)
-            address_onaccept(aform)
+
+        # Create Home Address
+        addr_street = custom.get("addr_street1")
+        if addr_street:
+            gtable = s3db.gis_location
+            record = {"addr_street": addr_street,
+                      "addr_postcode": custom["addr_postcode1"],
+                      }
+            location_id = gtable.insert(**record)
+            record["id"] = location_id
+            location_onaccept = get_config("gis_location", "create_onaccept") or \
+                                get_config("gis_location", "onaccept")
+            if callable(location_onaccept):
+                gform = Storage(vars = record)
+                location_onaccept(gform)
+
+            atable = s3db.pr_address
+            record = {"pe_id": pe_id,
+                      "location_id": location_id,
+                      }
+            address_id = atable.insert(**record)
+            record["id"] = address_id
+            address_onaccept = get_config("pr_address", "create_onaccept") or \
+                               get_config("pr_address", "onaccept")
+            if callable(address_onaccept):
+                aform = Storage(vars = record)
+                address_onaccept(aform)
 
         # Create Organisation
         otable = s3db.org_organisation
@@ -1657,11 +2376,13 @@ def auth_user_register_onaccept(user_id):
         organisation_id = otable.insert(**organisation)
         organisation["id"] = organisation_id
         s3db.update_super(otable, organisation)
+        db(otable.id == organisation_id).update(realm_entity = organisation["pe_id"])
         onaccept = get_config("org_organisation", "create_onaccept") or \
                    get_config("org_organisation", "onaccept")
+        oform = Storage(vars = organisation)
         if callable(onaccept):
-            oform = Storage(vars = organisation)
             onaccept(oform)
+        org_organisation_create_onaccept(oform)
 
         ltable = s3db.org_organisation_organisation_type
         ltable.insert(organisation_id = organisation_id,
@@ -1669,12 +2390,22 @@ def auth_user_register_onaccept(user_id):
                       )
         # Currently no need to onaccept since we don't have type-dependent realm entities
 
-        ltable = s3db.org_organisation_location
-        for location_id in custom["where_operate"]:
-            ltable.insert(organisation_id = organisation_id,
-                          location_id = location_id,
-                          )
-            # Currently no need to onaccept as none defined
+        ttable = s3db.org_organisation_tag
+        ttable.insert(organisation_id = organisation_id,
+                      tag = "visible",
+                      value = "1",
+                      )
+        ttable.insert(organisation_id = organisation_id,
+                      tag = "apply",
+                      value = "0",
+                      )
+
+        #ltable = s3db.org_organisation_location
+        #for location_id in custom["where_operate"]:
+        #    ltable.insert(organisation_id = organisation_id,
+        #                  location_id = location_id,
+        #                  )
+        #    # Currently no need to onaccept as none defined
 
         # Update User Record with organisation_id
         db(db.auth_user.id == user_id).update(organisation_id = organisation_id)
@@ -1726,107 +2457,107 @@ def auth_user_register_onaccept(user_id):
         person.update_record(realm_entity = realm_entity)
 
         # Create Office
-        record = {"parent": custom["addr_L3"],
-                  "addr_street": custom["addr_street"],
-                  "addr_postcode": custom["addr_postcode"],
-                  }
-        location_id = gtable.insert(**record)
-        record["id"] = location_id
-        if callable(location_onaccept):
-            gform = Storage(vars = record)
-            location_onaccept(gform)
+        #record = {"parent": custom["addr_L3"],
+        #          "addr_street": custom["addr_street"],
+        #          "addr_postcode": custom["addr_postcode"],
+        #          }
+        #location_id = gtable.insert(**record)
+        #record["id"] = location_id
+        #if callable(location_onaccept):
+        #    gform = Storage(vars = record)
+        #    location_onaccept(gform)
 
-        otable = s3db.org_office
-        record = {"name": custom["organisation"],
-                  "organisation_id": organisation_id,
-                  "realm_entity": realm_entity,
-                  }
-        office_id = otable.insert(**record)
-        record["id"] = office_id
-        s3db.update_super(otable, record)
-        onaccept = get_config("org_office", "create_onaccept") or \
-                   get_config("org_office", "onaccept")
-        if callable(onaccept):
-            oform = Storage(vars = record)
-            onaccept(oform)
+        #otable = s3db.org_office
+        #record = {"name": custom["organisation"],
+        #          "organisation_id": organisation_id,
+        #          "realm_entity": realm_entity,
+        #          }
+        #office_id = otable.insert(**record)
+        #record["id"] = office_id
+        #s3db.update_super(otable, record)
+        #onaccept = get_config("org_office", "create_onaccept") or \
+        #           get_config("org_office", "onaccept")
+        #if callable(onaccept):
+        #    oform = Storage(vars = record)
+        #    onaccept(oform)
 
-        # 2nd Leader
+        # 2nd OrgAdmin
         # Create Person
-        record = {"first_name": custom["first_name2"],
-                  "last_name": custom["last_name2"],
-                  "realm_entity": realm_entity,
-                  }
-        person_id = ptable.insert(**record)
-        record["id"] = person_id
-        s3db.update_super(ptable, record)
-        onaccept = get_config("pr_person", "create_onaccept") or \
-                   get_config("pr_person", "onaccept")
-        if callable(onaccept):
-            pform = Storage(vars = record)
-            onaccept(pform)
+        #record = {"first_name": custom["first_name2"],
+        #          "last_name": custom["last_name2"],
+        #          "realm_entity": realm_entity,
+        #          }
+        #person_id = ptable.insert(**record)
+        #record["id"] = person_id
+        #s3db.update_super(ptable, record)
+        #onaccept = get_config("pr_person", "create_onaccept") or \
+        #           get_config("pr_person", "onaccept")
+        #if callable(onaccept):
+        #    pform = Storage(vars = record)
+        #    onaccept(pform)
 
         # Add Address
-        pe_id = record.get("pe_id")
-        record = {"addr_street": custom["addr_street2"],
-                  "addr_postcode": custom["addr_postcode2"],
-                  }
-        location_id = gtable.insert(**record)
-        record["id"] = location_id
-        if callable(location_onaccept):
-            gform = Storage(vars = record)
-            location_onaccept(gform)
+        #pe_id = record.get("pe_id")
+        #record = {"addr_street": custom["addr_street2"],
+        #          "addr_postcode": custom["addr_postcode2"],
+        #          }
+        #location_id = gtable.insert(**record)
+        #record["id"] = location_id
+        #if callable(location_onaccept):
+        #    gform = Storage(vars = record)
+        #    location_onaccept(gform)
 
-        record = {"pe_id": pe_id,
-                  "location_id": location_id,
-                  "realm_entity": realm_entity,
-                  }
-        address_id = atable.insert(**record)
-        record["id"] = address_id
-        if callable(address_onaccept):
-            aform = Storage(vars = record)
-            address_onaccept(aform)
+        #record = {"pe_id": pe_id,
+        #          "location_id": location_id,
+        #          "realm_entity": realm_entity,
+        #          }
+        #address_id = atable.insert(**record)
+        #record["id"] = address_id
+        #if callable(address_onaccept):
+        #    aform = Storage(vars = record)
+        #    address_onaccept(aform)
 
         # Add Contacts
-        ctable = s3db.pr_contact
-        email2 = custom["email2"]
-        if email2:
-            record = {"pe_id": pe_id,
-                      "contact_method": "EMAIL",
-                      "value": email2,
-                      "realm_entity": realm_entity,
-                      }
-            ctable.insert(**record)
-            # Currently no need to onaccept as none defined
-        mobile2 = custom["mobile2"]
-        if mobile2:
-            record = {"pe_id": pe_id,
-                      "contact_method": "SMS",
-                      "value": mobile2,
-                      "realm_entity": realm_entity,
-                      }
-        home2 = custom["home2"]
-        if home2:
-            ctable.insert(**record)
-            record = {"pe_id": pe_id,
-                      "contact_method": "HOME_PHONE",
-                      "value": home2,
-                      "realm_entity": realm_entity,
-                      }
-            ctable.insert(**record)
+        #ctable = s3db.pr_contact
+        #email2 = custom["email2"]
+        #if email2:
+        #    record = {"pe_id": pe_id,
+        #              "contact_method": "EMAIL",
+        #              "value": email2,
+        #              "realm_entity": realm_entity,
+        #              }
+        #    ctable.insert(**record)
+        #    # Currently no need to onaccept as none defined
+        #mobile2 = custom["mobile2"]
+        #if mobile2:
+        #    record = {"pe_id": pe_id,
+        #              "contact_method": "SMS",
+        #              "value": mobile2,
+        #              "realm_entity": realm_entity,
+        #              }
+        #home2 = custom["home2"]
+        #if home2:
+        #    ctable.insert(**record)
+        #    record = {"pe_id": pe_id,
+        #              "contact_method": "HOME_PHONE",
+        #              "value": home2,
+        #              "realm_entity": realm_entity,
+        #              }
+        #    ctable.insert(**record)
 
         # Add Human Resource
-        hrtable = s3db.hrm_human_resource
-        record = {"organisation_id": organisation_id,
-                  "person_id": person_id,
-                  "realm_entity": realm_entity,
-                  }
-        human_resource_id = hrtable.insert(**record)
-        record["id"] = human_resource_id
-        onaccept = get_config("hrm_human_resource", "create_onaccept") or \
-                   get_config("hrm_human_resource", "onaccept")
-        if callable(onaccept):
-            hrform = Storage(vars = record)
-            onaccept(hrform)
+        #hrtable = s3db.hrm_human_resource
+        #record = {"organisation_id": organisation_id,
+        #          "person_id": person_id,
+        #          "realm_entity": realm_entity,
+        #          }
+        #human_resource_id = hrtable.insert(**record)
+        #record["id"] = human_resource_id
+        #onaccept = get_config("hrm_human_resource", "create_onaccept") or \
+        #           get_config("hrm_human_resource", "onaccept")
+        #if callable(onaccept):
+        #    hrform = Storage(vars = record)
+        #    onaccept(hrform)
 
     elif registration_type == "donor":
         # Donor
@@ -1957,7 +2688,7 @@ def auth_user_register_onaccept(user_id):
         realm_entity = group["pe_id"]
         db(gtable.id == group_id).update(realm_entity = realm_entity)
 
-        # Affiliate with Groups Forum to allow management by AGENCY & ORGADMINs
+        # Affiliate with Groups Forum to allow management by AGENCY & ORG_ADMINs
         ftable = s3db.pr_forum
         forum = db(ftable.name == "Groups").select(ftable.pe_id,
                                                    limitby = (0, 1)
@@ -2189,6 +2920,17 @@ def auth_user_register_onaccept(user_id):
     else:
         # Individual / Existing
 
+        ttable = s3db.pr_person_tag
+
+        pe_id = auth.s3_user_pe_id(user_id)
+
+        # Lookup Person
+        ptable = s3db.pr_person
+        person = db(ptable.pe_id == pe_id).select(ptable.id,
+                                                  limitby = (0, 1),
+                                                  ).first()
+        person_id = person.id
+
         # Assign correct Role
         utable = db.auth_user
         user = db(utable.id == user_id).select(utable.organisation_id,
@@ -2242,6 +2984,19 @@ def auth_user_register_onaccept(user_id):
                                     # Leave to Default Realm to make easier to switch affiliations
                                     #entity = realm_entity,
                                     )
+
+            # Not on Reserves by Default
+            htable = s3db.hrm_human_resource
+            hr = db(htable.person_id == person_id).select(htable.id,
+                                                          limitby = (0, 1),
+                                                          ).first()
+            human_resource_id = hr.id
+            httable = s3db.hrm_human_resource_tag
+            record = {"human_resource_id": human_resource_id,
+                      "tag": "reserve",
+                      "value": "0",
+                      }
+            httable.insert(**record)
         else:
             # Reserve
             ftable = s3db.pr_forum
@@ -2253,6 +3008,16 @@ def auth_user_register_onaccept(user_id):
                                 role = "Reserve Volunteer",
                                 entity = realm_entity,
                                 )
+
+            # Visible by Default
+            record = {"person_id": person_id,
+                      "tag": "reserve",
+                      "value": "1",
+                      }
+            ttable.insert(**record)
+
+        # Set Realm Entity
+        person.update_record(realm_entity = realm_entity)
 
         # Create Home Address
         gtable = s3db.gis_location
@@ -2268,7 +3033,6 @@ def auth_user_register_onaccept(user_id):
             gform = Storage(vars = record)
             onaccept(gform)
 
-        pe_id = auth.s3_user_pe_id(user_id)
         atable = s3db.pr_address
         record = {"pe_id": pe_id,
                   "location_id": location_id,
@@ -2283,16 +3047,6 @@ def auth_user_register_onaccept(user_id):
             aform = Storage(vars = record)
             onaccept(aform)
 
-        # Lookup Person
-        ptable = s3db.pr_person
-        person = db(ptable.pe_id == pe_id).select(ptable.id,
-                                                  limitby = (0, 1),
-                                                  ).first()
-        person_id = person.id
-
-        # Set Realm Entity
-        person.update_record(realm_entity = realm_entity)
-
         # Create Skills
         ctable = s3db.hrm_competency
         for skill_id in custom["skill_id"]:
@@ -2303,7 +3057,6 @@ def auth_user_register_onaccept(user_id):
                       }
             ctable.insert(**record)
 
-        ttable = s3db.pr_person_tag
         record = {"person_id": person_id,
                   "tag": "skills_details",
                   "value": custom["skills_details"],

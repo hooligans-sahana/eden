@@ -3995,10 +3995,12 @@ class S3Duplicate(object):
     """ Standard deduplicator method """
 
     def __init__(self,
-                 primary=None,
-                 secondary=None,
-                 ignore_case=True,
-                 ignore_deleted=False):
+                 primary = None,
+                 secondary = None,
+                 ignore_case = True,
+                 ignore_deleted = False,
+                 noupdate = False,
+                 ):
         """
             Constructor
 
@@ -4010,6 +4012,7 @@ class S3Duplicate(object):
                               present in the import item
             @param ignore_case: ignore case for string/text fields
             @param ignore_deleted: do not match deleted records
+            @param noupdate: match, but do not update
 
             @ToDo: Fuzzy option to do a LIKE search
         """
@@ -4025,6 +4028,7 @@ class S3Duplicate(object):
 
         self.ignore_case = ignore_case
         self.ignore_deleted = ignore_deleted
+        self.noupdate = noupdate
 
     # -------------------------------------------------------------------------
     def __call__(self, item):
@@ -4076,13 +4080,16 @@ class S3Duplicate(object):
 
         # Find a match
         duplicate = current.db(query).select(table._id,
-                                             limitby = (0, 1)).first()
+                                             limitby = (0, 1)
+                                             ).first()
 
         if duplicate:
             # Match found: Update import item
             item.id = duplicate[table._id]
             if not data.deleted:
                 item.method = item.METHOD.UPDATE
+            if self.noupdate:
+                item.skip = True
 
         # For uses outside of imports:
         return duplicate
@@ -4105,7 +4112,7 @@ class S3Duplicate(object):
            hasattr(value, "lower") and ftype in ("string", "text"):
             # NB Must convert to unicode before lower() in order to correctly
             #    convert certain unicode-characters (e.g. İ=>i, or Ẽ=>ẽ)
-            # => PostgreSQL LOWER() on Windows may not convert correctly,
+            # => PostgreSQL LOWER() on Windows may not convert correctly, (same for SQLite)
             #    which seems to be a locale issue:
             #    http://stackoverflow.com/questions/18507589/the-lower-function-on-international-characters-in-postgresql
             # => works fine on Debian servers if the locale is a .UTF-8 before

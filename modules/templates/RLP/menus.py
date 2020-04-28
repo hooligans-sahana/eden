@@ -36,13 +36,11 @@ class S3MainMenu(default.S3MainMenu):
     def menu_modules(cls):
         """ Modules Menu """
 
-        auth = current.auth
-
-        return [MM("Volunteers", c="vol", f="volunteer"),
-                MM("Recruitment", c="req", f="need"),
-                MM("More", link=None)(
-                    MM("Organizations", c="org", f="organisation"),
-                    )
+        return [MM("Volunteers", c=("vol", "hrm"), f="person")(
+                    MM("List", c="vol", f="person"),
+                    MM("Deployments", c="hrm", f="delegation"),
+                    ),
+                MM("Organizations", c="org", f="organisation"),
                 ]
 
     # -------------------------------------------------------------------------
@@ -140,8 +138,8 @@ class S3MainMenu(default.S3MainMenu):
 
         menu_about = MA(c="default")(
             MA("Help", f="help"),
-            #MA("Contact", f="contact"),
-            MA("Version", f="about", restrict = ADMIN),
+            MA("Contact", f="contact"),
+            MA("Version", f="about", restrict = (ADMIN, "COORDINATOR")),
         )
         return menu_about
 
@@ -172,38 +170,55 @@ class S3OptionsMenu(default.S3OptionsMenu):
                     )
 
     # -------------------------------------------------------------------------
-    @staticmethod
-    def hrm():
+    @classmethod
+    def hrm(cls):
         """ HRM / Human Resources Management """
 
-        # TODO remove
+        return cls.vol()
 
-        settings = current.deployment_settings
+    # -------------------------------------------------------------------------
+    @classmethod
+    def pr(cls):
+        """ Person Management """
 
-        teams = settings.get_hrm_teams()
-        use_teams = lambda i: teams
-
-        return M(c="hrm")(
-                    M(settings.get_hrm_staff_label(), f="staff")(
-                        M("Create", m="create"),
-                        ),
-                    M(teams, f="group", check=use_teams)(
-                        M("Create", m="create"),
-                        ),
-                    M("Job Titles", f="job_title")(
-                        M("Create", m="create"),
-                        ),
-                    )
+        return cls.vol()
 
     # -------------------------------------------------------------------------
     @staticmethod
     def vol():
         """ VOL / Volunteer Management """
 
-        return M(c="vol")(
-                    M("Volunteers", f="volunteer")(
-                        M("Create", m="create"),
+        pending_label = current.T("Pending Requests")
+        if current.auth.s3_has_role("COORDINATOR"):
+            from s3 import FS
+            query = (FS("date") >= current.request.utcnow) & \
+                    (FS("status") == "REQ")
+            resource = current.s3db.resource("hrm_delegation",
+                                             filter = query,
+                                             )
+            num_pending_requests = resource.count()
+            if num_pending_requests:
+                pending_label = "%s (%s)" % (pending_label, num_pending_requests)
+
+        return M(c=("vol", "hrm"))(
+                    M("Volunteers", c="vol", f="person")(
+                        M("Create", m="create", t="pr_person"),
                         ),
+                    M("Deployments", c="hrm", f="delegation")(
+                        M(pending_label,
+                          vars = {"workflow": "p"},
+                          translate = False,
+                          ),
+                        M("Processed Requests", vars={"workflow": "d"},
+                          ),
+                        M("Finalized", vars = {"workflow": "o"}),
+                        M("Organizer", m="organize", restrict="HRMANAGER"),
+                        ),
+                    M("Administration", link=False)(
+                        M("Occupation Types", c="pr", f="occupation_type"),
+                        M("Skill Types", c="hrm", f="skill"),
+                        M("Competency Levels", c="hrm", f="competency_rating"),
+                        )
                     )
 
     # -------------------------------------------------------------------------

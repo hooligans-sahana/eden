@@ -1125,6 +1125,8 @@ class PRPersonModel(S3Model):
                        hrm_disciplinary_action = "person_id",
                        # Salary Information
                        hrm_salary = "person_id",
+                       # Delegations
+                       hrm_delegation = "person_id",
                        # Organisation Memberships
                        member_membership = "person_id",
                        # Organisation Group Association
@@ -2789,9 +2791,9 @@ class PRGroupModel(S3Model):
         configure(tablename,
                   context = {"person": "person_id",
                              },
-                  deduplicate = S3Duplicate(primary=("person_id",
-                                                     "group_id",
-                                                     ),
+                  deduplicate = S3Duplicate(primary = ("person_id",
+                                                       "group_id",
+                                                       ),
                                             ),
                   filter_widgets = filter_widgets,
                   list_fields = ["id",
@@ -2810,6 +2812,7 @@ class PRGroupModel(S3Model):
         # Pass names back to global scope (s3.*)
         #
         return {"pr_group_id": group_id,
+                "pr_group_types": pr_group_types,
                 "pr_mailing_list_crud_strings": mailing_list_crud_strings,
                 }
 
@@ -3311,7 +3314,7 @@ class PRForumModel(S3Model):
 
         # Resource configuration
         configure(tablename,
-                  deduplicate = S3Duplicate(ignore_deleted=True),
+                  deduplicate = S3Duplicate(ignore_deleted = True),
                   super_entity = ("pr_pentity"),
                   )
 
@@ -3426,9 +3429,9 @@ class PRForumModel(S3Model):
 
         # Table configuration
         configure(tablename,
-                  deduplicate = S3Duplicate(primary=("person_id",
-                                                     "forum_id",
-                                                     ),
+                  deduplicate = S3Duplicate(primary = ("person_id",
+                                                       "forum_id",
+                                                       ),
                                             ),
                   )
 
@@ -4895,7 +4898,7 @@ class PRAvailabilityModel(S3Model):
                      *s3_meta_fields())
 
         configure(tablename,
-                  deduplicate = S3Duplicate(primary=("person_id", "slot_id")),
+                  deduplicate = S3Duplicate(primary = ("person_id", "slot_id")),
                   )
 
         # ---------------------------------------------------------------------
@@ -4918,6 +4921,12 @@ class PRAvailabilityModel(S3Model):
                      person_id(empty = False,
                                ondelete = "CASCADE",
                                ),
+                     Field("hours_per_week", "integer",
+                           label = T("Hours per Week"),
+                           requires = IS_EMPTY_OR(IS_INT_IN_RANGE(0, 85)),
+                           readable = False,
+                           writable = False,
+                           ),
                      #s3_date("start_date",
                      #        label = T("Start Date"),
                      #        ),
@@ -5922,9 +5931,9 @@ class PROccupationModel(S3Model):
         #
         tablename = "pr_occupation_type_person"
         define_table(tablename,
-                     occupation_type_id(ondelete="RESTRICT",
+                     occupation_type_id(ondelete = "RESTRICT",
                                         ),
-                     self.pr_person_id(ondelete="CASCADE",
+                     self.pr_person_id(ondelete = "CASCADE",
                                        ),
                      *s3_meta_fields())
 
@@ -6064,6 +6073,12 @@ class PRPersonDetailsModel(S3Model):
                           # This field can either be used as a free-text version of religion, or to provide details of the 'other'
                           Field("religion_other",
                                 #label = T("Other Religion"),
+                                represent = lambda v: v or NONE,
+                                readable = False,
+                                writable = False,
+                                ),
+                          Field("alias",
+                                label = T("Alias"),
                                 represent = lambda v: v or NONE,
                                 readable = False,
                                 writable = False,
@@ -9246,9 +9261,9 @@ def pr_get_role_paths(pe_id, roles=None, role_types=None):
 
 # =============================================================================
 def pr_get_role_branches(pe_id,
-                         roles=None,
-                         role_types=None,
-                         entity_type=None):
+                         roles = None,
+                         role_types = None,
+                         entity_type = None):
     """
         Get all descendants of the immediate ancestors of the entity
         within these roles/role types

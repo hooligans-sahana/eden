@@ -138,6 +138,7 @@ class S3OrganisationModel(S3Model):
                            label = T("Name"),
                            requires = [IS_NOT_EMPTY(),
                                        IS_LENGTH(128),
+                                       IS_NOT_IN_DB(db, "org_organisation_type.name"),
                                        ],
                            ),
                      Field("parent", "reference org_organisation_type", # This form of hierarchy may not work on all Databases
@@ -678,6 +679,7 @@ class S3OrganisationModel(S3Model):
                        # Warehouses
                        inv_warehouse = "organisation_id",
                        # Staff/Volunteers
+                       hrm_delegation = "organisation_id",
                        hrm_human_resource = "organisation_id",
                        pr_person = {"link": "hrm_human_resource",
                                     "joinby": "organisation_id",
@@ -2986,7 +2988,7 @@ class S3OrganisationTagModel(S3Model):
         #
         tablename = "org_organisation_tag"
         self.define_table(tablename,
-                          self.org_organisation_id(),
+                          self.org_organisation_id(empty = False),
                           # key is a reserved word in MySQL
                           Field("tag",
                                 label = T("Key"),
