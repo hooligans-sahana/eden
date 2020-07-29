@@ -3,7 +3,6 @@ xlwt>=0.7.2
 # Warning: S3GIS unresolved dependency: shapely required for GIS support
 Shapely>=1.2.14 #shapely
 # Warning: S3PDF unresolved dependency: Python Imaging required for PDF export
-
 Pillow>=6.2.2 #from PIL import Image
 # Warning: S3GIS unresolved dependency: GDAL required for Shapefile support
 GDAL>=2.4.0 #from osgeo import ogr
