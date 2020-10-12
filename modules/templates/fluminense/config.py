@@ -28,7 +28,7 @@ def config(settings):
     settings.base.prepopulate += ("fluminense", "default/users")
 
     settings.base.system_name = T("Fluminense Disaster Risk Management Information System")
-    settings.base.system_name_short = T("SGDF")
+    settings.base.system_name_short = T("SPGDRJ")
 
     # =============================================================================
     # System Settings
