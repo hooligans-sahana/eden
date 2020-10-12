@@ -3774,15 +3774,17 @@ def config(settings):
 
                 s3db.doc_document.file.label = ""
 
-                from s3.s3forms import S3SQLCustomForm, S3SQLInlineComponent, S3SQLInlineComponentMultiSelectWidget
+                from s3.s3forms import S3SQLCustomForm, S3SQLInlineComponent
                 crud_form_fields = [
                         "name",
-                        S3SQLInlineComponentMultiSelectWidget(
+                        S3SQLInlineComponent(
                             "theme",
-                            label = T("Themes"),
-                            field = "theme_id",
-                            option_help = "comments",
-                            cols = 3,
+                            name = "theme",
+                            label = T("Themes(s)"),
+                            fields = ["name", "comment"],
+                            filterby = dict(field = "name",
+                                            options = "3"
+                                            )
                         ),
                         S3SQLInlineComponent(
                             "location",
