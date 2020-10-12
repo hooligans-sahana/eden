@@ -556,7 +556,8 @@ class S3MessageAttachmentModel(S3Model):
         tablename = "msg_attachment"
         self.define_table(tablename,
                           # FK not instance
-                          self.msg_message_id(ondelete="CASCADE"),
+                          self.msg_message_id(ondelete = "CASCADE"),
+                          # document_id not doc_id
                           self.doc_document_id(),
                           *s3_meta_fields())
 
@@ -609,7 +610,7 @@ class S3MessageContactModel(S3Model):
                                 ),
                           Field("phone",
                                 label = T("Phone"),
-                                requires = IS_EMPTY_OR(s3_phone_requires),
+                                requires = IS_EMPTY_OR(IS_PHONE_NUMBER_MULTI()),
                                 ),
                           Field("from_address",
                                 label = T("Email"),
