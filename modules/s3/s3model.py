@@ -59,7 +59,7 @@ SERIALIZABLE_OPTS = ("autosync",
                      "subheadings",
                      )
 
-ogetattr = object.__getattribute__
+#getattr= object.__getattribute__
 
 # =============================================================================
 class S3Model(object):
@@ -235,10 +235,10 @@ class S3Model(object):
 
         # Table already defined?
         if hasattr(db, tablename):
-            return ogetattr(db, tablename)
-        elif ogetattr(db, "_lazy_tables") and \
-             tablename in ogetattr(db, "_LAZY_TABLES"):
-            return ogetattr(db, tablename)
+            return getattr(db, tablename)
+        elif getattr(db, "_lazy_tables") and \
+             tablename in getattr(db, "_LAZY_TABLES"):
+            return getattr(db, tablename)
 
         found = None
 
@@ -283,10 +283,10 @@ class S3Model(object):
         if not db_only and tablename in s3:
             return s3[tablename]
         elif hasattr(db, tablename):
-            return ogetattr(db, tablename)
-        elif ogetattr(db, "_lazy_tables") and \
-             tablename in ogetattr(db, "_LAZY_TABLES"):
-            return ogetattr(db, tablename)
+            return getattr(db, tablename)
+        elif getattr(db, "_lazy_tables") and \
+             tablename in getattr(db, "_LAZY_TABLES"):
+            return getattr(db, tablename)
         elif isinstance(default, Exception):
             raise default
         else:
@@ -421,7 +421,7 @@ class S3Model(object):
 
         db = current.db
         if hasattr(db, tablename):
-            table = ogetattr(db, tablename)
+            table = getattr(db, tablename)
         else:
             table = db.define_table(tablename, *fields, **args)
         return table
@@ -443,7 +443,7 @@ class S3Model(object):
         db = current.db
 
         if hasattr(db, alias):
-            aliased = ogetattr(db, alias)
+            aliased = getattr(db, alias)
             if original_tablename(aliased) == original_tablename(table):
                 return aliased
 
@@ -1546,7 +1546,7 @@ class S3Model(object):
             fields.append("deleted")
         if has_uuid:
             fields.append("uuid")
-        fields = [ogetattr(table, fn) for fn in list(set(fields))]
+        fields = [getattr(table, fn) for fn in list(set(fields))]
         _record = db(table.id == record_id).select(limitby=(0, 1),
                                                    *fields).first()
         if not _record:
@@ -1562,7 +1562,7 @@ class S3Model(object):
                 data.uuid = _record.get("uuid", None)
 
             # Do we already have a super-record?
-            skey = ogetattr(_record, key)
+            skey = getattr(_record, key)
             if skey:
                 query = (s[key] == skey)
                 row = db(query).select(s._id, limitby=(0, 1)).first()
